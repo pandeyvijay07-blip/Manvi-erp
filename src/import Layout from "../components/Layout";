@@ -1,0 +1,7 @@
+return (
+  <Layout title="Customers">
+
+    {/* Existing customer form and customer list go here */}
+
+  </Layout>
+);
