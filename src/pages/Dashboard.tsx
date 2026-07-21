@@ -1,17 +1,14 @@
 import { useState } from "react";
 import Customers from "./Customers";
 import Products from "./Products";
+import Purchases from "./Purchases";
 
 function Dashboard() {
   const [page, setPage] = useState("dashboard");
 
-  if (page === "customers") {
-    return <Customers />;
-  }
-
-  if (page === "products") {
-    return <Products />;
-  }
+  if (page === "customers") return <Customers />;
+  if (page === "products") return <Products />;
+  if (page === "purchases") return <Purchases />;
 
   return (
     <div style={{ padding: 20 }}>
@@ -29,7 +26,9 @@ function Dashboard() {
 
       <br /><br />
 
-      <button>Purchases</button>
+      <button onClick={() => setPage("purchases")}>
+        Purchases
+      </button>
 
       <br /><br />
 
