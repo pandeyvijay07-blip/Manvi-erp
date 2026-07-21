@@ -1,29 +1,39 @@
-import { useEffect, useState } from "react";
-import { supabase } from "./lib/supabase";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
-import Login from "./pages/Login";
+import Header from "./components/Header";
+
 import Dashboard from "./pages/Dashboard";
+import Customers from "./pages/Customers";
+import Products from "./pages/Products";
+import Purchases from "./pages/Purchases";
+import Sales from "./pages/Sales";
+import Collections from "./pages/Collections";
+import Expenses from "./pages/Expenses";
+import Reports from "./pages/Reports";
 
-export default function App() {
-  const [session, setSession] = useState<any>(null);
+function App() {
+  return (
+    <BrowserRouter>
+      <div className="min-h-screen bg-gray-100">
+        <Header />
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-    });
+        <main className="max-w-7xl mx-auto p-4">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/customers" element={<Customers />} />
+            <Route path="/products" element={<Products />} />
+            <Route path="/purchases" element={<Purchases />} />
+            <Route path="/sales" element={<Sales />} />
+            <Route path="/collections" element={<Collections />} />
+            <Route path="/expenses" element={<Expenses />} />
+            <Route path="/reports" element={<Reports />} />
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  if (!session) {
-    return <Login />;
-  }
-
-  return <Dashboard />;
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
+      </div>
+    </BrowserRouter>
+  );
 }
+
+export default App;
