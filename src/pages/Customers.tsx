@@ -34,7 +34,9 @@ export default function Customers() {
       (c.area || "")
     )
       .toLowerCase()
-      .includes(search.toLowerCase())  function clearForm() {
+      .includes(search.toLowerCase())
+  );
+    function clearForm() {
     setEditingId(null);
     setName("");
     setMobile("");
@@ -111,7 +113,7 @@ export default function Customers() {
     loadCustomers();
     alert("Customer deleted");
   }
-  );  return (
+    return (
     <div className="space-y-6">
 
       <h1 className="text-3xl font-bold">
@@ -181,7 +183,8 @@ export default function Customers() {
           onChange={(e) => setSearch(e.target.value)}
         />
 
-      </div>      <div className="bg-white rounded-xl shadow p-5">
+      </div>
+            <div className="bg-white rounded-xl shadow p-5">
 
         <div className="overflow-x-auto">
 
