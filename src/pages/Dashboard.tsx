@@ -1,35 +1,39 @@
+import { useState } from "react";
+import Customers from "./Customers";
+
 function Dashboard() {
+  const [page, setPage] = useState("dashboard");
+
+  if (page === "customers") {
+    return <Customers />;
+  }
+
   return (
     <div style={{ padding: 20 }}>
-      <h1>MANVI ERP Dashboard</h1>
+      <h1>MANVI ERP</h1>
 
-      <div style={{ marginTop: 20 }}>
-        <button>Customers</button>
-      </div>
+      <button onClick={() => setPage("customers")}>
+        Customers
+      </button>
 
-      <div style={{ marginTop: 10 }}>
-        <button>Products</button>
-      </div>
+      <br /><br />
 
-      <div style={{ marginTop: 10 }}>
-        <button>Purchases</button>
-      </div>
+      <button>Products</button>
+      <br /><br />
 
-      <div style={{ marginTop: 10 }}>
-        <button>Sales</button>
-      </div>
+      <button>Purchases</button>
+      <br /><br />
 
-      <div style={{ marginTop: 10 }}>
-        <button>Collections</button>
-      </div>
+      <button>Sales</button>
+      <br /><br />
 
-      <div style={{ marginTop: 10 }}>
-        <button>Expenses</button>
-      </div>
+      <button>Collections</button>
+      <br /><br />
 
-      <div style={{ marginTop: 10 }}>
-        <button>Reports</button>
-      </div>
+      <button>Expenses</button>
+      <br /><br />
+
+      <button>Reports</button>
     </div>
   );
 }
