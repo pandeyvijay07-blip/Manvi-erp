@@ -5,6 +5,7 @@ import Purchases from "./Purchases";
 import Sales from "./Sales";
 import Collections from "./Collections";
 import Expenses from "./Expenses";
+import Reports from "./Reports";
 
 function Dashboard() {
   const [page, setPage] = useState("dashboard");
@@ -22,6 +23,8 @@ function Dashboard() {
       return <Collections />;
     case "expenses":
       return <Expenses />;
+    case "reports":
+      return <Reports />;
     default:
       return (
         <div style={{ padding: 20 }}>
@@ -45,7 +48,7 @@ function Dashboard() {
           <button onClick={() => setPage("expenses")}>Expenses</button>
           <br /><br />
 
-          <button>Reports</button>
+          <button onClick={() => setPage("reports")}>Reports</button>
         </div>
       );
   }
