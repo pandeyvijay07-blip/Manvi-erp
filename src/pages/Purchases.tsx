@@ -1,92 +1,77 @@
 import { useEffect, useState } from "react";
+import Layout from "../components/Layout";
 import { supabase } from "../lib/supabase";
 
-type Purchase = {
-  id: string;
-  supplier: string;
-  product: string;
-  quantity: number;
-};
-
-function Purchases() {
-  const [purchases, setPurchases] = useState<Purchase[]>([]);
-  const [supplier, setSupplier] = useState("");
-  const [product, setProduct] = useState("");
+export default function Purchases() {
+  const [products, setProducts] = useState<any[]>([]);
+  const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("");
-
-  async function loadPurchases() {
-    const { data } = await supabase
-      .from("purchases")
-      .select("*")
-      .order("id", { ascending: false });
-
-    setPurchases((data as Purchase[]) || []);
-  }
-
-  async function addPurchase() {
-    if (!supplier || !product || !quantity) return;
-
-    await supabase.from("purchases").insert({
-      supplier,
-      product,
-      quantity: Number(quantity),
-    });
-
-    setSupplier("");
-    setProduct("");
-    setQuantity("");
-
-    loadPurchases();
-  }
+  const [rate, setRate] = useState("");
 
   useEffect(() => {
-    loadPurchases();
+    loadProducts();
   }, []);
 
+  async function loadProducts() {
+    const { data } = await supabase
+      .from("products")
+      .select("*")
+      .order("product_name");
+
+    setProducts(data || []);
+  }
+
+  async function savePurchase() {
+    if (!productId || !quantity || !rate) return;
+
+    await supabase.from("purchases").insert({
+      product_id: Number(productId),
+      quantity: Number(quantity),
+      rate: Number(rate),
+      total: Number(quantity) * Number(rate),
+      created_at: new Date().toISOString(),
+    });
+
+    alert("Purchase Saved");
+
+    setProductId("");
+    setQuantity("");
+    setRate("");
+  }
+
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Purchases</h1>
+    <Layout>
+      <div className="p-6">
+        <h1 className="text-2xl font-bold text-blue-700 mb-5">
+          Purchase Entry
+        </h1>
 
-      <input
-        placeholder="Supplier"
-        value={supplier}
-        onChange={(e) => setSupplier(e.target.value)}
-      />
+        <div className="bg-white rounded-xl shadow p-5">
+          <select
+            className="border rounded p-2 w-full mb-3"
+            value={productId}
+            onChange={(e) => setProductId(e.target.value)}
+          >
+            <option value="">Select Product</option>
 
-      <br /><br />
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.brand} - {p.product_name}
+              </option>
+            ))}
+          </select>
 
-      <input
-        placeholder="Product"
-        value={product}
-        onChange={(e) => setProduct(e.target.value)}
-      />
+          <input
+            type="number"
+            placeholder="Quantity"
+            className="border rounded p-2 w-full mb-3"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+          />
 
-      <br /><br />
-
-      <input
-        type="number"
-        placeholder="Quantity"
-        value={quantity}
-        onChange={(e) => setQuantity(e.target.value)}
-      />
-
-      <br /><br />
-
-      <button onClick={addPurchase}>
-        Save Purchase
-      </button>
-
-      <hr />
-
-      {purchases.map((purchase) => (
-        <div key={purchase.id}>
-          <strong>{purchase.supplier}</strong><br />
-          {purchase.product} - {purchase.quantity}
-          <hr />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export default Purchases;
+          <input
+            type="number"
+            placeholder="Purchase Rate"
+            className="border rounded p-2 w-full mb-3"
+            value={rate}
+            onChange={(e) => setRate(e.target.value
