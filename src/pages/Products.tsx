@@ -114,3 +114,15 @@ export default function Products() {
     </Layout>
   );
 }
+const { data: product } = await supabase
+  .from("products")
+  .select("stock")
+  .eq("id", Number(productId))
+  .single();
+
+await supabase
+  .from("products")
+  .update({
+    stock: Number(product.stock) + Number(quantity),
+  })
+  .eq("id", Number(productId));
