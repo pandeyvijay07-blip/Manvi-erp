@@ -81,7 +81,8 @@ export default function Dashboard() {
         (item: any) => Number(item.stock) <= 10
       )
     );
-  }  return (
+  }  
+  return (
     <div className="space-y-6">
 
       <h1 className="text-3xl font-bold text-gray-800">
