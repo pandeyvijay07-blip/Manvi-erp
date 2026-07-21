@@ -1,112 +1,42 @@
-import { useEffect, useState } from "react";
-import Layout from "../components/Layout";
-import { supabase } from "../lib/supabase";
+async function saveSale() {
+  const product = products.find((p) => p.id === productId);
 
-export default function Sales() {
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
+  if (!product || !customerId) return;
 
-  const [customerId, setCustomerId] = useState("");
-  const [productId, setProductId] = useState("");
-  const [qty, setQty] = useState(1);
+  const { data: customerPrice } = await supabase
+    .from("customer_prices")
+    .select("price")
+    .eq("customer_id", customerId)
+    .eq("product_id", productId)
+    .maybeSingle();
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  const rate = customerPrice?.price ?? product.selling_price;
 
-  async function loadData() {
-    const { data: c } = await supabase.from("customers").select("*");
-    const { data: p } = await supabase.from("products").select("*");
+  await supabase.from("sales").insert({
+    customer_id: customerId,
+    product_id: productId,
+    quantity: qty,
+    rate: rate,
+    total: qty * Number(rate),
+    created_at: new Date().toISOString(),
+  });
 
-    setCustomers(c || []);
-    setProducts(p || []);
-  }
+  const { data: stockData } = await supabase
+    .from("products")
+    .select("stock")
+    .eq("id", productId)
+    .single();
 
-  async function saveSale() {
-    const product = products.find((x) => x.id == productId);
+  await supabase
+    .from("products")
+    .update({
+      stock: Number(stockData?.stock || 0) - qty,
+    })
+    .eq("id", productId);
 
-    if (!product || !customerId) return;
+  alert("Sale Saved Successfully");
 
-    await supabase.from("sales").insert({
-      customer_id: Number(customerId),
-      product_id: Number(productId),
-      quantity: qty,
-      rate: product.selling_price,
-      total: qty * product.selling_price,
-      created_at: new Date().toISOString(),
-    });
-
-    alert("Sale Saved Successfully");
-
-    setCustomerId("");
-    setProductId("");
-    setQty(1);
-  }
-
-  return (
-    <Layout>
-      <div className="p-6">
-        <h1 className="text-2xl font-bold mb-5 text-blue-700">
-          Sales Entry
-        </h1>
-
-        <div className="bg-white shadow rounded-xl p-5">
-
-          <select
-            className="border p-2 rounded w-full mb-3"
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-          >
-            <option value="">Select Customer</option>
-
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-
-          <select
-            className="border p-2 rounded w-full mb-3"
-            value={productId}
-            onChange={(e) => setProductId(e.target.value)}
-          >
-            <option value="">Select Product</option>
-
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.brand} - {p.product_name}
-              </option>
-            ))}
-          </select>
-
-          <input
-            type="number"
-            className="border p-2 rounded w-full mb-3"
-            value={qty}
-            onChange={(e) => setQty(Number(e.target.value))}
-          />
-
-          <button
-            onClick={saveSale}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg"
-          >
-            Save Sale
-          </button>
-        </div>
-      </div>
-    </Layout>
-  );
+  setCustomerId("");
+  setProductId("");
+  setQty(1);
 }
-const { data: product } = await supabase
-  .from("products")
-  .select("stock")
-  .eq("id", Number(productId))
-  .single();
-
-await supabase
-  .from("products")
-  .update({
-    stock: Number(product.stock) - qty,
-  })
-  .eq("id", Number(productId));
