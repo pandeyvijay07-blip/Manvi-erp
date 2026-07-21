@@ -1,108 +1,100 @@
 import { useEffect, useState } from "react";
+import Layout from "../components/Layout";
 import { supabase } from "../lib/supabase";
 
-type Sale = {
-  id: string;
-  customer: string;
-  product: string;
-  quantity: number;
-  payment_mode: string;
-};
+export default function Sales() {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
 
-function Sales() {
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [customer, setCustomer] = useState("");
-  const [product, setProduct] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [paymentMode, setPaymentMode] = useState("Cash");
-
-  async function loadSales() {
-    const { data } = await supabase
-      .from("sales")
-      .select("*")
-      .order("id", { ascending: false });
-
-    setSales((data as Sale[]) || []);
-  }
-
-  async function addSale() {
-    if (!customer || !product || !quantity) return;
-
-    await supabase.from("sales").insert({
-      customer,
-      product,
-      quantity: Number(quantity),
-      payment_mode: paymentMode,
-    });
-
-    setCustomer("");
-    setProduct("");
-    setQuantity("");
-    setPaymentMode("Cash");
-
-    loadSales();
-  }
+  const [customerId, setCustomerId] = useState("");
+  const [productId, setProductId] = useState("");
+  const [qty, setQty] = useState(1);
 
   useEffect(() => {
-    loadSales();
+    loadData();
   }, []);
 
+  async function loadData() {
+    const { data: c } = await supabase.from("customers").select("*");
+    const { data: p } = await supabase.from("products").select("*");
+
+    setCustomers(c || []);
+    setProducts(p || []);
+  }
+
+  async function saveSale() {
+    const product = products.find((x) => x.id == productId);
+
+    if (!product || !customerId) return;
+
+    await supabase.from("sales").insert({
+      customer_id: Number(customerId),
+      product_id: Number(productId),
+      quantity: qty,
+      rate: product.selling_price,
+      total: qty * product.selling_price,
+      created_at: new Date().toISOString(),
+    });
+
+    alert("Sale Saved Successfully");
+
+    setCustomerId("");
+    setProductId("");
+    setQty(1);
+  }
+
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Sales</h1>
+    <Layout>
+      <div className="p-6">
+        <h1 className="text-2xl font-bold mb-5 text-blue-700">
+          Sales Entry
+        </h1>
 
-      <input
-        placeholder="Customer"
-        value={customer}
-        onChange={(e) => setCustomer(e.target.value)}
-      />
+        <div className="bg-white shadow rounded-xl p-5">
 
-      <br /><br />
+          <select
+            className="border p-2 rounded w-full mb-3"
+            value={customerId}
+            onChange={(e) => setCustomerId(e.target.value)}
+          >
+            <option value="">Select Customer</option>
 
-      <input
-        placeholder="Product"
-        value={product}
-        onChange={(e) => setProduct(e.target.value)}
-      />
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
 
-      <br /><br />
+          <select
+            className="border p-2 rounded w-full mb-3"
+            value={productId}
+            onChange={(e) => setProductId(e.target.value)}
+          >
+            <option value="">Select Product</option>
 
-      <input
-        type="number"
-        placeholder="Quantity"
-        value={quantity}
-        onChange={(e) => setQuantity(e.target.value)}
-      />
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.brand} - {p.product_name}
+              </option>
+            ))}
+          </select>
 
-      <br /><br />
+          <input
+            type="number"
+            className="border p-2 rounded w-full mb-3"
+            value={qty}
+            onChange={(e) => setQty(Number(e.target.value))}
+          />
 
-      <select
-        value={paymentMode}
-        onChange={(e) => setPaymentMode(e.target.value)}
-      >
-        <option>Cash</option>
-        <option>UPI</option>
-        <option>Credit</option>
-      </select>
-
-      <br /><br />
-
-      <button onClick={addSale}>
-        Save Sale
-      </button>
-
-      <hr />
-
-      {sales.map((sale) => (
-        <div key={sale.id}>
-          <strong>{sale.customer}</strong><br />
-          {sale.product} - {sale.quantity}<br />
-          {sale.payment_mode}
-          <hr />
+          <button
+            onClick={saveSale}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg"
+          >
+            Save Sale
+          </button>
         </div>
-      ))}
-    </div>
+      </div>
+    </Layout>
   );
 }
-
-export default Sales;
