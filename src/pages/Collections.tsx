@@ -1,95 +1,87 @@
 import { useEffect, useState } from "react";
+import Layout from "../components/Layout";
 import { supabase } from "../lib/supabase";
 
-type Collection = {
-  id: string;
-  customer: string;
-  amount: number;
-  payment_mode: string;
-};
-
-function Collections() {
-  const [collections, setCollections] = useState<Collection[]>([]);
-  const [customer, setCustomer] = useState("");
+export default function Collections() {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [customerId, setCustomerId] = useState("");
   const [amount, setAmount] = useState("");
-  const [paymentMode, setPaymentMode] = useState("Cash");
-
-  async function loadCollections() {
-    const { data } = await supabase
-      .from("collections")
-      .select("*")
-      .order("id", { ascending: false });
-
-    setCollections((data as Collection[]) || []);
-  }
-
-  async function addCollection() {
-    if (!customer || !amount) return;
-
-    await supabase.from("collections").insert({
-      customer,
-      amount: Number(amount),
-      payment_mode: paymentMode,
-    });
-
-    setCustomer("");
-    setAmount("");
-    setPaymentMode("Cash");
-
-    loadCollections();
-  }
+  const [mode, setMode] = useState("Cash");
 
   useEffect(() => {
-    loadCollections();
+    loadCustomers();
   }, []);
 
+  async function loadCustomers() {
+    const { data } = await supabase.from("customers").select("*");
+    setCustomers(data || []);
+  }
+
+  async function saveCollection() {
+    if (!customerId || !amount) return;
+
+    await supabase.from("collections").insert({
+      customer_id: Number(customerId),
+      amount: Number(amount),
+      payment_mode: mode,
+      created_at: new Date().toISOString(),
+    });
+
+    alert("Collection Saved");
+
+    setCustomerId("");
+    setAmount("");
+    setMode("Cash");
+  }
+
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Collections</h1>
+    <Layout>
+      <div className="p-6">
+        <h1 className="text-2xl font-bold text-blue-700 mb-4">
+          Collections
+        </h1>
 
-      <input
-        placeholder="Customer"
-        value={customer}
-        onChange={(e) => setCustomer(e.target.value)}
-      />
+        <div className="bg-white rounded-xl shadow p-5">
+          <select
+            className="border p-2 rounded w-full mb-3"
+            value={customerId}
+            onChange={(e) => setCustomerId(e.target.value)}
+          >
+            <option value="">Select Customer</option>
 
-      <br /><br />
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
 
-      <input
-        type="number"
-        placeholder="Amount"
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-      />
+          <input
+            type="number"
+            placeholder="Amount"
+            className="border p-2 rounded w-full mb-3"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
 
-      <br /><br />
+          <select
+            className="border p-2 rounded w-full mb-3"
+            value={mode}
+            onChange={(e) => setMode(e.target.value)}
+          >
+            <option>Cash</option>
+            <option>UPI</option>
+            <option>Bank</option>
+          </select>
 
-      <select
-        value={paymentMode}
-        onChange={(e) => setPaymentMode(e.target.value)}
-      >
-        <option>Cash</option>
-        <option>UPI</option>
-        <option>Bank</option>
-      </select>
-
-      <br /><br />
-
-      <button onClick={addCollection}>
-        Save Collection
-      </button>
-
-      <hr />
-
-      {collections.map((item) => (
-        <div key={item.id}>
-          <strong>{item.customer}</strong><br />
-          ₹{item.amount} ({item.payment_mode})
-          <hr />
+          <button
+            onClick={saveCollection}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg"
+          >
+            Save Collection
+          </button>
         </div>
-      ))}
-    </div>
+      </div>
+    </Layout>
   );
 }
-
-export default Collections;
