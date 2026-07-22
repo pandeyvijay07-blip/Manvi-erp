@@ -22,33 +22,58 @@ export default function Purchases() {
   }
 
   async function savePurchase() {
-    if (!productId || !quantity || !rate) return;
+    if (!productId || !quantity || !rate) {
+      alert("Fill all fields");
+      return;
+    }
 
-    await supabase.from("purchases").insert({
-      product_id: Number(productId),
-      quantity: Number(quantity),
-      rate: Number(rate),
-      total: Number(quantity) * Number(rate),
+    const qty = Number(quantity);
+    const price = Number(rate);
+
+    const { error } = await supabase.from("purchases").insert({
+      product_id: productId,
+      quantity: qty,
+      rate: price,
+      total: qty * price,
       created_at: new Date().toISOString(),
     });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const product = products.find((p) => p.id == productId);
+
+    if (product) {
+      await supabase
+        .from("products")
+        .update({
+          stock: Number(product.stock || 0) + qty,
+        })
+        .eq("id", productId);
+    }
 
     alert("Purchase Saved");
 
     setProductId("");
     setQuantity("");
     setRate("");
+
+    loadProducts();
   }
 
   return (
     <Layout>
-      <div className="p-6">
-        <h1 className="text-2xl font-bold text-blue-700 mb-5">
+      <div className="p-6 space-y-6">
+        <h1 className="text-3xl font-bold">
           Purchase Entry
         </h1>
 
-        <div className="bg-white rounded-xl shadow p-5">
+        <div className="bg-white rounded-xl shadow p-6 space-y-4">
+
           <select
-            className="border rounded p-2 w-full mb-3"
+            className="border rounded-lg p-3 w-full"
             value={productId}
             onChange={(e) => setProductId(e.target.value)}
           >
@@ -56,22 +81,35 @@ export default function Purchases() {
 
             {products.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.brand} - {p.product_name}
+                {p.product_name}
               </option>
             ))}
           </select>
 
           <input
+            className="border rounded-lg p-3 w-full"
             type="number"
             placeholder="Quantity"
-            className="border rounded p-2 w-full mb-3"
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
           />
 
           <input
+            className="border rounded-lg p-3 w-full"
             type="number"
             placeholder="Purchase Rate"
-            className="border rounded p-2 w-full mb-3"
             value={rate}
-            onChange={(e) => setRate(e.target.value
+            onChange={(e) => setRate(e.target.value)}
+          />
+
+          <button
+            onClick={savePurchase}
+            className="bg-blue-600 text-white rounded-lg px-5 py-3 w-full"
+          >
+            Save Purchase
+          </button>
+        </div>
+      </div>
+    </Layout>
+  );
+}
