@@ -181,20 +181,4 @@ export default function Reports() {
       </div>
     </div>
   );
-                  }            {sale.quantity}
-                  </td>
-
-                  <td className="text-right p-2">
-                    ₹{sale.rate}
-                  </td>
-
-                  <td className="text-right p-2 font-semibold">
-                    ₹{sale.total}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-      
+  }
