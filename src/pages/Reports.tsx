@@ -177,8 +177,8 @@ export default function Reports() {
               ))
             )}
           </tbody>
-        </table>
-      </div>
-    </div>
-  );
-  }
+         </table>
+</div>
+</Layout>
+);
+}
