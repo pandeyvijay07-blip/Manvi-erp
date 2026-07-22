@@ -63,7 +63,7 @@ export default function Purchases() {
     setRate("");
 
     loadProducts();
-
+    }   
     return (
             <Layout>
         <div className="p-6 space-y-6">
