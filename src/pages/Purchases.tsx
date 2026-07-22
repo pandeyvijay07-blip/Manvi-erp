@@ -73,9 +73,9 @@ export default function Purchases() {
         <div className="bg-white rounded-xl shadow p-6 space-y-4">
           <select
             className="border rounded-lg p-3 w-full"
-            value={productId}
-            onChange={(e) => setProductId(e.target.value)}
-          >
+            value={rate}
+            onChange={(e) => setrate(e.target.value)}
+          ^
             <option value="">Select Product</option>
 
             {products.map((p) => (
