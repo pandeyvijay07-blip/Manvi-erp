@@ -71,11 +71,11 @@ export default function Purchases() {
         </h1>
 
         <div className="bg-white rounded-xl shadow p-6 space-y-4">
-          <select
-            className="border rounded-lg p-3 w-full"
-            value={rate}
-            onChange={(e) => setrate(e.target.value)}
-          ^
+            <select
+  className="border rounded-lg p-3 w-full"
+  value={productId}
+  onChange={(e) => setProductId(e.target.value)}
+>
             <option value="">Select Product</option>
 
             {products.map((p) => (
@@ -100,7 +100,6 @@ export default function Purchases() {
             value={rate}
             onChange={(e) => setRate(e.target.value)}
           />
-
           <button
             onClick={savePurchase}
             className="bg-blue-600 text-white rounded-lg px-6 py-3 w-full"
