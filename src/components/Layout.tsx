@@ -1,11 +1,11 @@
 import { ReactNode } from "react";
 
 type LayoutProps = {
-  title: string;
+  title?: string;
   children: ReactNode;
 };
 
-export default function Layout({ title, children }: LayoutProps) {
+export default function Layout({ title = "MANVI ERP", children }: LayoutProps) {
   return (
     <div
       style={{
@@ -23,6 +23,7 @@ export default function Layout({ title, children }: LayoutProps) {
         }}
       >
         <h1 style={{ margin: 0 }}>MANVI ERP</h1>
+
         <h3 style={{ marginTop: "8px" }}>{title}</h3>
       </header>
 
