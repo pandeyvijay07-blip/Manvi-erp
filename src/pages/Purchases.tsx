@@ -63,54 +63,53 @@ export default function Purchases() {
     setRate("");
 
     loadProducts();
+
+    return (
+            <Layout>
+        <div className="p-6 space-y-6">
+          <h1 className="text-3xl font-bold">
+            Purchase Entry
+          </h1>
+
+          <div className="bg-white rounded-xl shadow p-6 space-y-4">
+            <select
+              className="border rounded-lg p-3 w-full"
+              value={productId}
+              onChange={(e) => setProductId(e.target.value)}
+            >
+              <option value="">Select Product</option>
+
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.product_name}
+                </option>
+              ))}
+            </select>
+
+            <input
+              className="border rounded-lg p-3 w-full"
+              type="number"
+              placeholder="Quantity"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+            />
+
+            <input
+              className="border rounded-lg p-3 w-full"
+              type="number"
+              placeholder="Purchase Rate"
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+            />
+
+            <button
+              onClick={savePurchase}
+              className="bg-blue-600 text-white rounded-lg px-6 py-3 w-full"
+            >
+              Save Purchase
+            </button>
+          </div>
+                  </div>
+      </Layout>
+    );
   }
-
-  return (
-       <Layout>
-      <div className="p-6 space-y-6">
-        <h1 className="text-3xl font-bold">
-          Purchase Entry
-        </h1>
-
-        <div className="bg-white rounded-xl shadow p-6 space-y-4">
-          <select
-            className="border rounded-lg p-3 w-full"
-            value={productId}
-            onChange={(e) => setProductId(e.target.value)}
-          >
-            <option value="">Select Product</option>
-
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.product_name}
-              </option>
-            ))}
-          </select>
-
-          <input
-            className="border rounded-lg p-3 w-full"
-            type="number"
-            placeholder="Quantity"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-          />
-
-          <input
-            className="border rounded-lg p-3 w-full"
-            type="number"
-            placeholder="Purchase Rate"
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-          />
-
-          <button
-            onClick={savePurchase}
-            className="bg-blue-600 text-white rounded-lg px-6 py-3 w-full"
-          >
-            Save Purchase
-          </button>
-        </div>
-      </div>
-    </Layout>
-  );
- } 
