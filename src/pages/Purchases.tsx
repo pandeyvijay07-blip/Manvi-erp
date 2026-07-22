@@ -30,20 +30,22 @@ export default function Purchases() {
     const qty = Number(quantity);
     const price = Number(rate);
 
-    const { error } = await supabase.from("purchases").insert({
-      product_id: productId,
-      quantity: qty,
-      rate: price,
-      total: qty * price,
-      created_at: new Date().toISOString(),
-    });
+    const { error } = await supabase
+      .from("purchases")
+      .insert({
+        product_id: productId,
+        quantity: qty,
+        rate: price,
+        total: qty * price,
+        created_at: new Date().toISOString(),
+      });
 
     if (error) {
       alert(error.message);
       return;
     }
 
-    const product = products.find((p) => p.id == productId);
+    const product = products.find((p) => p.id === productId);
 
     if (product) {
       await supabase
@@ -64,18 +66,18 @@ export default function Purchases() {
   }
 
   return (
-    <Layout>
+       <Layout>
       <div className="p-6 space-y-6">
         <h1 className="text-3xl font-bold">
           Purchase Entry
         </h1>
 
         <div className="bg-white rounded-xl shadow p-6 space-y-4">
-            <select
-  className="border rounded-lg p-3 w-full"
-  value={productId}
-  onChange={(e) => setProductId(e.target.value)}
->
+          <select
+            className="border rounded-lg p-3 w-full"
+            value={productId}
+            onChange={(e) => setProductId(e.target.value)}
+          >
             <option value="">Select Product</option>
 
             {products.map((p) => (
@@ -100,6 +102,7 @@ export default function Purchases() {
             value={rate}
             onChange={(e) => setRate(e.target.value)}
           />
+
           <button
             onClick={savePurchase}
             className="bg-blue-600 text-white rounded-lg px-6 py-3 w-full"
@@ -110,4 +113,4 @@ export default function Purchases() {
       </div>
     </Layout>
   );
- }          
+ } 
