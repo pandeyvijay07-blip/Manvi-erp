@@ -9,6 +9,10 @@ export default function Products() {
   const [packSize, setPackSize] = useState("");
   const [price, setPrice] = useState("");
 
+  useEffect(() => {
+    loadProducts();
+  }, []);
+
   async function loadProducts() {
     const { data } = await supabase
       .from("products")
@@ -19,16 +23,27 @@ export default function Products() {
   }
 
   async function saveProduct() {
-    if (!brand || !product) return;
+    if (!brand || !product) {
+      alert("Please fill required fields");
+      return;
+    }
 
-    await supabase.from("products").insert([
-      {
-        brand,
-        product_name: product,
-        pack_size: packSize,
-        selling_price: Number(price),
-      },
-    ]);
+    const { error } = await supabase
+      .from("products")
+      .insert([
+        {
+          brand,
+          product_name: product,
+          pack_size: packSize,
+          selling_price: Number(price),
+          stock: 0,
+        },
+      ]);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
 
     setBrand("");
     setProduct("");
@@ -36,11 +51,9 @@ export default function Products() {
     setPrice("");
 
     loadProducts();
-  }
 
-  useEffect(() => {
-    loadProducts();
-  }, []);
+    alert("Product Saved");
+  }
 
   return (
     <Layout>
@@ -66,7 +79,7 @@ export default function Products() {
 
           <input
             className="border p-2 rounded w-full mb-2"
-            placeholder="Pack Size (500ml, 1L...)"
+            placeholder="Pack Size"
             value={packSize}
             onChange={(e) => setPackSize(e.target.value)}
           />
@@ -95,6 +108,7 @@ export default function Products() {
                 <th className="p-3 text-left">Product</th>
                 <th className="p-3 text-left">Pack Size</th>
                 <th className="p-3 text-left">Price</th>
+                <th className="p-3 text-left">Stock</th>
               </tr>
             </thead>
 
@@ -105,6 +119,7 @@ export default function Products() {
                   <td className="p-3">{p.product_name}</td>
                   <td className="p-3">{p.pack_size}</td>
                   <td className="p-3">₹{p.selling_price}</td>
+                  <td className="p-3">{p.stock}</td>
                 </tr>
               ))}
             </tbody>
@@ -113,16 +128,4 @@ export default function Products() {
       </div>
     </Layout>
   );
-}
-const { data: product } = await supabase
-  .from("products")
-  .select("stock")
-  .eq("id", Number(productId))
-  .single();
-
-await supabase
-  .from("products")
-  .update({
-    stock: Number(product.stock) + Number(quantity),
-  })
-  .eq("id", Number(productId));
+            }
