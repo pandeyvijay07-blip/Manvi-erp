@@ -1,5 +1,93 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import CustomerRouteSearch from "../components/CustomerRouteSearch";
+
+// ---------------------------------------------------------
+// LOCAL BUSINESS DATE
+// Never use toISOString().slice(0, 10) for the sale date.
+// That converts the time to UTC and can save yesterday's
+// date for users in India/Asia after midnight.
+// ---------------------------------------------------------
+function getLocalDateString() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDate(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const datePart = String(value).slice(0, 10);
+  const [year, month, day] = datePart.split("-");
+
+  if (year && month && day) {
+    return `${day}/${month}/${year}`;
+  }
+
+  return String(value);
+}
+
+function formatDateInput(value: string | null | undefined) {
+  if (!value) return "";
+
+  const datePart = String(value).slice(0, 10);
+  const [year, month, day] = datePart.split("-");
+
+  if (year && month && day) {
+    return `${day}/${month}/${year}`;
+  }
+
+  return "";
+}
+
+function parseDateInput(value: string) {
+  const digits = value.replace(/\D/g, "");
+
+  if (digits.length !== 8) {
+    return null;
+  }
+
+  const day = Number(digits.slice(0, 2));
+  const month = Number(digits.slice(2, 4));
+  const year = Number(digits.slice(4, 8));
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function formatTypingDate(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+
+  if (digits.length <= 2) {
+    return digits;
+  }
+
+  if (digits.length <= 4) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function normalizeSaleDate(value: string | null | undefined) {
+  if (!value) return getLocalDateString();
+  return String(value).slice(0, 10);
+}
 
 type Brand = {
 id: string;
@@ -9,6 +97,7 @@ brand_name: string;
 type Customer = {
 id: string;
 customer_name: string;
+route?: string | null;
 };
 
 type Product = {
@@ -59,8 +148,12 @@ const [products, setProducts] = useState<Product[]>([]);
 SALE HEADER
 ========================================================= */
 
-const [saleDate, setSaleDate] = useState(
-new Date().toISOString().slice(0, 10)
+const initialSaleDate = getLocalDateString();
+
+const [saleDate, setSaleDate] = useState(initialSaleDate);
+
+const [saleDateDisplay, setSaleDateDisplay] = useState(
+formatDateInput(initialSaleDate)
 );
 
 const [customerId, setCustomerId] = useState("");
@@ -69,12 +162,6 @@ const [paymentMethod, setPaymentMethod] =
 useState("Cash");
 
 const [paidAmount, setPaidAmount] =
-useState("0");
-
-const [cashAmount, setCashAmount] =
-useState("0");
-
-const [upiAmount, setUpiAmount] =
 useState("0");
 
 /* =========================================================
@@ -182,7 +269,7 @@ setLoadingData(true);
 
     supabase
       .from("customers")
-      .select("id, customer_name")
+      .select("id, customer_name, route")
       .order("customer_name"),
 
     /*
@@ -355,6 +442,155 @@ customer.id === customerId
 customers,
 customerId,
 ]);
+
+/* =========================================================
+PUNCH TODAY'S SALE
+Loads the customer's latest previous sale and prepares
+the same products/quantities as today's draft.
+It does NOT save until Save Sale is pressed.
+========================================================= */
+async function punchTodaysSale() {
+  if (!customerId) {
+    alert("Please select a customer first.");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const {
+      data: previousSale,
+      error: previousSaleError,
+    } = await supabase
+      .from("sales")
+      .select(`
+        id,
+        sale_date,
+        customer_id,
+        payment_method,
+        paid_amount
+      `)
+      .eq("customer_id", customerId)
+      .lt("sale_date", saleDate)
+      .order("sale_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (previousSaleError) {
+      throw previousSaleError;
+    }
+
+    if (!previousSale) {
+      alert("No previous sale found for this customer.");
+      return;
+    }
+
+    const {
+      data: previousItems,
+      error: previousItemsError,
+    } = await supabase
+      .from("sale_items")
+      .select(`
+        id,
+        product_id,
+        quantity,
+        rate,
+        amount,
+        cost_rate
+      `)
+      .eq("sale_id", previousSale.id);
+
+    if (previousItemsError) {
+      throw previousItemsError;
+    }
+
+    if (!previousItems || previousItems.length === 0) {
+      alert("Previous sale has no products.");
+      return;
+    }
+
+    const punchedItems = await Promise.all(
+      previousItems.map(async (item: any) => {
+        const product = products.find(
+          (p) => p.id === item.product_id
+        );
+
+        if (!product) {
+          return null;
+        }
+
+        const brand = brands.find(
+          (b) => b.id === product.brand_id
+        );
+
+        const customerRate = await getCustomerPrice(
+          customerId,
+          product.id
+        );
+
+        const rate =
+          customerRate !== null
+            ? customerRate
+            : Number(product.selling_rate || item.rate || 0);
+
+        const qty = Number(item.quantity) || 0;
+
+        return {
+          product_id: product.id,
+          brand_id: product.brand_id || null,
+          brand_name: brand?.brand_name || "No Brand",
+          product_name: product.product_name,
+          pack_size: product.pack_size || "",
+          unit: getProductUnit(product),
+          quantity: qty,
+          rate,
+          purchase_rate: Number(
+            product.purchase_rate || item.cost_rate || 0
+          ),
+          amount: qty * rate,
+        } as SaleItem;
+      })
+    );
+
+    const validItems = punchedItems.filter(
+      (item): item is SaleItem => item !== null
+    );
+
+    if (validItems.length === 0) {
+      alert("Previous sale products could not be found.");
+      return;
+    }
+
+    setSaleItems(validItems);
+    setPaymentMethod(previousSale.payment_method || "Cash");
+    setPaidAmount("0");
+    setEditingSaleId(null);
+    setEditingItemIndex(null);
+    setProductId("");
+    setQuantity("1");
+    setSellingRate("");
+    setProductSearch("");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+
+    alert(
+      `Today's sale prepared from ${formatDisplayDate(
+        previousSale.sale_date
+      )}.\n\nPlease check the quantities and press Save Sale.`
+    );
+  } catch (error: any) {
+    console.error("Punch today's sale error:", error);
+    alert(
+      "Unable to punch today's sale:\n" +
+        (error?.message || "Unknown error")
+    );
+  } finally {
+    setLoading(false);
+  }
+}
 
 /* =========================================================
 PRODUCTS FOR BRAND / SEARCH
@@ -587,47 +823,8 @@ Number(item.amount || 0),
 PAID / BALANCE
 ========================================================= */
 
-const enteredPaid =
-Number(paidAmount) || 0;
-
-const enteredCash =
-Number(cashAmount) || 0;
-
-const enteredUpi =
-Number(upiAmount) || 0;
-
-const normalizedPaymentMethod =
-paymentMethod.trim().toLowerCase();
-
-const isSplitPayment =
-normalizedPaymentMethod === "split";
-
-const cashPaid =
-isSplitPayment
-  ? enteredCash
-  : normalizedPaymentMethod === "cash"
-  ? enteredPaid <= 0 && totalSale > 0
-    ? totalSale
-    : enteredPaid
-  : 0;
-
-const upiPaid =
-isSplitPayment
-  ? enteredUpi
-  : normalizedPaymentMethod === "upi"
-  ? enteredPaid <= 0 && totalSale > 0
-    ? totalSale
-    : enteredPaid
-  : 0;
-
 const paid =
-isSplitPayment
-  ? cashPaid + upiPaid
-  : normalizedPaymentMethod === "cash"
-  ? cashPaid
-  : normalizedPaymentMethod === "upi"
-  ? upiPaid
-  : enteredPaid;
+Number(paidAmount) || 0;
 
 const balance = Math.max(
 0,
@@ -973,46 +1170,8 @@ setProductSearch("");
 }
 
 /* =========================================================
-PAYMENT METHOD CHANGE
-========================================================= */
-
-function handlePaymentMethodChange(
-value: string
-) {
-const normalized =
-value.trim().toLowerCase();
-
-setPaymentMethod(value);
-
-if (normalized === "split") {
-setPaidAmount("0");
-setCashAmount("0");
-setUpiAmount("0");
-return;
-}
-
-setCashAmount("0");
-setUpiAmount("0");
-
-if (
-(normalized === "cash" ||
-normalized === "upi") &&
-totalSale > 0
-) {
-setPaidAmount(
-totalSale.toFixed(2)
-);
-} else if (
-normalized === "credit"
-) {
-setPaidAmount("0");
-}
-}
-
-/* =========================================================
 CLEAR SALE FORM
 ========================================================= */
-
 
 function clearSaleForm() {
 setSaleItems([]);
@@ -1030,8 +1189,6 @@ setQuantity("1");
 setSellingRate("");
 
 setPaidAmount("0");
-setCashAmount("0");
-setUpiAmount("0");
 
 setPaymentMethod("Cash");
 
@@ -1043,11 +1200,9 @@ setEditingSaleId(
   null
 );
 
-setSaleDate(
-  new Date()
-    .toISOString()
-    .slice(0, 10)
-);
+const today = getLocalDateString();
+setSaleDate(today);
+setSaleDateDisplay(formatDateInput(today));
 
 }
 
@@ -1089,18 +1244,6 @@ if (paid < 0) {
 if (paid > totalSale) {
   alert(
     "Paid amount cannot be greater than total sale."
-  );
-  return;
-}
-
-if (
-  isSplitPayment &&
-  (cashPaid < 0 ||
-    upiPaid < 0 ||
-    cashPaid + upiPaid <= 0)
-) {
-  alert(
-    "For Split (Cash + UPI), enter a valid Cash and/or UPI amount."
   );
   return;
 }
@@ -1183,12 +1326,6 @@ try {
 
       balance_amount:
         balance,
-
-      cash_amount:
-        cashPaid,
-
-      upi_amount:
-        upiPaid,
     })
     .select()
     .single();
@@ -1520,12 +1657,6 @@ GET OLD SALE ITEMS
 
       balance_amount:
         balance,
-
-      cash_amount:
-        cashPaid,
-
-      upi_amount:
-        upiPaid,
     })
     .eq(
       "id",
@@ -1693,9 +1824,7 @@ setLoading(true);
       payment_method,
       total_amount,
       paid_amount,
-      balance_amount,
-      cash_amount,
-      upi_amount
+      balance_amount
       `
     )
     .eq(
@@ -1741,9 +1870,9 @@ setLoading(true);
     sale.id
   );
 
-  setSaleDate(
-    sale.sale_date
-  );
+  const editDate = normalizeSaleDate(sale.sale_date);
+  setSaleDate(editDate);
+  setSaleDateDisplay(formatDateInput(editDate));
 
   setCustomerId(
     sale.customer_id ||
@@ -1761,54 +1890,6 @@ setLoading(true);
         sale.paid_amount
       ) || 0
     )
-  );
-
-  const editPaymentMethod =
-    String(
-      sale.payment_method ||
-        "Cash"
-    )
-      .trim()
-      .toLowerCase();
-
-  setCashAmount(
-    editPaymentMethod === "split"
-      ? String(
-          Number(
-            (sale as any).cash_amount
-          ) || 0
-        )
-      : editPaymentMethod === "cash"
-      ? String(
-          Number(
-            (sale as any).cash_amount
-          ) ||
-          Number(
-            sale.paid_amount
-          ) ||
-          0
-        )
-      : "0"
-  );
-
-  setUpiAmount(
-    editPaymentMethod === "split"
-      ? String(
-          Number(
-            (sale as any).upi_amount
-          ) || 0
-        )
-      : editPaymentMethod === "upi"
-      ? String(
-          Number(
-            (sale as any).upi_amount
-          ) ||
-          Number(
-            sale.paid_amount
-          ) ||
-          0
-        )
-      : "0"
   );
 
   /* =====================================================
@@ -2154,55 +2235,64 @@ return (
         </label>
 
         <input
-          type="date"
-          value={saleDate}
-          onChange={(e) =>
-            setSaleDate(
-              e.target.value
-            )
-          }
+          type="text"
+          inputMode="numeric"
+          value={saleDateDisplay}
+          onChange={(e) => {
+            const formatted = formatTypingDate(e.target.value);
+            setSaleDateDisplay(formatted);
+
+            const parsed = parseDateInput(formatted);
+            if (parsed) {
+              setSaleDate(parsed);
+            }
+          }}
+          onBlur={() => {
+            const parsed = parseDateInput(saleDateDisplay);
+
+            if (parsed) {
+              setSaleDate(parsed);
+              setSaleDateDisplay(formatDateInput(parsed));
+            } else {
+              setSaleDateDisplay(formatDateInput(saleDate));
+            }
+          }}
+          placeholder="DD/MM/YYYY"
+          maxLength={10}
           className="w-full border rounded-xl px-4 py-3"
         />
+
+        <p className="text-sm text-gray-500 mt-1">
+          Enter date as DD/MM/YYYY
+        </p>
       </div>
 
-      {/* CUSTOMER */}
+      {/* CUSTOMER + ROUTE SEARCH */}
 
-      <div>
-        <label className="block font-semibold mb-2">
-          Customer
-        </label>
+      <CustomerRouteSearch
+        customers={customers}
+        value={customerId}
+        onChange={setCustomerId}
+        disabled={loading || loadingData}
+        label="Customer / Route"
+      />
 
-        <select
-          value={customerId}
-          onChange={(e) =>
-            setCustomerId(
-              e.target.value
-            )
-          }
-          className="w-full border rounded-xl px-4 py-3"
-        >
-          <option value="">
-            Select Customer
-          </option>
+      {customerId && (
+        <div className="md:col-span-4">
+          <button
+            type="button"
+            disabled={loading || loadingData}
+            onClick={punchTodaysSale}
+            className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
+          >
+            ⚡ Punch Today's Sale
+          </button>
 
-          {customers.map(
-            (customer) => (
-              <option
-                key={
-                  customer.id
-                }
-                value={
-                  customer.id
-                }
-              >
-                {
-                  customer.customer_name
-                }
-              </option>
-            )
-          )}
-        </select>
-      </div>
+          <p className="mt-2 text-sm text-gray-500">
+            Loads the customer's last sale for today's entry. Check quantities before saving.
+          </p>
+        </div>
+      )}
 
       {/* PAYMENT */}
 
@@ -2216,7 +2306,7 @@ return (
             paymentMethod
           }
           onChange={(e) =>
-            handlePaymentMethodChange(
+            setPaymentMethod(
               e.target.value
             )
           }
@@ -2241,119 +2331,32 @@ return (
           <option value="Advance">
             Advance
           </option>
-
-          <option value="Split">
-            Split (Cash + UPI)
-          </option>
         </select>
       </div>
 
-      {isSplitPayment ? (
-        <>
-          <div>
-            <label className="block font-semibold mb-2">
-              Cash Received
-            </label>
+      {/* PAID */}
 
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={cashAmount}
-              onChange={(e) =>
-                setCashAmount(
-                  e.target.value
-                )
-              }
-              className="w-full border-2 border-green-200 rounded-xl px-4 py-3"
-              placeholder="0"
-            />
-          </div>
+      <div>
+        <label className="block font-semibold mb-2">
+          Amount Paid
+        </label>
 
-          <div>
-            <label className="block font-semibold mb-2">
-              UPI Received
-            </label>
-
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={upiAmount}
-              onChange={(e) =>
-                setUpiAmount(
-                  e.target.value
-                )
-              }
-              className="w-full border-2 border-blue-200 rounded-xl px-4 py-3"
-              placeholder="0"
-            />
-          </div>
-        </>
-      ) : (
-        <div>
-          <label className="block font-semibold mb-2">
-            Amount Paid
-          </label>
-
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={paidAmount}
-            onChange={(e) =>
-              setPaidAmount(
-                e.target.value
-              )
-            }
-            className="w-full border rounded-xl px-4 py-3"
-            placeholder="0"
-            readOnly={
-              paymentMethod.trim().toLowerCase() === "cash" ||
-              paymentMethod.trim().toLowerCase() === "upi"
-            }
-          />
-        </div>
-      )}
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={paidAmount}
+          onChange={(e) =>
+            setPaidAmount(
+              e.target.value
+            )
+          }
+          className="w-full border rounded-xl px-4 py-3"
+          placeholder="0"
+        />
+      </div>
 
     </div>
-
-    {isSplitPayment && (
-      <div className="mt-5 rounded-xl border-2 border-indigo-100 bg-indigo-50 p-4">
-        <p className="mb-3 font-semibold text-indigo-900">
-          Split Payment Summary
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <p className="text-sm text-slate-600">
-              Sale Total
-            </p>
-            <p className="text-xl font-bold text-slate-800">
-              ₹ {totalSale.toFixed(2)}
-            </p>
-          </div>
-
-          <div>
-            <p className="text-sm text-slate-600">
-              Total Paid
-            </p>
-            <p className="text-xl font-bold text-green-700">
-              ₹ {paid.toFixed(2)}
-            </p>
-          </div>
-
-          <div>
-            <p className="text-sm text-slate-600">
-              Balance
-            </p>
-            <p className="text-xl font-bold text-red-600">
-              ₹ {balance.toFixed(2)}
-            </p>
-          </div>
-        </div>
-      </div>
-    )}
 
     {/* ===================================================
         ADD PRODUCTS
@@ -3035,7 +3038,7 @@ return (
 
                   <td className="p-3">
                     {
-                      sale.sale_date
+                      formatDisplayDate(sale.sale_date)
                     }
                   </td>
 
