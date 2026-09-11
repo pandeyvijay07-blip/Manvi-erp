@@ -1,4 +1,4 @@
-const CACHE_NAME = "manvi-erp-v29-pwa-v1";
+const CACHE_NAME = "manvi-erp-v29-pwa-v2";
 
 const APP_SHELL = [
   "/",
@@ -9,7 +9,15 @@ const APP_SHELL = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then(async (cache) => {
+      for (const url of APP_SHELL) {
+        try {
+          await cache.add(url);
+        } catch (error) {
+          console.error("MANVI ERP cache failed:", url, error);
+        }
+      }
+    })
   );
 
   self.skipWaiting();
@@ -32,13 +40,10 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
 
-  if (request.method !== "GET") {
-    return;
-  }
+  if (request.method !== "GET") return;
 
   const url = new URL(request.url);
 
-  // Never cache Supabase/API requests.
   if (
     url.hostname.includes("supabase.co") ||
     url.pathname.startsWith("/rest/") ||
@@ -47,7 +52,6 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation requests use the app shell.
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(() => caches.match("/"))
@@ -59,10 +63,10 @@ self.addEventListener("fetch", (event) => {
     fetch(request)
       .then((response) => {
         if (response && response.status === 200) {
-          const responseClone = response.clone();
+          const copy = response.clone();
 
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, responseClone);
+            cache.put(request, copy);
           });
         }
 
