@@ -172,17 +172,14 @@ export default function CustomerLedger() {
         selectedCustomer.opening_balance
       );
 
-      // The current customers.opening_balance field is the authoritative
-      // opening balance for the live ledger.
-      //
-      // Do not reconstruct an older opening balance by adding historical
-      // collection amounts back. Those collections are already reflected in
-      // the current opening balance field and/or current sale balances.
+      // Use the customer's CURRENT opening_balance as the authoritative
+      // opening balance for this ledger. Historical collections must not be
+      // added back because they are already reflected in the live customer
+      // balance and/or sale balances.
       const originalOpeningBalance = currentOpeningBalance;
 
-      // Keep allocationRows loaded for compatibility with the existing
-      // collections schema, but do not use historical allocations to inflate
-      // the current opening balance.
+      // Allocations are intentionally not used to reconstruct opening balance.
+      // Keep the data loaded for compatibility with the existing schema.
       void allocationRows;
       void allocationsError;
 
@@ -193,15 +190,10 @@ export default function CustomerLedger() {
         0
       );
 
-      // The live customer balance is authoritative:
-      // current opening balance + unpaid balance remaining on current sales.
+      // The authoritative live outstanding is the current opening balance
+      // plus the unpaid balance remaining on current sales.
       const expectedOutstanding =
         currentOpeningBalance + currentSalesOutstanding;
-
-      // No historical-allocation reconciliation warning is needed because
-      // the ledger now uses the same live opening balance source as the
-      // customer's current outstanding calculation.
-      setReconciliationWarning("");
 
       const entries: LedgerEntry[] = [];
 
@@ -263,13 +255,12 @@ export default function CustomerLedger() {
         return { ...entry, balance: runningBalance };
       });
 
-      // With the current opening balance as the ledger opening entry,
-      // the transaction history should reconcile to the live balance.
-      // Keep the warning clear if the underlying transaction totals still
-      // differ for any unexpected data issue.
+      // The live outstanding is the authoritative customer balance.
+      // If the transaction history still does not reconcile, show a clear
+      // warning rather than changing database values or transaction history.
       if (Math.abs(runningBalance - expectedOutstanding) > 0.01) {
         setReconciliationWarning(
-          `Ledger ending balance ₹${runningBalance.toFixed(
+          `Ledger transaction balance ₹${runningBalance.toFixed(
             2
           )} differs from live outstanding ₹${expectedOutstanding.toFixed(
             2
@@ -424,15 +415,28 @@ export default function CustomerLedger() {
             </h2>
           </div>
 
-          <div className="bg-red-100 rounded-xl p-5 shadow">
-            <p className="text-gray-600">Outstanding</p>
+          <div className={`rounded-xl p-5 shadow ${
+            closingBalance < -0.01 ? "bg-amber-100" : "bg-red-100"
+          }`}>
+            <p className="text-gray-600">
+              {closingBalance < -0.01 ? "Advance / Excess Collection" : "Outstanding"}
+            </p>
             <h2
               className={`text-2xl font-bold mt-2 ${
-                closingBalance > 0 ? "text-red-600" : "text-green-600"
+                closingBalance < -0.01
+                  ? "text-amber-700"
+                  : closingBalance > 0
+                  ? "text-red-600"
+                  : "text-green-600"
               }`}
             >
-              ₹ {closingBalance.toFixed(2)}
+              ₹ {Math.abs(closingBalance).toFixed(2)}
             </h2>
+            {closingBalance < -0.01 && (
+              <p className="mt-1 text-sm font-medium text-amber-700">
+                Customer has paid more than the recorded outstanding amount.
+              </p>
+            )}
           </div>
         </div>
       )}
