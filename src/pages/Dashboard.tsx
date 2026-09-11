@@ -10,8 +10,6 @@ type Sale = {
   total_amount: number | string | null;
   paid_amount: number | string | null;
   balance_amount: number | string | null;
-  cash_amount: number | string | null;
-  upi_amount: number | string | null;
 };
 
 type Collection = {
@@ -20,8 +18,6 @@ type Collection = {
   collection_date: string | null;
   amount: number | string | null;
   payment_method: string | null;
-  cash_amount: number | string | null;
-  upi_amount: number | string | null;
 };
 
 type Expense = {
@@ -145,14 +141,14 @@ export default function Dashboard() {
         supabase
           .from("sales")
           .select(
-            "id, customer_id, sale_date, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount"
+            "id, customer_id, sale_date, payment_method, total_amount, paid_amount, balance_amount"
           )
           .order("sale_date", { ascending: false }),
 
         supabase
           .from("collections")
           .select(
-            "id, customer_id, collection_date, amount, payment_method, cash_amount, upi_amount"
+            "id, customer_id, collection_date, amount, payment_method"
           )
           .order("collection_date", { ascending: false }),
 
@@ -357,28 +353,26 @@ export default function Dashboard() {
           .trim()
           .toLowerCase();
 
-        const paid =
-          numberValue(row.paid_amount);
+        const paid = numberValue(
+          row.paid_amount
+        );
 
-        const total =
-          numberValue(row.total_amount);
-
-        const storedCash =
-          numberValue(row.cash_amount);
-
-        const fallback =
+        /*
+         * Older records can have paid_amount = 0
+         * while balance_amount contains the outstanding.
+         */
+        const effectivePaid =
           paid > 0
             ? paid
-            : total;
+            : Math.max(
+                numberValue(row.total_amount) -
+                  numberValue(row.balance_amount),
+                0
+              );
 
-        const cash =
-          storedCash > 0
-            ? storedCash
-            : method === "cash"
-            ? fallback
-            : 0;
-
-        return sum + cash;
+        return method === "cash"
+          ? sum + effectivePaid
+          : sum;
       }, 0),
     [todaySales]
   );
@@ -392,28 +386,22 @@ export default function Dashboard() {
           .trim()
           .toLowerCase();
 
-        const paid =
-          numberValue(row.paid_amount);
+        const paid = numberValue(
+          row.paid_amount
+        );
 
-        const total =
-          numberValue(row.total_amount);
-
-        const storedUpi =
-          numberValue(row.upi_amount);
-
-        const fallback =
+        const effectivePaid =
           paid > 0
             ? paid
-            : total;
+            : Math.max(
+                numberValue(row.total_amount) -
+                  numberValue(row.balance_amount),
+                0
+              );
 
-        const upi =
-          storedUpi > 0
-            ? storedUpi
-            : method === "upi"
-            ? fallback
-            : 0;
-
-        return sum + upi;
+        return method === "upi"
+          ? sum + effectivePaid
+          : sum;
       }, 0),
     [todaySales]
   );
@@ -448,65 +436,22 @@ export default function Dashboard() {
     () =>
       todayCollections.reduce(
         (sum, row) => {
-          const method =
-            String(
-              row.payment_method || "Cash"
-            )
-              .trim()
-              .toLowerCase();
+          const method = String(
+            row.payment_method || "cash"
+          )
+            .trim()
+            .toLowerCase();
 
-          const total =
-            numberValue(row.amount);
-
-          const storedCash =
-            numberValue(row.cash_amount);
-
-          const cash =
-            storedCash > 0
-              ? storedCash
-              : method === "cash"
-              ? total
-              : 0;
-
-          return sum + cash;
+          return method === "cash"
+            ? sum + numberValue(row.amount)
+            : sum;
         },
         0
       ),
     [todayCollections]
   );
 
-  const upiCollections = useMemo(
-    () =>
-      todayCollections.reduce(
-        (sum, row) => {
-          const method =
-            String(
-              row.payment_method || "Cash"
-            )
-              .trim()
-              .toLowerCase();
-
-          const total =
-            numberValue(row.amount);
-
-          const storedUpi =
-            numberValue(row.upi_amount);
-
-          const upi =
-            storedUpi > 0
-              ? storedUpi
-              : method === "upi"
-              ? total
-              : 0;
-
-          return sum + upi;
-        },
-        0
-      ),
-    [todayCollections]
-  );
-
-const nonCashCollections =
+  const nonCashCollections =
     Math.max(
       totalCollections -
         cashCollections,
@@ -814,17 +759,17 @@ const nonCashCollections =
    * Opening cash from previous saved closing is not loaded here,
    * so this card deliberately shows the movement components only.
    */
-  const todaysCashMovement =
+  const todayCashMovement =
     cashSales +
     cashCollections -
     cashPurchasePayments -
     totalExpenses;
 
   return (
-    <div className="min-h-full bg-slate-50 p-4 md:p-6">
+    <div className="min-h-full w-full min-w-0 max-w-full overflow-x-hidden bg-slate-50 p-3 sm:p-4 md:p-6">
       {/* HEADER */}
-      <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-600 p-6 text-white shadow-lg">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div className="mb-4 w-full min-w-0 max-w-full overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-600 p-4 sm:p-5 md:mb-6 md:p-6 text-white shadow-lg">
+        <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm font-semibold text-blue-100">
               MANVI MILK AGENCIES
@@ -850,7 +795,7 @@ const nonCashCollections =
             type="button"
             onClick={() => void loadDashboard()}
             disabled={loading}
-            className="rounded-xl bg-white px-5 py-3 font-bold text-blue-700 shadow hover:bg-blue-50 disabled:opacity-60"
+            className="w-full rounded-xl bg-white px-4 py-3 text-center font-bold text-blue-700 shadow hover:bg-blue-50 disabled:opacity-60 md:w-auto md:px-5"
           >
             {loading
               ? "Loading..."
@@ -873,7 +818,7 @@ const nonCashCollections =
       )}
 
       {/* PRIMARY CARDS */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid w-full min-w-0 max-w-full grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-2 md:gap-4 xl:grid-cols-4">
         <MetricCard
           title="Today's Sales"
           value={money(totalSales)}
@@ -900,7 +845,7 @@ const nonCashCollections =
       </div>
 
       {/* MASTER COUNTS */}
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mt-3 grid w-full min-w-0 max-w-full grid-cols-2 gap-2.5 sm:gap-3 md:mt-4 md:grid-cols-4">
         <SmallCard
           title="Customers"
           value={String(
@@ -931,7 +876,7 @@ const nonCashCollections =
       </div>
 
       {/* PAYMENT CARDS */}
-      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-3 grid w-full min-w-0 max-w-full grid-cols-2 gap-2.5 sm:gap-3 md:mt-4 md:grid-cols-2 xl:grid-cols-4">
         <SmallCard
           title="Cash Sales"
           value={money(cashSales)}
@@ -954,14 +899,14 @@ const nonCashCollections =
           value={money(
             cashCollections
           )}
-          footer={`UPI Collections: ${money(
-            upiCollections
+          footer={`Non-cash: ${money(
+            nonCashCollections
           )}`}
         />
       </div>
 
       {/* PROFIT */}
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="mt-4 grid w-full min-w-0 max-w-full grid-cols-2 gap-2.5 sm:gap-3 md:mt-6 md:grid-cols-2 lg:grid-cols-3">
         <ProfitCard
           label="Gross Profit"
           value={grossProfit}
@@ -972,7 +917,7 @@ const nonCashCollections =
           value={netProfit}
         />
 
-        <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+        <div className="min-w-0 w-full max-w-full rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4 md:p-5">
           <p className="text-sm font-semibold text-slate-500">
             Cost of Goods Sold
           </p>
@@ -1001,7 +946,7 @@ const nonCashCollections =
           </div>
 
           <p className="text-3xl font-bold text-blue-800">
-            {money(todaysCashMovement)}
+            {money(todayCashMovement)}
           </p>
         </div>
       </div>
@@ -1030,8 +975,8 @@ const nonCashCollections =
       </div>
 
       {/* TODAY SALES / PURCHASES */}
-      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+      <div className="mt-5 grid w-full min-w-0 max-w-full grid-cols-1 gap-4 md:mt-6 md:gap-6 xl:grid-cols-2">
+        <div className="min-w-0 w-full max-w-full rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4 md:p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-xl font-bold text-slate-800">
@@ -1127,7 +1072,7 @@ const nonCashCollections =
           </div>
         </div>
 
-        <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+        <div className="min-w-0 w-full max-w-full rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4 md:p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-xl font-bold text-slate-800">
@@ -1381,12 +1326,12 @@ function MetricCard({
   subtitle: string;
 }) {
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+    <div className="min-w-0 w-full max-w-full rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4 md:p-5">
       <p className="text-sm font-semibold text-slate-500">
         {title}
       </p>
 
-      <p className="mt-2 text-3xl font-bold text-slate-900">
+      <p className="mt-1 break-words text-2xl font-bold leading-tight text-slate-900 sm:text-3xl">
         {value}
       </p>
 
@@ -1407,12 +1352,12 @@ function SmallCard({
   footer?: string;
 }) {
   return (
-    <div className="rounded-2xl bg-blue-50 p-5 ring-1 ring-blue-100">
+    <div className="min-w-0 w-full max-w-full overflow-hidden rounded-2xl bg-blue-50 p-3 ring-1 ring-blue-100 sm:p-4 md:p-5">
       <p className="text-sm font-semibold text-slate-500">
         {title}
       </p>
 
-      <p className="mt-2 text-2xl font-bold text-blue-700">
+      <p className="mt-1 break-words text-xl font-bold leading-tight text-blue-700 sm:text-2xl">
         {value}
       </p>
 
@@ -1433,7 +1378,7 @@ function ProfitCard({
   value: number;
 }) {
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+    <div className="min-w-0 w-full max-w-full rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4 md:p-5">
       <p className="text-sm font-semibold text-slate-500">
         {label}
       </p>
