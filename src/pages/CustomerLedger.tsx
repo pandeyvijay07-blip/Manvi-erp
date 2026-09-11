@@ -172,31 +172,71 @@ export default function CustomerLedger() {
         selectedCustomer.opening_balance
       );
 
-      // Keep the ledger calculation based on the customer's current opening
-      // balance and the actual transaction history. Do not reconstruct or
-      // increase the opening balance from historical collection allocations.
-      const originalOpeningBalance = currentOpeningBalance;
+      let originalOpeningBalance = currentOpeningBalance;
+      let openingAppliedTotal = 0;
 
-      const calculatedOutstanding =
-        originalOpeningBalance + totalSales - paidAtSale - totalCollections;
+      // Collections are allocated first to outstanding sales.
+      // Any remaining amount is applied to the customer's opening balance.
+      // Since the current customer.opening_balance is reduced when that happens,
+      // add those historical opening allocations back to reconstruct the
+      // original opening balance for the ledger.
+      if (!allocationsError) {
+        const customerSaleIds = new Set(
+          saleRows.map((sale) => String(sale.id))
+        );
+        const allocatedByCollection = new Map<string, number>();
+        allocationRows.forEach((allocation) => {
+          // Count only allocations belonging to this customer's sales.
+          // This mirrors the SQL reconciliation and prevents unrelated
+          // allocation rows from affecting this customer's opening balance.
+          if (!customerSaleIds.has(String(allocation.sale_id))) return;
 
-      // Live outstanding is kept only as a reconciliation reference. The ledger
-      // balance itself remains transaction-derived.
+          const previous = allocatedByCollection.get(
+            String(allocation.collection_id)
+          ) || 0;
+          allocatedByCollection.set(
+            String(allocation.collection_id),
+            previous + toNumber(allocation.amount)
+          );
+        });
+
+        collectionRows.forEach((collection) => {
+          const collectionAmount = toNumber(collection.amount);
+          const allocatedToSales =
+            allocatedByCollection.get(String(collection.id)) || 0;
+          const openingApplied = Math.max(
+            0,
+            collectionAmount - allocatedToSales
+          );
+          openingAppliedTotal += openingApplied;
+        });
+
+        originalOpeningBalance =
+          currentOpeningBalance + openingAppliedTotal;
+      } else {
+        setReconciliationWarning(
+          "Collection allocations could not be read. The ledger is showing transaction history, but the reconstructed original opening balance may be incomplete."
+        );
+      }
+
+      // Current sales outstanding is the authoritative current balance of the
+      // sales rows after collection allocation.
       const currentSalesOutstanding = saleRows.reduce(
         (sum, sale) => sum + toNumber(sale.balance_amount),
         0
       );
+
+      const calculatedOutstanding =
+        originalOpeningBalance + totalSales - paidAtSale - totalCollections;
 
       const expectedOutstanding =
         currentOpeningBalance + currentSalesOutstanding;
 
       if (Math.abs(calculatedOutstanding - expectedOutstanding) > 0.01) {
         setReconciliationWarning(
-          `Ledger ending balance ₹${calculatedOutstanding.toFixed(
-            2
-          )} differs from live outstanding ₹${expectedOutstanding.toFixed(
-            2
-          )}. This usually means an older collection/opening adjustment needs review.`
+          `Balance reconciliation difference: ₹${Math.abs(
+            calculatedOutstanding - expectedOutstanding
+          ).toFixed(2)}. Review older collection allocations.`
         );
       }
 
@@ -418,32 +458,15 @@ export default function CustomerLedger() {
             </h2>
           </div>
 
-          <div
-            className={`rounded-xl p-5 shadow ${
-              closingBalance < -0.01 ? "bg-amber-100" : "bg-red-100"
-            }`}
-          >
-            <p className="text-gray-600">
-              {closingBalance < -0.01
-                ? "Advance / Excess Collection"
-                : "Outstanding"}
-            </p>
+          <div className="bg-red-100 rounded-xl p-5 shadow">
+            <p className="text-gray-600">Outstanding</p>
             <h2
               className={`text-2xl font-bold mt-2 ${
-                closingBalance < -0.01
-                  ? "text-amber-700"
-                  : closingBalance > 0
-                  ? "text-red-600"
-                  : "text-green-600"
+                closingBalance > 0 ? "text-red-600" : "text-green-600"
               }`}
             >
-              ₹ {Math.abs(closingBalance).toFixed(2)}
+              ₹ {closingBalance.toFixed(2)}
             </h2>
-            {closingBalance < -0.01 && (
-              <p className="mt-1 text-sm font-medium text-amber-700">
-                Customer has paid more than the recorded outstanding amount.
-              </p>
-            )}
           </div>
         </div>
       )}
