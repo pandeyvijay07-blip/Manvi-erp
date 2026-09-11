@@ -16,6 +16,19 @@ import {
   FiLogOut,
   FiUser,
   FiChevronDown,
+  FiHome,
+  FiShoppingCart,
+  FiTruck,
+  FiUsers,
+  FiTag,
+  FiBox,
+  FiDollarSign,
+  FiCreditCard,
+  FiBarChart2,
+  FiBookOpen,
+  FiCalendar,
+  FiUserCheck,
+  FiSettings,
 } from "react-icons/fi";
 
 import { supabase } from "../lib/supabase";
@@ -56,6 +69,25 @@ type CurrentUser = {
   role: string;
   active: boolean;
 };
+
+const mobileMenuItems = [
+  { name: "Dashboard", path: "/", icon: FiHome },
+  { name: "Sales", path: "/sales", icon: FiShoppingCart },
+  { name: "Purchases", path: "/purchases", icon: FiTruck },
+  { name: "Suppliers", path: "/suppliers", icon: FiUsers },
+  { name: "Brands", path: "/brands", icon: FiTag },
+  { name: "Products", path: "/products", icon: FiBox },
+  { name: "Customers", path: "/customers", icon: FiUsers },
+  { name: "Customer Prices", path: "/customer-prices", icon: FiDollarSign },
+  { name: "Walk-in Sales", path: "/walkin-sales", icon: FiShoppingCart },
+  { name: "Collections", path: "/collections", icon: FiDollarSign },
+  { name: "Expenses", path: "/expenses", icon: FiCreditCard },
+  { name: "Reports", path: "/reports", icon: FiBarChart2 },
+  { name: "Customer Ledger", path: "/customer-ledger", icon: FiBookOpen },
+  { name: "Daily Closing", path: "/daily-closing", icon: FiCalendar },
+  { name: "User Management", path: "/user-management", icon: FiUserCheck, ownerOnly: true },
+  { name: "Settings", path: "/settings", icon: FiSettings },
+];
 
 // ============================================
 // HEADER
@@ -425,6 +457,19 @@ export default function Header() {
       .toUpperCase() ||
     "U";
 
+  const isOwner = [
+    "owner",
+    "admin",
+    "administrator",
+  ].includes(
+    displayRole.trim().toLowerCase()
+  );
+
+  const visibleMobileMenuItems =
+    mobileMenuItems.filter(
+      (item) => !item.ownerOnly || isOwner
+    );
+
   // ==========================================
   // UI
   // ==========================================
@@ -441,9 +486,10 @@ export default function Header() {
         px-4
         md:px-6
         py-3
+        relative
         sticky
         top-0
-        z-30
+        z-50
       "
     >
 
@@ -803,165 +849,149 @@ export default function Header() {
       </div>
 
       {/* =====================================
-          MOBILE MENU
+          MOBILE LEFT NAVIGATION DRAWER
       ====================================== */}
 
       {mobileMenu && (
-
-        <div
-          className="
-            absolute
-            top-full
-            left-0
-            right-0
-            bg-white
-            shadow-lg
-            border-t
-            md:hidden
-            p-4
-          "
-        >
-
-          <div
+        <>
+          {/* Backdrop */}
+          <button
+            type="button"
+            aria-label="Close navigation menu"
+            onClick={() => setMobileMenu(false)}
             className="
-              grid
-              grid-cols-2
-              gap-2
+              fixed
+              inset-0
+              z-40
+              bg-slate-900/50
+              md:hidden
+            "
+          />
+
+          {/* Drawer */}
+          <aside
+            className="
+              fixed
+              left-0
+              top-0
+              bottom-0
+              z-50
+              flex
+              w-[82vw]
+              max-w-[360px]
+              flex-col
+              overflow-hidden
+              bg-white
+              shadow-2xl
+              md:hidden
             "
           >
+            {/* Drawer header */}
+            <div className="shrink-0 border-b border-slate-200 bg-white px-5 pb-4 pt-6">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-2xl font-bold text-blue-700 shadow-sm ring-1 ring-blue-100">
+                    M
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-xl font-bold text-blue-700">
+                      MANVI ERP
+                    </p>
+                    <p className="truncate text-xs font-medium text-slate-500">
+                      MANVI MILK AGENCIES
+                    </p>
+                  </div>
+                </div>
 
-            <button
-              onClick={() => {
-                setMobileMenu(false);
-                navigate("/sales");
-              }}
-              className="
-                p-3
-                rounded-lg
-                bg-blue-50
-                text-blue-700
-                font-semibold
-              "
-            >
-              Sales
-            </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileMenu(false)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xl text-slate-600 hover:bg-blue-50 hover:text-blue-700"
+                  aria-label="Close menu"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
 
-            <button
-              onClick={() => {
-                setMobileMenu(false);
-                navigate("/purchases");
-              }}
-              className="
-                p-3
-                rounded-lg
-                bg-blue-50
-                text-blue-700
-                font-semibold
-              "
-            >
-              Purchases
-            </button>
+            {/* Navigation */}
+            <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+              <div className="space-y-1">
+                {visibleMobileMenuItems.map((item) => {
+                  const Icon = item.icon;
+                  const active = location.pathname === item.path;
 
-            <button
-              onClick={() => {
-                setMobileMenu(false);
-                navigate("/brands");
-              }}
-              className="
-                p-3
-                rounded-lg
-                bg-blue-50
-                text-blue-700
-                font-semibold
-              "
-            >
-              Brands
-            </button>
+                  return (
+                    <button
+                      key={item.path}
+                      type="button"
+                      onClick={() => {
+                        setMobileMenu(false);
+                        navigate(item.path);
+                      }}
+                      className={`
+                        flex
+                        w-full
+                        items-center
+                        gap-4
+                        rounded-xl
+                        px-4
+                        py-3.5
+                        text-left
+                        transition
+                        ${
+                          active
+                            ? "bg-blue-600 text-white shadow-md"
+                            : "text-slate-700 hover:bg-blue-50 hover:text-blue-700"
+                        }
+                      `}
+                    >
+                      <Icon className="h-5 w-5 shrink-0" />
+                      <span className="truncate text-[15px] font-semibold">
+                        {item.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
 
-            <button
-              onClick={() => {
-                setMobileMenu(false);
-                navigate("/products");
-              }}
-              className="
-                p-3
-                rounded-lg
-                bg-blue-50
-                text-blue-700
-                font-semibold
-              "
-            >
-              Products
-            </button>
+              <div className="my-4 border-t border-slate-200" />
 
-            <button
-              onClick={() => {
-                setMobileMenu(false);
-                navigate("/customers");
-              }}
-              className="
-                p-3
-                rounded-lg
-                bg-blue-50
-                text-blue-700
-                font-semibold
-              "
-            >
-              Customers
-            </button>
+              {/* User */}
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-lg font-bold text-white">
+                    {avatarLetter}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-slate-800">
+                      {displayName}
+                    </p>
+                    <p className="truncate text-xs text-slate-500">
+                      {displayRole}
+                    </p>
+                  </div>
+                </div>
+              </div>
 
-            <button
-              onClick={() => {
-                setMobileMenu(false);
-                navigate("/reports");
-              }}
-              className="
-                p-3
-                rounded-lg
-                bg-blue-50
-                text-blue-700
-                font-semibold
-              "
-            >
-              Reports
-            </button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="mt-2 flex w-full items-center gap-4 rounded-xl px-4 py-3.5 text-left font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                <FiLogOut className="h-5 w-5 shrink-0" />
+                <span>{loggingOut ? "Logging out..." : "Logout"}</span>
+              </button>
+            </nav>
 
-            <button
-              onClick={() => {
-                setMobileMenu(false);
-                navigate("/profile");
-              }}
-              className="
-                p-3
-                rounded-lg
-                bg-blue-50
-                text-blue-700
-                font-semibold
-              "
-            >
-              Profile
-            </button>
-
-            <button
-              onClick={handleLogout}
-              disabled={loggingOut}
-              className="
-                p-3
-                rounded-lg
-                bg-red-50
-                text-red-600
-                font-semibold
-              "
-            >
-              {loggingOut
-                ? "Logging out..."
-                : "Logout"}
-            </button>
-
-          </div>
-
-        </div>
-
+            {/* Footer */}
+            <div className="shrink-0 border-t border-slate-200 px-5 py-4 text-xs text-slate-500">
+              <p className="font-semibold text-blue-700">MANVI ERP V29</p>
+              <p className="mt-1">Dairy Management System</p>
+            </div>
+          </aside>
+        </>
       )}
 
     </header>

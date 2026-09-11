@@ -22,23 +22,18 @@ import {
   FiCalendar,
   FiTag,
   FiUserCheck,
-  FiBook,
 } from "react-icons/fi";
 
 import Header from "./Header";
 import { supabase } from "../lib/supabase";
 
-// =====================================================
-// PROPS
-// =====================================================
-
 interface Props {
   children: ReactNode;
 }
 
-// =====================================================
+// ============================================
 // USER TYPE
-// =====================================================
+// ============================================
 
 type CurrentUser = {
   id: string;
@@ -48,9 +43,9 @@ type CurrentUser = {
   active: boolean;
 };
 
-// =====================================================
+// ============================================
 // MENU
-// =====================================================
+// ============================================
 
 const menu = [
   {
@@ -119,16 +114,6 @@ const menu = [
     icon: <FiCreditCard />,
   },
 
-  // ==========================================
-  // CASH BOOK
-  // ==========================================
-
-  {
-    name: "Cash Book",
-    path: "/cash-book",
-    icon: <FiBook />,
-  },
-
   {
     name: "Reports",
     path: "/reports",
@@ -159,16 +144,14 @@ const menu = [
   },
 ];
 
-// =====================================================
+// ============================================
 // LAYOUT
-// =====================================================
+// ============================================
 
 export default function Layout({
   children,
 }: Props) {
-
-  const location =
-    useLocation();
+  const location = useLocation();
 
   const [currentUser, setCurrentUser] =
     useState<CurrentUser | null>(null);
@@ -176,14 +159,12 @@ export default function Layout({
   const [loadingUser, setLoadingUser] =
     useState(true);
 
-  // ===================================================
+  // ==========================================
   // LOAD CURRENT USER
-  // ===================================================
+  // ==========================================
 
   async function loadCurrentUser() {
-
     try {
-
       setLoadingUser(true);
 
       // ----------------------------------------
@@ -197,14 +178,12 @@ export default function Layout({
         await supabase.auth.getSession();
 
       if (sessionError) {
-
         console.error(
           "MANVI GET SESSION ERROR:",
           sessionError
         );
 
         setCurrentUser(null);
-
         return;
       }
 
@@ -212,9 +191,7 @@ export default function Layout({
         sessionData.session?.user;
 
       if (!authUser) {
-
         setCurrentUser(null);
-
         return;
       }
 
@@ -225,26 +202,24 @@ export default function Layout({
       const {
         data,
         error,
-      } =
-        await supabase
-          .from("users")
-          .select(
-            `
-              id,
-              name,
-              email,
-              role,
-              active
-            `
-          )
-          .eq(
-            "id",
-            authUser.id
-          )
-          .maybeSingle();
+      } = await supabase
+        .from("users")
+        .select(
+          `
+            id,
+            name,
+            email,
+            role,
+            active
+          `
+        )
+        .eq(
+          "id",
+          authUser.id
+        )
+        .maybeSingle();
 
       if (error) {
-
         console.error(
           "MANVI LOAD USER ERROR:",
           error
@@ -255,7 +230,6 @@ export default function Layout({
         // --------------------------------------
 
         setCurrentUser({
-
           id: authUser.id,
 
           name:
@@ -271,26 +245,21 @@ export default function Layout({
             "Employee",
 
           active: true,
-
         });
 
         return;
       }
 
       if (data) {
-
         setCurrentUser(
           data as CurrentUser
         );
-
       } else {
-
         // --------------------------------------
         // FALLBACK
         // --------------------------------------
 
         setCurrentUser({
-
           id: authUser.id,
 
           name:
@@ -306,34 +275,25 @@ export default function Layout({
             "Employee",
 
           active: true,
-
         });
-
       }
-
     } catch (error) {
-
       console.error(
         "MANVI CURRENT USER ERROR:",
         error
       );
 
       setCurrentUser(null);
-
     } finally {
-
       setLoadingUser(false);
-
     }
-
   }
 
-  // ===================================================
+  // ==========================================
   // INITIAL USER LOAD
-  // ===================================================
+  // ==========================================
 
   useEffect(() => {
-
     loadCurrentUser();
 
     const {
@@ -341,34 +301,22 @@ export default function Layout({
     } =
       supabase.auth.onAuthStateChange(
         (_event, session) => {
-
           if (!session?.user) {
-
             setCurrentUser(null);
-
           } else {
-
-            // Delay avoids Supabase auth lock issues
-            setTimeout(() => {
-              loadCurrentUser();
-            }, 0);
-
+            loadCurrentUser();
           }
-
         }
       );
 
     return () => {
-
       authListener.subscription.unsubscribe();
-
     };
-
   }, []);
 
-  // ===================================================
+  // ==========================================
   // ROLE CHECK
-  // ===================================================
+  // ==========================================
 
   const userRole =
     currentUser?.role
@@ -380,49 +328,38 @@ export default function Layout({
     userRole === "admin" ||
     userRole === "administrator";
 
-  // ===================================================
+  // ==========================================
   // FILTER MENU
-  // ===================================================
+  // ==========================================
 
   const visibleMenu =
     menu.filter((item) => {
-
       if (item.ownerOnly) {
         return isOwner;
       }
 
       return true;
-
     });
 
-  // ===================================================
+  // ==========================================
   // ACTIVE PAGE
-  // ===================================================
+  // ==========================================
 
   function isActive(
     path: string
   ) {
-
     return (
       location.pathname === path
     );
-
   }
 
-  // ===================================================
+  // ==========================================
   // LOADING
-  // ===================================================
+  // ==========================================
 
   if (loadingUser) {
-
     return (
-      <div
-        className="
-          min-h-screen
-          bg-slate-100
-          flex
-        "
-      >
+      <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-hidden bg-slate-100 flex">
 
         {/* SIDEBAR */}
 
@@ -445,21 +382,9 @@ export default function Layout({
           "
         >
 
-          <div
-            className="
-              p-5
-              border-b
-              border-blue-500
-            "
-          >
+          <div className="p-5 border-b border-blue-500">
 
-            <div
-              className="
-                flex
-                items-center
-                gap-3
-              "
-            >
+            <div className="flex items-center gap-3">
 
               <div
                 className="
@@ -481,21 +406,11 @@ export default function Layout({
 
               <div>
 
-                <h1
-                  className="
-                    text-xl
-                    font-bold
-                  "
-                >
+                <h1 className="text-xl font-bold">
                   MANVI ERP
                 </h1>
 
-                <p
-                  className="
-                    text-xs
-                    text-blue-100
-                  "
-                >
+                <p className="text-xs text-blue-100">
                   MANVI MILK AGENCIES
                 </p>
 
@@ -519,9 +434,7 @@ export default function Layout({
           "
         >
 
-          <div
-            className="text-center"
-          >
+          <div className="text-center">
 
             <div
               className="
@@ -537,12 +450,7 @@ export default function Layout({
               "
             />
 
-            <p
-              className="
-                font-semibold
-                text-blue-700
-              "
-            >
+            <p className="font-semibold text-blue-700">
               Loading MANVI ERP...
             </p>
 
@@ -552,22 +460,14 @@ export default function Layout({
 
       </div>
     );
-
   }
 
-  // ===================================================
+  // ==========================================
   // MAIN UI
-  // ===================================================
+  // ==========================================
 
   return (
-
-    <div
-      className="
-        min-h-screen
-        bg-slate-100
-        flex
-      "
-    >
+    <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-hidden bg-slate-100 flex">
 
       {/* ======================================
           SIDEBAR
@@ -604,13 +504,7 @@ export default function Layout({
           "
         >
 
-          <div
-            className="
-              flex
-              items-center
-              gap-3
-            "
-          >
+          <div className="flex items-center gap-3">
 
             <div
               className="
@@ -632,21 +526,11 @@ export default function Layout({
 
             <div>
 
-              <h1
-                className="
-                  text-xl
-                  font-bold
-                "
-              >
+              <h1 className="text-xl font-bold">
                 MANVI ERP
               </h1>
 
-              <p
-                className="
-                  text-xs
-                  text-blue-100
-                "
-              >
+              <p className="text-xs text-blue-100">
                 MANVI MILK AGENCIES
               </p>
 
@@ -669,21 +553,11 @@ export default function Layout({
           "
         >
 
-          <p
-            className="
-              text-xs
-              text-blue-200
-            "
-          >
+          <p className="text-xs text-blue-200">
             Logged in as
           </p>
 
-          <p
-            className="
-              font-semibold
-              truncate
-            "
-          >
+          <p className="font-semibold truncate">
             {currentUser?.name || "User"}
           </p>
 
@@ -721,10 +595,11 @@ export default function Layout({
             (item) => {
 
               const active =
-                isActive(item.path);
+                isActive(
+                  item.path
+                );
 
               return (
-
                 <Link
                   key={item.path}
                   to={item.path}
@@ -745,11 +620,7 @@ export default function Layout({
                   `}
                 >
 
-                  <span
-                    className="
-                      text-lg
-                    "
-                  >
+                  <span className="text-lg">
                     {item.icon}
                   </span>
 
@@ -758,9 +629,7 @@ export default function Layout({
                   </span>
 
                 </Link>
-
               );
-
             }
           )}
 
@@ -784,11 +653,7 @@ export default function Layout({
             MANVI ERP V29
           </p>
 
-          <p
-            className="
-              mt-1
-            "
-          >
+          <p className="mt-1">
             Dairy Management System
           </p>
 
@@ -802,9 +667,13 @@ export default function Layout({
 
       <div
         className="
-          flex-1
           flex
+          flex-1
+          min-w-0
+          w-full
+          max-w-full
           flex-col
+          overflow-x-hidden
           md:ml-64
         "
       >
@@ -818,9 +687,13 @@ export default function Layout({
         <main
           className="
             flex-1
-            p-4
+            min-w-0
+            w-full
+            max-w-full
+            overflow-x-hidden
+            p-3
+            sm:p-4
             md:p-6
-            overflow-auto
           "
         >
 
@@ -831,6 +704,5 @@ export default function Layout({
       </div>
 
     </div>
-
   );
 }
