@@ -444,12 +444,23 @@ customerId,
 ]);
 
 /* =========================================================
-PUNCH TODAY'S SALE
-Loads the customer's latest previous sale and prepares
-the same products/quantities as today's draft.
-It does NOT save until Save Sale is pressed.
+YESTERDAY'S SALE
+Loads the selected customer's sale from the previous
+calendar day into today's draft.
+It does NOT save automatically. The loaded sale remains
+fully editable before Save Sale is pressed.
 ========================================================= */
-async function punchTodaysSale() {
+function getPreviousSaleDate(value: string) {
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() - 1);
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+}
+
+async function loadYesterdaysSale() {
   if (!customerId) {
     alert("Please select a customer first.");
     return;
@@ -457,6 +468,8 @@ async function punchTodaysSale() {
 
   try {
     setLoading(true);
+
+    const yesterdayDate = getPreviousSaleDate(saleDate);
 
     const {
       data: previousSale,
@@ -471,8 +484,8 @@ async function punchTodaysSale() {
         paid_amount
       `)
       .eq("customer_id", customerId)
-      .lt("sale_date", saleDate)
-      .order("sale_date", { ascending: false })
+      .eq("sale_date", yesterdayDate)
+      .order("id", { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -481,7 +494,11 @@ async function punchTodaysSale() {
     }
 
     if (!previousSale) {
-      alert("No previous sale found for this customer.");
+      alert(
+        `No sale found for this customer on ${formatDisplayDate(
+          yesterdayDate
+        )}.`
+      );
       return;
     }
 
@@ -505,7 +522,7 @@ async function punchTodaysSale() {
     }
 
     if (!previousItems || previousItems.length === 0) {
-      alert("Previous sale has no products.");
+      alert("Yesterday's sale has no products.");
       return;
     }
 
@@ -557,10 +574,13 @@ async function punchTodaysSale() {
     );
 
     if (validItems.length === 0) {
-      alert("Previous sale products could not be found.");
+      alert("Yesterday's sale products could not be found in Products.");
       return;
     }
 
+    // Load into the current draft only.
+    // The user can edit quantities/products/rates/payment
+    // and must press Save Sale to create today's sale.
     setSaleItems(validItems);
     setPaymentMethod(previousSale.payment_method || "Cash");
     setPaidAmount("0");
@@ -577,14 +597,14 @@ async function punchTodaysSale() {
     });
 
     alert(
-      `Today's sale prepared from ${formatDisplayDate(
+      `Yesterday's sale (${formatDisplayDate(
         previousSale.sale_date
-      )}.\n\nPlease check the quantities and press Save Sale.`
+      )}) loaded.\n\nYou can edit the products or quantities, then press Save Sale.`
     );
   } catch (error: any) {
-    console.error("Punch today's sale error:", error);
+    console.error("Load yesterday's sale error:", error);
     alert(
-      "Unable to punch today's sale:\n" +
+      "Unable to load yesterday's sale:\n" +
         (error?.message || "Unknown error")
     );
   } finally {
@@ -2282,14 +2302,14 @@ return (
           <button
             type="button"
             disabled={loading || loadingData}
-            onClick={punchTodaysSale}
+            onClick={loadYesterdaysSale}
             className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
           >
-            ⚡ Punch Today's Sale
+            📋 Yesterday's Sale
           </button>
 
           <p className="mt-2 text-sm text-gray-500">
-            Loads the customer's last sale for today's entry. Check quantities before saving.
+            Loads the customer's sale from yesterday. You can edit it before saving.
           </p>
         </div>
       )}
