@@ -9,6 +9,22 @@ type ExpenseRow = {
   remarks: string | null;
 };
 
+type EmployeeRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  role: string | null;
+  active: boolean | null;
+};
+
+type HolidayRow = {
+  id: string;
+  holiday_date: string | null;
+  employee_id: string | null;
+  holiday_type: string | null;
+  reason: string | null;
+};
+
 function getTodayLocalDate() {
   const now = new Date();
 
@@ -259,8 +275,35 @@ export default function Expenses() {
     setErrorMessage,
   ] = useState("");
 
+  // =========================================================
+  // EMPLOYEE PAYOUT / ADVANCE / HOLIDAY
+  // =========================================================
+  const [isOwner, setIsOwner] = useState(false);
+  const [employees, setEmployees] = useState<EmployeeRow[]>([]);
+  const [employeeLoading, setEmployeeLoading] = useState(false);
+
+  const [employeeEntryType, setEmployeeEntryType] =
+    useState<"salary" | "advance" | "holiday">("salary");
+
+  const [employeeDateDisplay, setEmployeeDateDisplay] =
+    useState(formatDateDDMMYYYY(today));
+  const [employeeId, setEmployeeId] = useState("");
+  const [employeeAmount, setEmployeeAmount] = useState("");
+  const [employeeRemarks, setEmployeeRemarks] = useState("");
+
+  const [holidayDateDisplay, setHolidayDateDisplay] =
+    useState(formatDateDDMMYYYY(today));
+  const [holidayEmployeeId, setHolidayEmployeeId] = useState("all");
+  const [holidayType, setHolidayType] =
+    useState<"Paid" | "Unpaid">("Paid");
+  const [holidayReason, setHolidayReason] = useState("");
+  const [holidays, setHolidays] = useState<HolidayRow[]>([]);
+  const [holidayLoading, setHolidayLoading] = useState(false);
+  const [employeeSaving, setEmployeeSaving] = useState(false);
+
   const defaultCategories = [
     "Employee Salary",
+    "Employee Advance",
     "Rent",
     "Electricity",
     "Fuel",
@@ -270,6 +313,336 @@ export default function Expenses() {
     "Office Expense",
     "Other Expense",
   ];
+
+  async function loadCurrentUserRole() {
+    try {
+      const {
+        data: sessionData,
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        throw sessionError;
+      }
+
+      const authUser = sessionData.session?.user;
+      if (!authUser) {
+        setIsOwner(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("users")
+        .select("role, active")
+        .eq("id", authUser.id)
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      const role = String(data?.role || "").trim().toLowerCase();
+      setIsOwner(
+        data?.active !== false &&
+        (role === "owner" ||
+          role === "admin" ||
+          role === "administrator")
+      );
+    } catch (error) {
+      console.error("LOAD EXPENSE USER ROLE ERROR:", error);
+      setIsOwner(false);
+    }
+  }
+
+  async function loadEmployees() {
+    if (!isOwner) {
+      setEmployees([]);
+      return;
+    }
+
+    setEmployeeLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("users")
+        .select("id, name, email, role, active")
+        .eq("active", true)
+        .eq("role", "Employee")
+        .order("name", { ascending: true });
+
+      if (error) {
+        throw error;
+      }
+
+      setEmployees((data || []) as EmployeeRow[]);
+    } catch (error) {
+      console.error("LOAD EMPLOYEES ERROR:", error);
+      setEmployees([]);
+      alert(
+        `Unable to load employees.\n\n${getErrorMessage(
+          error,
+          "Employee list could not be loaded."
+        )}`
+      );
+    } finally {
+      setEmployeeLoading(false);
+    }
+  }
+
+  async function loadHolidays() {
+    if (!isOwner) {
+      setHolidays([]);
+      return;
+    }
+
+    setHolidayLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("employee_holidays")
+        .select(
+          `
+            id,
+            holiday_date,
+            employee_id,
+            holiday_type,
+            reason
+          `
+        )
+        .order("holiday_date", { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      setHolidays((data || []) as HolidayRow[]);
+    } catch (error) {
+      console.error("LOAD HOLIDAYS ERROR:", error);
+      setHolidays([]);
+      console.warn(
+        "Holiday management requires the employee_holidays table."
+      );
+    } finally {
+      setHolidayLoading(false);
+    }
+  }
+
+  function getEmployeeName(employeeIdValue: string) {
+    return (
+      employees.find(
+        (employee) => employee.id === employeeIdValue
+      )?.name ||
+      "Employee"
+    );
+  }
+
+  function resetEmployeeForm() {
+    setEmployeeDateDisplay(formatDateDDMMYYYY(today));
+    setEmployeeId("");
+    setEmployeeAmount("");
+    setEmployeeRemarks("");
+  }
+
+  async function saveEmployeeTransaction(
+    transactionType: "salary" | "advance"
+  ) {
+    if (!isOwner) {
+      alert("Only the Owner can record employee payout or advance.");
+      return;
+    }
+
+    const normalizedDate = parseDDMMYYYY(employeeDateDisplay);
+
+    if (!normalizedDate) {
+      alert(
+        "Please enter a valid employee payment date in DD/MM/YYYY format."
+      );
+      return;
+    }
+
+    if (!employeeId) {
+      alert("Please select an employee.");
+      return;
+    }
+
+    const numericAmount = Number(employeeAmount);
+
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+
+    const employeeName = getEmployeeName(employeeId);
+    const category =
+      transactionType === "salary"
+        ? "Employee Salary"
+        : "Employee Advance";
+
+    const detail = employeeRemarks.trim();
+
+    const remarksText = detail
+      ? `Employee: ${employeeName} | ${detail}`
+      : `Employee: ${employeeName}`;
+
+    setEmployeeSaving(true);
+    setErrorMessage("");
+
+    try {
+      const { error } = await supabase
+        .from("expenses")
+        .insert({
+          expense_date: normalizedDate,
+          category,
+          amount: numericAmount,
+          remarks: remarksText,
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      alert(
+        transactionType === "salary"
+          ? `Employee payout saved for ${employeeName}.`
+          : `Employee advance saved for ${employeeName}.`
+      );
+
+      resetEmployeeForm();
+      await loadExpenses();
+    } catch (error) {
+      console.error(
+        "SAVE EMPLOYEE TRANSACTION ERROR:",
+        error
+      );
+
+      const message = getErrorMessage(
+        error,
+        "Unable to save employee payment."
+      );
+
+      setErrorMessage(message);
+      alert(`Unable to save employee payment.\n\n${message}`);
+    } finally {
+      setEmployeeSaving(false);
+    }
+  }
+
+  async function saveHoliday() {
+    if (!isOwner) {
+      alert("Only the Owner can record holidays.");
+      return;
+    }
+
+    const normalizedDate = parseDDMMYYYY(holidayDateDisplay);
+
+    if (!normalizedDate) {
+      alert(
+        "Please enter a valid holiday date in DD/MM/YYYY format."
+      );
+      return;
+    }
+
+    if (!holidayReason.trim()) {
+      alert("Please enter a holiday reason.");
+      return;
+    }
+
+    setHolidayLoading(true);
+
+    try {
+      const { error } = await supabase
+        .from("employee_holidays")
+        .insert({
+          holiday_date: normalizedDate,
+          employee_id:
+            holidayEmployeeId === "all"
+              ? null
+              : holidayEmployeeId,
+          holiday_type: holidayType,
+          reason: holidayReason.trim(),
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      alert("Holiday saved successfully.");
+
+      setHolidayDateDisplay(formatDateDDMMYYYY(today));
+      setHolidayEmployeeId("all");
+      setHolidayType("Paid");
+      setHolidayReason("");
+
+      await loadHolidays();
+    } catch (error) {
+      console.error("SAVE HOLIDAY ERROR:", error);
+
+      const message = getErrorMessage(
+        error,
+        "Unable to save holiday."
+      );
+
+      alert(
+        `Unable to save holiday.\n\n${message}\n\nRun the MANVI ERP V29 holiday SQL once in Supabase if the table does not exist.`
+      );
+    } finally {
+      setHolidayLoading(false);
+    }
+  }
+
+  async function deleteHoliday(holiday: HolidayRow) {
+    if (!isOwner) {
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete holiday ${formatDateDDMMYYYY(
+          holiday.holiday_date
+        )}?`
+      )
+    ) {
+      return;
+    }
+
+    setHolidayLoading(true);
+
+    try {
+      const { error } = await supabase
+        .from("employee_holidays")
+        .delete()
+        .eq("id", holiday.id);
+
+      if (error) {
+        throw error;
+      }
+
+      await loadHolidays();
+    } catch (error) {
+      console.error("DELETE HOLIDAY ERROR:", error);
+      alert(
+        `Unable to delete holiday.\n\n${getErrorMessage(
+          error,
+          "Unknown error."
+        )}`
+      );
+    } finally {
+      setHolidayLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadCurrentUserRole();
+  }, []);
+
+  useEffect(() => {
+    if (!isOwner) {
+      return;
+    }
+
+    void loadEmployees();
+    void loadHolidays();
+  }, [isOwner]);
 
   async function loadExpenses() {
     setLoading(true);
@@ -712,6 +1085,40 @@ export default function Expenses() {
       );
     }, [expenses]);
 
+  const employeeSalaryThisMonth = useMemo(
+    () =>
+      expenses
+        .filter(
+          (expense) =>
+            expense.category === "Employee Salary" &&
+            String(expense.expense_date || "").slice(0, 7) ===
+              today.slice(0, 7)
+        )
+        .reduce(
+          (sum, expense) =>
+            sum + numberValue(expense.amount),
+          0
+        ),
+    [expenses, today]
+  );
+
+  const employeeAdvanceThisMonth = useMemo(
+    () =>
+      expenses
+        .filter(
+          (expense) =>
+            expense.category === "Employee Advance" &&
+            String(expense.expense_date || "").slice(0, 7) ===
+              today.slice(0, 7)
+        )
+        .reduce(
+          (sum, expense) =>
+            sum + numberValue(expense.amount),
+          0
+        ),
+    [expenses, today]
+  );
+
   function handleDateChange(
     value: string
   ) {
@@ -732,6 +1139,16 @@ export default function Expenses() {
         parsed
       );
     }
+  }
+
+  function handleEmployeeDateChange(value: string) {
+    const display = formatDateInput(value);
+    setEmployeeDateDisplay(display);
+  }
+
+  function handleHolidayDateChange(value: string) {
+    const display = formatDateInput(value);
+    setHolidayDateDisplay(display);
   }
 
   return (
@@ -810,6 +1227,350 @@ export default function Expenses() {
           className="text-blue-700"
         />
       </div>
+
+      {/* EMPLOYEE PAYOUT / ADVANCE / HOLIDAY */}
+      {isOwner && (
+        <div className="mb-6 rounded-2xl bg-white p-6 shadow-lg">
+          <div className="mb-5">
+            <h2 className="text-xl font-bold text-slate-800">
+              Employee Payments & Holiday
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Employee payout and advance are recorded as cash expenses.
+              Holiday records do not affect cash.
+            </p>
+          </div>
+
+          <div className="mb-5 grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-2">
+            <button
+              type="button"
+              onClick={() => setEmployeeEntryType("salary")}
+              className={`rounded-lg px-3 py-3 text-sm font-bold ${
+                employeeEntryType === "salary"
+                  ? "bg-blue-600 text-white shadow"
+                  : "text-slate-700 hover:bg-white"
+              }`}
+            >
+              💰 Employee Payout
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setEmployeeEntryType("advance")}
+              className={`rounded-lg px-3 py-3 text-sm font-bold ${
+                employeeEntryType === "advance"
+                  ? "bg-orange-500 text-white shadow"
+                  : "text-slate-700 hover:bg-white"
+              }`}
+            >
+              💵 Employee Advance
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setEmployeeEntryType("holiday")}
+              className={`rounded-lg px-3 py-3 text-sm font-bold ${
+                employeeEntryType === "holiday"
+                  ? "bg-green-600 text-white shadow"
+                  : "text-slate-700 hover:bg-white"
+              }`}
+            >
+              📅 Holiday
+            </button>
+          </div>
+
+          {employeeEntryType !== "holiday" ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Payment Date
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={employeeDateDisplay}
+                  onChange={(e) =>
+                    handleEmployeeDateChange(e.target.value)
+                  }
+                  placeholder="DD/MM/YYYY"
+                  maxLength={10}
+                  className="w-full rounded-lg border border-slate-300 p-3 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Employee
+                </label>
+                <select
+                  value={employeeId}
+                  onChange={(e) => setEmployeeId(e.target.value)}
+                  disabled={employeeLoading || employeeSaving}
+                  className="w-full rounded-lg border border-slate-300 bg-white p-3 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">
+                    {employeeLoading
+                      ? "Loading employees..."
+                      : employees.length === 0
+                      ? "No active employees"
+                      : "Select employee"}
+                  </option>
+
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name || employee.email || "Employee"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Amount
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={employeeAmount}
+                  onChange={(e) => setEmployeeAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded-lg border border-slate-300 p-3 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Type
+                </label>
+                <div
+                  className={`rounded-lg p-3 font-bold ${
+                    employeeEntryType === "salary"
+                      ? "border border-blue-200 bg-blue-50 text-blue-700"
+                      : "border border-orange-200 bg-orange-50 text-orange-700"
+                  }`}
+                >
+                  {employeeEntryType === "salary"
+                    ? "Employee Salary / Payout"
+                    : "Employee Advance"}
+                </div>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Remarks
+                </label>
+                <input
+                  type="text"
+                  value={employeeRemarks}
+                  onChange={(e) => setEmployeeRemarks(e.target.value)}
+                  placeholder={
+                    employeeEntryType === "salary"
+                      ? "Example: September salary"
+                      : "Example: Advance for personal requirement"
+                  }
+                  className="w-full rounded-lg border border-slate-300 p-3 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="md:col-span-2 flex flex-col gap-3 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void saveEmployeeTransaction(employeeEntryType)
+                  }
+                  disabled={
+                    employeeSaving ||
+                    employeeLoading ||
+                    employees.length === 0
+                  }
+                  className={`rounded-lg px-6 py-3 font-bold text-white disabled:cursor-not-allowed disabled:opacity-50 ${
+                    employeeEntryType === "salary"
+                      ? "bg-blue-600 hover:bg-blue-700"
+                      : "bg-orange-500 hover:bg-orange-600"
+                  }`}
+                >
+                  {employeeSaving
+                    ? "Saving..."
+                    : employeeEntryType === "salary"
+                    ? "Save Employee Payout"
+                    : "Save Employee Advance"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetEmployeeForm}
+                  disabled={employeeSaving}
+                  className="rounded-lg bg-slate-500 px-6 py-3 font-bold text-white hover:bg-slate-600 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Holiday Date
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={holidayDateDisplay}
+                  onChange={(e) =>
+                    handleHolidayDateChange(e.target.value)
+                  }
+                  placeholder="DD/MM/YYYY"
+                  maxLength={10}
+                  className="w-full rounded-lg border border-slate-300 p-3 focus:border-green-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Applies To
+                </label>
+                <select
+                  value={holidayEmployeeId}
+                  onChange={(e) =>
+                    setHolidayEmployeeId(e.target.value)
+                  }
+                  disabled={holidayLoading}
+                  className="w-full rounded-lg border border-slate-300 bg-white p-3 focus:border-green-500 focus:outline-none"
+                >
+                  <option value="all">All Employees</option>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name || employee.email || "Employee"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Holiday Type
+                </label>
+                <select
+                  value={holidayType}
+                  onChange={(e) =>
+                    setHolidayType(
+                      e.target.value as "Paid" | "Unpaid"
+                    )
+                  }
+                  className="w-full rounded-lg border border-slate-300 bg-white p-3 focus:border-green-500 focus:outline-none"
+                >
+                  <option value="Paid">Paid Holiday</option>
+                  <option value="Unpaid">Unpaid Holiday</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  Reason
+                </label>
+                <input
+                  type="text"
+                  value={holidayReason}
+                  onChange={(e) => setHolidayReason(e.target.value)}
+                  placeholder="Example: Festival Holiday"
+                  className="w-full rounded-lg border border-slate-300 p-3 focus:border-green-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <button
+                  type="button"
+                  onClick={() => void saveHoliday()}
+                  disabled={holidayLoading}
+                  className="rounded-lg bg-green-600 px-6 py-3 font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {holidayLoading ? "Saving..." : "Save Holiday"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <SummaryCard
+              title="Employee Payout — This Month"
+              value={employeeSalaryThisMonth}
+              className="text-blue-700"
+            />
+            <SummaryCard
+              title="Employee Advance — This Month"
+              value={employeeAdvanceThisMonth}
+              className="text-orange-600"
+            />
+          </div>
+
+          {holidays.length > 0 && (
+            <div className="mt-6 overflow-hidden rounded-xl border border-green-100">
+              <div className="border-b bg-green-50 p-4">
+                <h3 className="font-bold text-slate-800">
+                  Holiday History
+                </h3>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[700px]">
+                  <thead className="bg-green-700 text-white">
+                    <tr>
+                      <th className="p-3 text-left">Date</th>
+                      <th className="p-3 text-left">Employee</th>
+                      <th className="p-3 text-left">Type</th>
+                      <th className="p-3 text-left">Reason</th>
+                      <th className="p-3 text-center">Action</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {holidays.map((holiday) => (
+                      <tr
+                        key={holiday.id}
+                        className="border-b last:border-b-0 hover:bg-slate-50"
+                      >
+                        <td className="p-3">
+                          {formatDateDDMMYYYY(holiday.holiday_date)}
+                        </td>
+                        <td className="p-3 font-semibold">
+                          {holiday.employee_id === null
+                            ? "All Employees"
+                            : getEmployeeName(holiday.employee_id)}
+                        </td>
+                        <td className="p-3">
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-bold ${
+                              holiday.holiday_type === "Paid"
+                                ? "bg-green-100 text-green-700"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {holiday.holiday_type || "-"}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-600">
+                          {holiday.reason || "-"}
+                        </td>
+                        <td className="p-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => void deleteHoliday(holiday)}
+                            disabled={holidayLoading}
+                            className="rounded bg-red-600 px-3 py-1 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* FORM */}
       <div className="mb-6 rounded-2xl bg-white p-6 shadow-lg">
