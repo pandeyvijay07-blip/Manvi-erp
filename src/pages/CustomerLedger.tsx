@@ -41,32 +41,19 @@ function toNumber(value: unknown): number {
 
 function getDateKey(value: unknown): string {
   if (!value) return "";
-
   const text = String(value).trim();
-
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
-    return text.slice(0, 10);
-  }
-
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(text)) {
     const [d, m, y] = text.split("/");
-
-    return `${y}-${String(Number(m)).padStart(
-      2,
-      "0"
-    )}-${String(Number(d)).padStart(2, "0")}`;
+    return `${y}-${String(Number(m)).padStart(2, "0")}-${String(Number(d)).padStart(2, "0")}`;
   }
-
   return "";
 }
 
 function formatDateDDMMYYYY(value: unknown): string {
   const key = getDateKey(value);
-
   if (!key) return "-";
-
   const [year, month, day] = key.split("-");
-
   return `${day}/${month}/${year}`;
 }
 
@@ -89,16 +76,13 @@ export default function CustomerLedger() {
 
   async function loadCustomers() {
     setLoadingCustomers(true);
-
     try {
       const { data, error } = await supabase
         .from("customers")
         .select("id, customer_name, opening_balance")
         .order("customer_name", { ascending: true });
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       setCustomers(
         (data || []).map((row: any) => ({
@@ -109,7 +93,6 @@ export default function CustomerLedger() {
       );
     } catch (error: any) {
       console.error("CUSTOMER LOAD ERROR:", error);
-
       alert(
         "Unable to load customers:\n" +
           (error?.message || "Failed to load customers.")
@@ -133,216 +116,81 @@ export default function CustomerLedger() {
         throw new Error("Customer not found.");
       }
 
-      const [
-        {
-          data: salesData,
-          error: salesError,
-        },
-        {
-          data: collectionsData,
-          error: collectionsError,
-        },
-      ] = await Promise.all([
-        supabase
-          .from("sales")
-          .select(
-            "id, sale_no, sale_date, total_amount, paid_amount, balance_amount"
-          )
-          .eq("customer_id", customerId)
-          .order("sale_date", { ascending: true })
-          .order("created_at", { ascending: true }),
+      const [{ data: salesData, error: salesError }, { data: collectionsData, error: collectionsError }] =
+        await Promise.all([
+          supabase
+            .from("sales")
+            .select(
+              "id, sale_no, sale_date, total_amount, paid_amount, balance_amount"
+            )
+            .eq("customer_id", customerId)
+            .order("sale_date", { ascending: true })
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("collections")
+            .select(
+              "id, collection_date, amount, payment_method, remarks"
+            )
+            .eq("customer_id", customerId)
+            .order("collection_date", { ascending: true })
+            .order("created_at", { ascending: true }),
+        ]);
 
-        supabase
-          .from("collections")
-          .select(
-            "id, collection_date, amount, payment_method, remarks"
-          )
-          .eq("customer_id", customerId)
-          .order("collection_date", { ascending: true })
-          .order("created_at", { ascending: true }),
-      ]);
-
-      if (salesError) {
-        throw salesError;
-      }
-
-      if (collectionsError) {
-        throw collectionsError;
-      }
+      if (salesError) throw salesError;
+      if (collectionsError) throw collectionsError;
 
       const saleRows = (salesData || []) as SaleRow[];
-
       const collectionRows = (collectionsData || []) as CollectionRow[];
-
-      /*
-       * ------------------------------------------------------------
-       * TOTAL SALES
-       * ------------------------------------------------------------
-       */
 
       const totalSales = saleRows.reduce(
         (sum, sale) => sum + toNumber(sale.total_amount),
         0
       );
 
-      /*
-       * ------------------------------------------------------------
-       * PAID AT SALE
-       * ------------------------------------------------------------
-       */
-
       const paidAtSale = saleRows.reduce(
         (sum, sale) => sum + toNumber(sale.paid_amount),
         0
       );
 
-      /*
-       * ------------------------------------------------------------
-       * TOTAL COLLECTIONS
-       * ------------------------------------------------------------
-       */
-
       const totalCollections = collectionRows.reduce(
-        (sum, collection) =>
-          sum + toNumber(collection.amount),
+        (sum, collection) => sum + toNumber(collection.amount),
         0
       );
-
-      /*
-       * ------------------------------------------------------------
-       * CURRENT OPENING BALANCE
-       *
-       * This is the current value stored in customers.opening_balance.
-       * It is the authoritative live opening balance.
-       * ------------------------------------------------------------
-       */
 
       const currentOpeningBalance = toNumber(
         selectedCustomer.opening_balance
       );
 
-      /*
-       * ------------------------------------------------------------
-       * CURRENT SALES OUTSTANDING
-       *
-       * balance_amount is the current unpaid amount remaining
-       * on all sales.
-       *
-       * This is more reliable than old collection_allocations
-       * for reconstructing the current customer balance.
-       * ------------------------------------------------------------
-       */
-
+      // Current unpaid amount on all sales. This is the live sales component
+      // of the customer's outstanding balance.
       const currentSalesOutstanding = saleRows.reduce(
-        (sum, sale) =>
-          sum + toNumber(sale.balance_amount),
+        (sum, sale) => sum + toNumber(sale.balance_amount),
         0
       );
 
-      /*
-       * ------------------------------------------------------------
-       * NET SALES DEBT BEFORE COLLECTIONS
-       *
-       * Example:
-       *
-       * Total Sales     40104
-       * Paid at Sale     9508
-       * ----------------------
-       * Net Sales Debt  30596
-       * ------------------------------------------------------------
-       */
-
-      const netSalesBeforeCollections = Math.max(
-        0,
-        totalSales - paidAtSale
-      );
-
-      /*
-       * ------------------------------------------------------------
-       * COLLECTIONS APPLIED TO SALES
-       *
-       * We determine this from the current remaining sale balance.
-       *
-       * This avoids depending on old/incomplete
-       * collection_allocations records.
-       * ------------------------------------------------------------
-       */
-
-      const collectionsAppliedToSales = Math.min(
-        totalCollections,
-        Math.max(
-          0,
-          netSalesBeforeCollections -
-            currentSalesOutstanding
-        )
-      );
-
-      /*
-       * ------------------------------------------------------------
-       * COLLECTIONS APPLIED TO OLD OPENING BALANCE
-       *
-       * Any collection beyond the amount required to settle
-       * sales was used against the customer's opening balance.
-       * ------------------------------------------------------------
-       */
-
-      const openingAppliedTotal = Math.max(
-        0,
-        totalCollections -
-          collectionsAppliedToSales
-      );
-
-      /*
-       * ------------------------------------------------------------
-       * HISTORICAL / LEDGER OPENING BALANCE
-       *
-       * The customer's current opening balance may already have
-       * been reduced by old collections.
-       *
-       * Therefore:
-       *
-       * Ledger Opening =
-       * Current Opening +
-       * Historical Opening Collections
-       * ------------------------------------------------------------
-       */
-
-      const originalOpeningBalance =
-        currentOpeningBalance +
-        openingAppliedTotal;
-
-      /*
-       * ------------------------------------------------------------
-       * AUTHORITATIVE LIVE OUTSTANDING
-       *
-       * Current Opening Balance
-       * +
-       * Current unpaid Sales
-       * ------------------------------------------------------------
-       */
-
+      // Authoritative live outstanding: current customer opening balance plus
+      // unpaid balance remaining on current sales.
       const expectedOutstanding =
-        currentOpeningBalance +
-        currentSalesOutstanding;
+        currentOpeningBalance + currentSalesOutstanding;
 
-      /*
-       * The reconstructed opening balance should make the complete
-       * transaction history finish at the same amount as the live
-       * customer outstanding.
-       */
+      // The ledger contains the COMPLETE transaction history (opening balance,
+      // every sale, paid-at-sale amount and every collection). Therefore the
+      // historical opening balance must be the residual that makes the complete
+      // transaction history end at the same authoritative live outstanding.
+      //
+      // Opening + Sales - PaidAtSale - Collections = Live Outstanding
+      // Opening = Live Outstanding - Sales + PaidAtSale + Collections
+      //
+      // This avoids relying on old/incomplete collection_allocations records.
+      const originalOpeningBalance =
+        expectedOutstanding -
+        totalSales +
+        paidAtSale +
+        totalCollections;
 
       const entries: LedgerEntry[] = [];
 
-      /*
-       * ------------------------------------------------------------
-       * OPENING BALANCE ENTRY
-       * ------------------------------------------------------------
-       */
-
-      if (
-        Math.abs(originalOpeningBalance) >
-        0.000001
-      ) {
+      if (Math.abs(originalOpeningBalance) > 0.000001) {
         entries.push({
           id: `opening-${customerId}`,
           date: "0000-01-01",
@@ -354,141 +202,56 @@ export default function CustomerLedger() {
         });
       }
 
-      /*
-       * ------------------------------------------------------------
-       * SALES
-       * ------------------------------------------------------------
-       */
-
       saleRows.forEach((sale) => {
         entries.push({
           id: `sale-${sale.id}`,
-
-          date:
-            getDateKey(sale.sale_date) ||
-            "9999-12-31",
-
+          date: getDateKey(sale.sale_date) || "9999-12-31",
           type: "Sale",
-
           reference:
-            sale.sale_no !== null &&
-            sale.sale_no !== undefined
+            sale.sale_no !== null && sale.sale_no !== undefined
               ? `Sale No. ${sale.sale_no}`
               : "Sale",
-
-          debit: toNumber(
-            sale.total_amount
-          ),
-
-          credit: toNumber(
-            sale.paid_amount
-          ),
-
+          debit: toNumber(sale.total_amount),
+          credit: toNumber(sale.paid_amount),
           balance: 0,
         });
       });
-
-      /*
-       * ------------------------------------------------------------
-       * COLLECTIONS
-       * ------------------------------------------------------------
-       */
 
       collectionRows.forEach((collection) => {
         entries.push({
           id: `collection-${collection.id}`,
-
-          date:
-            getDateKey(
-              collection.collection_date
-            ) || "9999-12-31",
-
+          date: getDateKey(collection.collection_date) || "9999-12-31",
           type: "Collection",
-
-          reference:
-            collection.payment_method
-              ? `${collection.payment_method} collection`
-              : "Collection",
-
+          reference: collection.payment_method
+            ? `${collection.payment_method} collection`
+            : "Collection",
           debit: 0,
-
-          credit: toNumber(
-            collection.amount
-          ),
-
+          credit: toNumber(collection.amount),
           balance: 0,
         });
       });
 
-      /*
-       * ------------------------------------------------------------
-       * SORT LEDGER
-       * ------------------------------------------------------------
-       */
-
       entries.sort((a, b) => {
-        if (
-          a.type === "Opening Balance" &&
-          b.type !== "Opening Balance"
-        ) {
+        if (a.type === "Opening Balance" && b.type !== "Opening Balance") {
           return -1;
         }
-
-        if (
-          b.type === "Opening Balance" &&
-          a.type !== "Opening Balance"
-        ) {
+        if (b.type === "Opening Balance" && a.type !== "Opening Balance") {
           return 1;
         }
-
-        if (a.date !== b.date) {
-          return a.date.localeCompare(
-            b.date
-          );
-        }
-
+        if (a.date !== b.date) return a.date.localeCompare(b.date);
         return a.id.localeCompare(b.id);
       });
 
-      /*
-       * ------------------------------------------------------------
-       * RUNNING BALANCE
-       * ------------------------------------------------------------
-       */
-
       let runningBalance = 0;
+      const finalLedger = entries.map((entry) => {
+        runningBalance += entry.debit - entry.credit;
+        return { ...entry, balance: runningBalance };
+      });
 
-      const finalLedger = entries.map(
-        (entry) => {
-          runningBalance +=
-            entry.debit -
-            entry.credit;
-
-          return {
-            ...entry,
-            balance: runningBalance,
-          };
-        }
-      );
-
-      /*
-       * ------------------------------------------------------------
-       * FINAL RECONCILIATION
-       *
-       * The ledger must finish at the same value as:
-       *
-       * current opening balance
-       * +
-       * current sales outstanding
-       * ------------------------------------------------------------
-       */
-
-      if (
-        Math.abs(
-          runningBalance -
-            expectedOutstanding
-        ) > 0.01
-      ) {
+      // Final safety check: the ledger ending balance must match the live
+      // customer outstanding. If it does not, keep the warning visible rather
+      // than changing any database data automatically.
+      if (Math.abs(runningBalance - expectedOutstanding) > 0.01) {
         setReconciliationWarning(
           `Ledger ending balance ₹${runningBalance.toFixed(
             2
@@ -500,141 +263,57 @@ export default function CustomerLedger() {
         setReconciliationWarning("");
       }
 
-      /*
-       * ------------------------------------------------------------
-       * SAVE LEDGER TO STATE
-       * ------------------------------------------------------------
-       */
-
       setLedger(finalLedger);
     } catch (error: any) {
-      console.error(
-        "LEDGER ERROR:",
-        error
-      );
-
+      console.error("LEDGER ERROR:", error);
       setLedger([]);
-
       alert(
         "Failed to load customer ledger:\n" +
-          (error?.message ||
-            "Unknown error")
+          (error?.message || "Unknown error")
       );
     } finally {
       setLoading(false);
     }
   }
 
-  /*
-   * --------------------------------------------------------------
-   * OPENING BALANCE TOTAL
-   * --------------------------------------------------------------
-   */
-
   const openingBalance = useMemo(
     () =>
       ledger
-        .filter(
-          (entry) =>
-            entry.type ===
-            "Opening Balance"
-        )
-        .reduce(
-          (sum, entry) =>
-            sum + entry.debit,
-          0
-        ),
+        .filter((entry) => entry.type === "Opening Balance")
+        .reduce((sum, entry) => sum + entry.debit, 0),
     [ledger]
   );
-
-  /*
-   * --------------------------------------------------------------
-   * TOTAL SALES
-   * --------------------------------------------------------------
-   */
 
   const totalSales = useMemo(
     () =>
       ledger
-        .filter(
-          (entry) =>
-            entry.type === "Sale"
-        )
-        .reduce(
-          (sum, entry) =>
-            sum + entry.debit,
-          0
-        ),
+        .filter((entry) => entry.type === "Sale")
+        .reduce((sum, entry) => sum + entry.debit, 0),
     [ledger]
   );
-
-  /*
-   * --------------------------------------------------------------
-   * PAID AT SALE
-   * --------------------------------------------------------------
-   */
 
   const paidAtSale = useMemo(
     () =>
       ledger
-        .filter(
-          (entry) =>
-            entry.type === "Sale"
-        )
-        .reduce(
-          (sum, entry) =>
-            sum + entry.credit,
-          0
-        ),
+        .filter((entry) => entry.type === "Sale")
+        .reduce((sum, entry) => sum + entry.credit, 0),
     [ledger]
   );
-
-  /*
-   * --------------------------------------------------------------
-   * TOTAL COLLECTIONS
-   * --------------------------------------------------------------
-   */
 
   const totalCollections = useMemo(
     () =>
       ledger
-        .filter(
-          (entry) =>
-            entry.type === "Collection"
-        )
-        .reduce(
-          (sum, entry) =>
-            sum + entry.credit,
-          0
-        ),
+        .filter((entry) => entry.type === "Collection")
+        .reduce((sum, entry) => sum + entry.credit, 0),
     [ledger]
   );
-
-  /*
-   * --------------------------------------------------------------
-   * FINAL CLOSING BALANCE
-   * --------------------------------------------------------------
-   */
 
   const closingBalance = useMemo(
-    () =>
-      ledger.length > 0
-        ? ledger[
-            ledger.length - 1
-          ].balance
-        : 0,
+    () => (ledger.length > 0 ? ledger[ledger.length - 1].balance : 0),
     [ledger]
   );
 
-  /*
-   * --------------------------------------------------------------
-   * CUSTOMER CHANGE
-   * --------------------------------------------------------------
-   */
-
-  const handleCustomerChange = (
-    value: string
-  ) => {
+  const handleCustomerChange = (value: string) => {
     setCustomerId(value);
     setLedger([]);
     setReconciliationWarning("");
@@ -642,366 +321,187 @@ export default function CustomerLedger() {
 
   return (
     <div className="max-w-7xl mx-auto p-6">
-      {/* =========================================================
-          PAGE HEADER
-          ========================================================= */}
-
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-blue-700">
-          Customer Ledger
-        </h1>
-
+        <h1 className="text-3xl font-bold text-blue-700">Customer Ledger</h1>
         <p className="text-gray-600 mt-1">
-          Sales, payments, collections and
-          outstanding balance
+          Sales, payments, collections and outstanding balance
         </p>
       </div>
-
-      {/* =========================================================
-          CUSTOMER SELECTOR
-          ========================================================= */}
 
       <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
         <div className="flex flex-col md:flex-row gap-4">
           <select
             value={customerId}
-            onChange={(e) =>
-              handleCustomerChange(
-                e.target.value
-              )
-            }
+            onChange={(e) => handleCustomerChange(e.target.value)}
             disabled={loadingCustomers}
             className="border rounded-lg p-3 flex-1"
           >
             <option value="">
-              {loadingCustomers
-                ? "Loading customers..."
-                : "Select Customer"}
+              {loadingCustomers ? "Loading customers..." : "Select Customer"}
             </option>
-
-            {customers.map(
-              (customer) => (
-                <option
-                  key={customer.id}
-                  value={customer.id}
-                >
-                  {
-                    customer.customer_name
-                  }
-                </option>
-              )
-            )}
+            {customers.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.customer_name}
+              </option>
+            ))}
           </select>
 
           <button
             type="button"
             onClick={loadLedger}
-            disabled={
-              loading ||
-              !customerId
-            }
+            disabled={loading || !customerId}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-8 py-3 rounded-lg font-semibold"
           >
-            {loading
-              ? "Loading..."
-              : "Load Ledger"}
+            {loading ? "Loading..." : "Load Ledger"}
           </button>
         </div>
-
-        {/* =======================================================
-            CUSTOMER INFORMATION
-            ======================================================= */}
 
         {selectedCustomer && (
           <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="font-semibold text-blue-700">
-              Customer:{" "}
-              {
-                selectedCustomer.customer_name
-              }
+              Customer: {selectedCustomer.customer_name}
             </p>
-
             <p className="text-gray-600 mt-1">
-              Current Opening Balance
-              Field: ₹
-              {toNumber(
-                selectedCustomer.opening_balance
-              ).toFixed(2)}
+              Current Opening Balance Field: ₹
+              {toNumber(selectedCustomer.opening_balance).toFixed(2)}
             </p>
-
             <p className="text-xs text-gray-500 mt-1">
-              Ledger opening balance is
-              reconstructed from the current
-              opening balance and settled sales
-              history.
+              Ledger opening balance is calculated from the complete transaction history and reconciles to live outstanding.
             </p>
           </div>
         )}
       </div>
 
-      {/* =========================================================
-          RECONCILIATION WARNING
-          ========================================================= */}
-
       {reconciliationWarning && (
         <div className="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded-xl p-4 mb-6">
-          <strong>
-            Reconciliation Warning:
-          </strong>{" "}
-          {reconciliationWarning}
+          <strong>Reconciliation Warning:</strong> {reconciliationWarning}
         </div>
       )}
 
-      {/* =========================================================
-          SUMMARY CARDS
-          ========================================================= */}
-
       {customerId && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-
-          {/* Opening Balance */}
-
           <div className="bg-orange-100 rounded-xl p-5 shadow">
-            <p className="text-gray-600">
-              Opening Balance
-            </p>
-
+            <p className="text-gray-600">Opening Balance</p>
             <h2 className="text-2xl font-bold text-orange-700 mt-2">
-              ₹{" "}
-              {openingBalance.toFixed(
-                2
-              )}
+              ₹ {openingBalance.toFixed(2)}
             </h2>
           </div>
-
-          {/* Total Sales */}
 
           <div className="bg-blue-100 rounded-xl p-5 shadow">
-            <p className="text-gray-600">
-              Total Sales
-            </p>
-
+            <p className="text-gray-600">Total Sales</p>
             <h2 className="text-2xl font-bold text-blue-700 mt-2">
-              ₹{" "}
-              {totalSales.toFixed(
-                2
-              )}
+              ₹ {totalSales.toFixed(2)}
             </h2>
           </div>
-
-          {/* Paid at Sale */}
 
           <div className="bg-cyan-100 rounded-xl p-5 shadow">
-            <p className="text-gray-600">
-              Paid at Sale
-            </p>
-
+            <p className="text-gray-600">Paid at Sale</p>
             <h2 className="text-2xl font-bold text-cyan-700 mt-2">
-              ₹{" "}
-              {paidAtSale.toFixed(
-                2
-              )}
+              ₹ {paidAtSale.toFixed(2)}
             </h2>
           </div>
-
-          {/* Collections */}
 
           <div className="bg-green-100 rounded-xl p-5 shadow">
-            <p className="text-gray-600">
-              Collections
-            </p>
-
+            <p className="text-gray-600">Collections</p>
             <h2 className="text-2xl font-bold text-green-700 mt-2">
-              ₹{" "}
-              {totalCollections.toFixed(
-                2
-              )}
+              ₹ {totalCollections.toFixed(2)}
             </h2>
           </div>
 
-          {/* Outstanding / Advance */}
-
-          <div
-            className={`rounded-xl p-5 shadow ${
-              closingBalance < -0.01
-                ? "bg-amber-100"
-                : "bg-red-100"
-            }`}
-          >
+          <div className={`rounded-xl p-5 shadow ${
+            closingBalance < -0.01 ? "bg-amber-100" : "bg-red-100"
+          }`}>
             <p className="text-gray-600">
-              {closingBalance <
-              -0.01
-                ? "Advance / Excess Collection"
-                : "Outstanding"}
+              {closingBalance < -0.01 ? "Advance / Excess Collection" : "Outstanding"}
             </p>
-
             <h2
               className={`text-2xl font-bold mt-2 ${
-                closingBalance <
-                -0.01
+                closingBalance < -0.01
                   ? "text-amber-700"
-                  : closingBalance >
-                    0
+                  : closingBalance > 0
                   ? "text-red-600"
                   : "text-green-600"
               }`}
             >
-              ₹{" "}
-              {Math.abs(
-                closingBalance
-              ).toFixed(2)}
+              ₹ {Math.abs(closingBalance).toFixed(2)}
             </h2>
-
-            {closingBalance <
-              -0.01 && (
+            {closingBalance < -0.01 && (
               <p className="mt-1 text-sm font-medium text-amber-700">
-                Customer has paid more
-                than the recorded
-                outstanding amount.
+                Customer has paid more than the recorded outstanding amount.
               </p>
             )}
           </div>
         </div>
       )}
 
-      {/* =========================================================
-          LEDGER TABLE
-          ========================================================= */}
-
       <div className="bg-white rounded-xl shadow-lg overflow-x-auto">
         <table className="w-full min-w-[900px] border-collapse">
-
-          {/* TABLE HEADER */}
-
           <thead className="bg-blue-600 text-white">
             <tr>
-              <th className="p-3 text-left">
-                Date
-              </th>
-
-              <th className="p-3 text-left">
-                Type
-              </th>
-
-              <th className="p-3 text-left">
-                Reference
-              </th>
-
-              <th className="p-3 text-right">
-                Debit
-              </th>
-
-              <th className="p-3 text-right">
-                Credit
-              </th>
-
-              <th className="p-3 text-right">
-                Balance
-              </th>
+              <th className="p-3 text-left">Date</th>
+              <th className="p-3 text-left">Type</th>
+              <th className="p-3 text-left">Reference</th>
+              <th className="p-3 text-right">Debit</th>
+              <th className="p-3 text-right">Credit</th>
+              <th className="p-3 text-right">Balance</th>
             </tr>
           </thead>
-
-          {/* TABLE BODY */}
 
           <tbody>
             {ledger.length === 0 ? (
               <tr>
-                <td
-                  colSpan={6}
-                  className="p-8 text-center text-gray-500"
-                >
+                <td colSpan={6} className="p-8 text-center text-gray-500">
                   {customerId
                     ? "No ledger records found. Click Load Ledger."
                     : "Select a customer and load the ledger."}
                 </td>
               </tr>
             ) : (
-              ledger.map(
-                (entry) => (
-                  <tr
-                    key={entry.id}
-                    className="border-b hover:bg-gray-50"
-                  >
+              ledger.map((entry) => (
+                <tr key={entry.id} className="border-b hover:bg-gray-50">
+                  <td className="p-3">
+                    {entry.type === "Opening Balance"
+                      ? "-"
+                      : formatDateDDMMYYYY(entry.date)}
+                  </td>
 
-                    {/* DATE */}
-
-                    <td className="p-3">
-                      {entry.type ===
-                      "Opening Balance"
-                        ? "-"
-                        : formatDateDDMMYYYY(
-                            entry.date
-                          )}
-                    </td>
-
-                    {/* TYPE */}
-
-                    <td className="p-3">
-                      <span
-                        className={`px-3 py-1 rounded-full text-sm font-medium ${
-                          entry.type ===
-                          "Sale"
-                            ? "bg-blue-100 text-blue-700"
-                            : entry.type ===
-                              "Collection"
-                            ? "bg-green-100 text-green-700"
-                            : "bg-orange-100 text-orange-700"
-                        }`}
-                      >
-                        {
-                          entry.type
-                        }
-                      </span>
-                    </td>
-
-                    {/* REFERENCE */}
-
-                    <td className="p-3 font-medium">
-                      {
-                        entry.reference
-                      }
-                    </td>
-
-                    {/* DEBIT */}
-
-                    <td className="p-3 text-right">
-                      {entry.debit >
-                      0
-                        ? `₹ ${entry.debit.toFixed(
-                            2
-                          )}`
-                        : "-"}
-                    </td>
-
-                    {/* CREDIT */}
-
-                    <td className="p-3 text-right">
-                      {entry.credit >
-                      0
-                        ? `₹ ${entry.credit.toFixed(
-                            2
-                          )}`
-                        : "-"}
-                    </td>
-
-                    {/* RUNNING BALANCE */}
-
-                    <td
-                      className={`p-3 text-right font-bold ${
-                        entry.balance >
-                        0
-                          ? "text-red-600"
-                          : "text-green-600"
+                  <td className="p-3">
+                    <span
+                      className={`px-3 py-1 rounded-full text-sm font-medium ${
+                        entry.type === "Sale"
+                          ? "bg-blue-100 text-blue-700"
+                          : entry.type === "Collection"
+                          ? "bg-green-100 text-green-700"
+                          : "bg-orange-100 text-orange-700"
                       }`}
                     >
-                      ₹{" "}
-                      {entry.balance.toFixed(
-                        2
-                      )}
-                    </td>
-                  </tr>
-                )
-              )
+                      {entry.type}
+                    </span>
+                  </td>
+
+                  <td className="p-3 font-medium">{entry.reference}</td>
+
+                  <td className="p-3 text-right">
+                    {entry.debit > 0
+                      ? `₹ ${entry.debit.toFixed(2)}`
+                      : "-"}
+                  </td>
+
+                  <td className="p-3 text-right">
+                    {entry.credit > 0
+                      ? `₹ ${entry.credit.toFixed(2)}`
+                      : "-"}
+                  </td>
+
+                  <td
+                    className={`p-3 text-right font-bold ${
+                      entry.balance > 0 ? "text-red-600" : "text-green-600"
+                    }`}
+                  >
+                    ₹ {entry.balance.toFixed(2)}
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
