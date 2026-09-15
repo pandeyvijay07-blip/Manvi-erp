@@ -49,6 +49,7 @@ const pageTitles: Record<string, string> = {
   "/walkin-sales": "Walk-in Sales",
   "/collections": "Collections",
   "/expenses": "Expenses",
+  "/cash-book": "Cash Book",
   "/reports": "Reports",
   "/customer-ledger": "Customer Ledger",
   "/daily-closing": "Daily Closing",
@@ -82,6 +83,7 @@ const mobileMenuItems = [
   { name: "Walk-in Sales", path: "/walkin-sales", icon: FiShoppingCart },
   { name: "Collections", path: "/collections", icon: FiDollarSign },
   { name: "Expenses", path: "/expenses", icon: FiCreditCard },
+  { name: "Cash Book", path: "/cash-book", icon: FiBookOpen },
   { name: "Reports", path: "/reports", icon: FiBarChart2 },
   { name: "Customer Ledger", path: "/customer-ledger", icon: FiBookOpen },
   { name: "Daily Closing", path: "/daily-closing", icon: FiCalendar },
@@ -361,6 +363,8 @@ export default function Header() {
       navigate("/collections");
     } else if (text === "expenses") {
       navigate("/expenses");
+    } else if (text === "cash book" || text === "cashbook") {
+      navigate("/cash-book");
     } else if (text === "profile") {
       navigate("/profile");
     } else if (

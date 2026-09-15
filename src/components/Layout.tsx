@@ -115,6 +115,12 @@ const menu = [
   },
 
   {
+    name: "Cash Book",
+    path: "/cash-book",
+    icon: <FiBookOpen />,
+  },
+
+  {
     name: "Reports",
     path: "/reports",
     icon: <FiBarChart2 />,

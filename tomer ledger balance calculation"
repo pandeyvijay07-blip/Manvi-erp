@@ -1,0 +1,98 @@
+[1mdiff --git a/src/pages/CustomerLedger.tsx b/src/pages/CustomerLedger.tsx[m
+[1mindex 3d4186a..5f6ee09 100644[m
+[1m--- a/src/pages/CustomerLedger.tsx[m
+[1m+++ b/src/pages/CustomerLedger.tsx[m
+[36m@@ -172,17 +172,14 @@[m [mexport default function CustomerLedger() {[m
+         selectedCustomer.opening_balance[m
+       );[m
+ [m
+[31m-      // The current customers.opening_balance field is the authoritative[m
+[31m-      // opening balance for the live ledger.[m
+[31m-      //[m
+[31m-      // Do not reconstruct an older opening balance by adding historical[m
+[31m-      // collection amounts back. Those collections are already reflected in[m
+[31m-      // the current opening balance field and/or current sale balances.[m
+[32m+[m[32m      // Use the customer's CURRENT opening_balance as the authoritative[m
+[32m+[m[32m      // opening balance for this ledger. Historical collections must not be[m
+[32m+[m[32m      // added back because they are already reflected in the live customer[m
+[32m+[m[32m      // balance and/or sale balances.[m
+       const originalOpeningBalance = currentOpeningBalance;[m
+ [m
+[31m-      // Keep allocationRows loaded for compatibility with the existing[m
+[31m-      // collections schema, but do not use historical allocations to inflate[m
+[31m-      // the current opening balance.[m
+[32m+[m[32m      // Allocations are intentionally not used to reconstruct opening balance.[m
+[32m+[m[32m      // Keep the data loaded for compatibility with the existing schema.[m
+       void allocationRows;[m
+       void allocationsError;[m
+ [m
+[36m@@ -193,16 +190,11 @@[m [mexport default function CustomerLedger() {[m
+         0[m
+       );[m
+ [m
+[31m-      // The live customer balance is authoritative:[m
+[31m-      // current opening balance + unpaid balance remaining on current sales.[m
+[32m+[m[32m      // The authoritative live outstanding is the current opening balance[m
+[32m+[m[32m      // plus the unpaid balance remaining on current sales.[m
+       const expectedOutstanding =[m
+         currentOpeningBalance + currentSalesOutstanding;[m
+ [m
+[31m-      // No historical-allocation reconciliation warning is needed because[m
+[31m-      // the ledger now uses the same live opening balance source as the[m
+[31m-      // customer's current outstanding calculation.[m
+[31m-      setReconciliationWarning("");[m
+[31m-[m
+       const entries: LedgerEntry[] = [];[m
+ [m
+       if (Math.abs(originalOpeningBalance) > 0.000001) {[m
+[36m@@ -263,13 +255,12 @@[m [mexport default function CustomerLedger() {[m
+         return { ...entry, balance: runningBalance };[m
+       });[m
+ [m
+[31m-      // With the current opening balance as the ledger opening entry,[m
+[31m-      // the transaction history should reconcile to the live balance.[m
+[31m-      // Keep the warning clear if the underlying transaction totals still[m
+[31m-      // differ for any unexpected data issue.[m
+[32m+[m[32m      // The live outstanding is the authoritative customer balance.[m
+[32m+[m[32m      // If the transaction history still does not reconcile, show a clear[m
+[32m+[m[32m      // warning rather than changing database values or transaction history.[m
+       if (Math.abs(runningBalance - expectedOutstanding) > 0.01) {[m
+         setReconciliationWarning([m
+[31m-          `Ledger ending balance ₹${runningBalance.toFixed([m
+[32m+[m[32m          `Ledger transaction balance ₹${runningBalance.toFixed([m
+             2[m
+           )} differs from live outstanding ₹${expectedOutstanding.toFixed([m
+             2[m
+[36m@@ -424,15 +415,28 @@[m [mexport default function CustomerLedger() {[m
+             </h2>[m
+           </div>[m
+ [m
+[31m-          <div className="bg-red-100 rounded-xl p-5 shadow">[m
+[31m-            <p className="text-gray-600">Outstanding</p>[m
+[32m+[m[32m          <div className={`rounded-xl p-5 shadow ${[m
+[32m+[m[32m            closingBalance < -0.01 ? "bg-amber-100" : "bg-red-100"[m
+[32m+[m[32m          }`}>[m
+[32m+[m[32m            <p className="text-gray-600">[m
+[32m+[m[32m              {closingBalance < -0.01 ? "Advance / Excess Collection" : "Outstanding"}[m
+[32m+[m[32m            </p>[m
+             <h2[m
+               className={`text-2xl font-bold mt-2 ${[m
+[31m-                closingBalance > 0 ? "text-red-600" : "text-green-600"[m
+[32m+[m[32m                closingBalance < -0.01[m
+[32m+[m[32m                  ? "text-amber-700"[m
+[32m+[m[32m                  : closingBalance > 0[m
+[32m+[m[32m                  ? "text-red-600"[m
+[32m+[m[32m                  : "text-green-600"[m
+               }`}[m
+             >[m
+[31m-              ₹ {closingBalance.toFixed(2)}[m
+[32m+[m[32m              ₹ {Math.abs(closingBalance).toFixed(2)}[m
+             </h2>[m
+[32m+[m[32m            {closingBalance < -0.01 && ([m
+[32m+[m[32m              <p className="mt-1 text-sm font-medium text-amber-700">[m
+[32m+[m[32m                Customer has paid more than the recorded outstanding amount.[m
+[32m+[m[32m              </p>[m
+[32m+[m[32m            )}[m
+           </div>[m
+         </div>[m
+       )}[m
