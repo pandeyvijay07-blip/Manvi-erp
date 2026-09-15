@@ -24,13 +24,6 @@ type CollectionRow = {
   remarks?: string | null;
 };
 
-type AllocationRow = {
-  id: string;
-  collection_id: string;
-  sale_id: string;
-  amount: number | string | null;
-};
-
 type LedgerEntry = {
   id: string;
   date: string;
@@ -146,10 +139,6 @@ export default function CustomerLedger() {
           data: collectionsData,
           error: collectionsError,
         },
-        {
-          data: allocationsData,
-          error: allocationsError,
-        },
       ] = await Promise.all([
         supabase
           .from("sales")
@@ -168,10 +157,6 @@ export default function CustomerLedger() {
           .eq("customer_id", customerId)
           .order("collection_date", { ascending: true })
           .order("created_at", { ascending: true }),
-
-        supabase
-          .from("collection_allocations")
-          .select("id, collection_id, sale_id, amount"),
       ]);
 
       if (salesError) throw salesError;
@@ -179,7 +164,6 @@ export default function CustomerLedger() {
 
       const saleRows = (salesData || []) as SaleRow[];
       const collectionRows = (collectionsData || []) as CollectionRow[];
-      const allocationRows = (allocationsData || []) as AllocationRow[];
 
       const totalSales = saleRows.reduce(
         (sum, sale) => sum + toNumber(sale.total_amount),
@@ -200,71 +184,55 @@ export default function CustomerLedger() {
         selectedCustomer.opening_balance
       );
 
-      let originalOpeningBalance = currentOpeningBalance;
-      let openingAppliedTotal = 0;
-
       /*
-       * Collections are allocated first to outstanding sales.
+       * IMPORTANT:
        *
-       * Any remaining collection amount is applied to the customer's
-       * opening balance.
+       * The customers.opening_balance field is a LIVE balance field.
+       * When a collection is applied against an old opening balance,
+       * the application reduces that field.
        *
-       * Since the current customer.opening_balance is reduced when
-       * that happens, add those historical opening allocations back
-       * to reconstruct the original opening balance for the ledger.
-       */
-      if (!allocationsError) {
-        const allocatedByCollection = new Map<string, number>();
-
-        allocationRows.forEach((allocation) => {
-          const previous =
-            allocatedByCollection.get(String(allocation.collection_id)) || 0;
-
-          allocatedByCollection.set(
-            String(allocation.collection_id),
-            previous + toNumber(allocation.amount)
-          );
-        });
-
-        collectionRows.forEach((collection) => {
-          const collectionAmount = toNumber(collection.amount);
-
-          const allocatedToSales =
-            allocatedByCollection.get(String(collection.id)) || 0;
-
-          const openingApplied = Math.max(
-            0,
-            collectionAmount - allocatedToSales
-          );
-
-          openingAppliedTotal += openingApplied;
-        });
-
-        originalOpeningBalance =
-          currentOpeningBalance + openingAppliedTotal;
-      } else {
-        setReconciliationWarning(
-          "Collection allocations could not be read. The ledger is showing transaction history, but the reconstructed original opening balance may be incomplete."
-        );
-      }
-
-      /*
-       * Current sales outstanding is the authoritative current balance
-       * of the sales rows after collection allocation.
+       * Therefore we must reconstruct the ORIGINAL opening balance
+       * from the authoritative live outstanding balance and the complete
+       * transaction history.
+       *
+       * Formula:
+       *
+       * Original Opening
+       *   = Live Outstanding
+       *     - Total Sales
+       *     + Paid at Sale
+       *     + Total Collections
+       *
+       * Live Outstanding
+       *   = Current Opening Balance + Current Sales Outstanding
+       *
+       * This avoids depending on collection_allocations visibility/RLS
+       * and keeps the ledger ending balance exactly equal to the live
+       * customer outstanding balance.
        */
       const currentSalesOutstanding = saleRows.reduce(
         (sum, sale) => sum + toNumber(sale.balance_amount),
         0
       );
 
+      const expectedOutstanding =
+        currentOpeningBalance + currentSalesOutstanding;
+
+      const originalOpeningBalance =
+        expectedOutstanding -
+        totalSales +
+        paidAtSale +
+        totalCollections;
+
+      /*
+       * The transaction-derived calculation must now reconcile exactly
+       * with the authoritative live outstanding balance.
+       */
       const calculatedOutstanding =
         originalOpeningBalance +
         totalSales -
         paidAtSale -
         totalCollections;
-
-      const expectedOutstanding =
-        currentOpeningBalance + currentSalesOutstanding;
 
       if (
         Math.abs(calculatedOutstanding - expectedOutstanding) >
@@ -273,7 +241,7 @@ export default function CustomerLedger() {
         setReconciliationWarning(
           `Balance reconciliation difference: ₹${Math.abs(
             calculatedOutstanding - expectedOutstanding
-          ).toFixed(2)}. Review older collection allocations.`
+          ).toFixed(2)}. Please review the customer's sales, collections, and live outstanding balance.`
         );
       }
 
@@ -546,8 +514,8 @@ export default function CustomerLedger() {
             </p>
 
             <p className="text-xs text-gray-500 mt-1">
-              Ledger opening balance is reconstructed from
-              historical opening-balance collections.
+              Ledger opening balance is reconstructed from the live
+              outstanding balance and complete transaction history.
             </p>
           </div>
         )}
