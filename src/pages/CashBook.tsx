@@ -24,9 +24,6 @@ type SaleRow = {
   customer_id: string | null;
   payment_method: string | null;
   paid_amount: number | string | null;
-  total_amount: number | string | null;
-  cash_amount: number | string | null;
-  upi_amount: number | string | null;
 };
 
 type CollectionRow = {
@@ -35,8 +32,6 @@ type CollectionRow = {
   customer_id: string | null;
   amount: number | string | null;
   payment_method: string | null;
-  cash_amount: number | string | null;
-  upi_amount: number | string | null;
   remarks: string | null;
 };
 
@@ -46,9 +41,7 @@ type PurchaseRow = {
   invoice_no: string | null;
   supplier_name: string | null;
   payment_method: string | null;
-  total_amount: number | string | null;
   paid_amount: number | string | null;
-  balance_amount: number | string | null;
 };
 
 type ExpenseRow = {
@@ -58,6 +51,29 @@ type ExpenseRow = {
   amount: number | string | null;
   remarks: string | null;
 };
+
+function getExpenseReference(
+  expense: ExpenseRow,
+  sequence: number
+) {
+  const category = String(expense.category || "Expense")
+    .trim()
+    .toLowerCase();
+
+  const prefix =
+    category === "employee salary"
+      ? "SAL"
+      : category === "employee advance"
+      ? "ADV"
+      : "EXP";
+
+  const date = String(expense.expense_date || "").slice(0, 10);
+  const dateCode = date
+    ? `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(2, 4)}`
+    : "00/00/00";
+
+  return `${prefix}-${dateCode}-${String(sequence).padStart(3, "0")}`;
+}
 
 type CustomerRow = {
   id: string;
@@ -393,10 +409,7 @@ export default function CashBook() {
               sale_date,
               customer_id,
               payment_method,
-              paid_amount,
-              total_amount,
-              cash_amount,
-              upi_amount
+              paid_amount
             `
           )
           .order(
@@ -415,8 +428,6 @@ export default function CashBook() {
               customer_id,
               amount,
               payment_method,
-              cash_amount,
-              upi_amount,
               remarks
             `
           )
@@ -436,18 +447,8 @@ export default function CashBook() {
               invoice_no,
               supplier_name,
               payment_method,
-              total_amount,
-              paid_amount,
-              balance_amount
+              paid_amount
             `
-          )
-          .gte(
-            "purchase_date",
-            fromDate
-          )
-          .lte(
-            "purchase_date",
-            toDate
           )
           .order(
             "purchase_date",
@@ -649,28 +650,33 @@ export default function CashBook() {
               []) as SaleRow[]
           );
 
-        saleReferenceMap =
-          new Map<string, string>(
-            salesForReference
-              .filter((sale) =>
-                allocatedSaleIds.includes(
-                  String(sale.id)
-                )
-              )
-              .map(
-                (sale): [string, string] => [
-                  String(sale.id),
-                  sale.sale_no !== null &&
-                  sale.sale_no !== undefined
-                    ? String(sale.sale_no)
-                    : "",
-                ]
-              )
-              .filter(
-                (item): item is [string, string] =>
-                  item[1] !== ""
-              )
+        const saleReferenceEntries: Array<
+          [string, string]
+        > = salesForReference
+          .filter((sale) =>
+            allocatedSaleIds.includes(
+              String(sale.id)
+            )
+          )
+          .map(
+            (sale): [string, string] => [
+              String(sale.id),
+              sale.sale_no !== null &&
+              sale.sale_no !== undefined
+                ? String(
+                    sale.sale_no
+                  )
+                : "",
+            ]
+          )
+          .filter(
+            (item) => item[1] !== ""
           );
+
+        saleReferenceMap = new Map<
+          string,
+          string
+        >(saleReferenceEntries);
       }
 
       const rows: CashEntry[] =
@@ -678,10 +684,8 @@ export default function CashBook() {
 
       /*
        * SALES
-       *
-       * Cash, UPI and Split (Cash + UPI) sales are visible.
-       * Split produces two receipt rows with the same Sale No.
-       * Only the Cash portion affects physical cash.
+       * Only physical Cash sales enter Cash Book.
+       * Reference = daily Sale No.
        */
       (
         (salesResult.data ||
@@ -700,51 +704,19 @@ export default function CashBook() {
             .trim()
             .toLowerCase();
 
+        const paid =
+          numeric(
+            sale.paid_amount
+          );
+
         if (
+          method !== "cash" ||
+          paid <= 0 ||
           date < fromDate ||
           date > toDate
         ) {
           return;
         }
-
-        const total =
-          numeric(
-            sale.total_amount
-          );
-
-        const storedPaid =
-          numeric(
-            sale.paid_amount
-          );
-
-        const storedCash =
-          numeric(
-            sale.cash_amount
-          );
-
-        const storedUpi =
-          numeric(
-            sale.upi_amount
-          );
-
-        const fallbackPaid =
-          storedPaid > 0
-            ? storedPaid
-            : total;
-
-        const cashPaid =
-          storedCash > 0
-            ? storedCash
-            : method === "cash"
-            ? fallbackPaid
-            : 0;
-
-        const upiPaid =
-          storedUpi > 0
-            ? storedUpi
-            : method === "upi"
-            ? fallbackPaid
-            : 0;
 
         const customerName =
           sale.customer_id
@@ -755,75 +727,36 @@ export default function CashBook() {
               ) || "Customer"
             : "Walk-in";
 
-        const reference =
-          sale.sale_no !== null &&
-          sale.sale_no !== undefined
-            ? String(
-                sale.sale_no
-              )
-            : "-";
-
-        if (
-          (method === "cash" ||
-            method === "split") &&
-          cashPaid > 0
-        ) {
-          rows.push({
-            id: `sale-${sale.id}-cash`,
-            date,
-            entry_type:
-              "Receipt",
-            category:
-              "Sales (Cash)",
-            party_name:
-              customerName,
-            amount: cashPaid,
-            payment_method:
-              "Cash",
-            reference,
-            remarks:
-              method === "split"
-                ? "Split sale — cash portion"
-                : null,
-            source:
-              "Sales",
-          });
-        }
-
-        if (
-          (method === "upi" ||
-            method === "split") &&
-          upiPaid > 0
-        ) {
-          rows.push({
-            id: `sale-${sale.id}-upi`,
-            date,
-            entry_type:
-              "Receipt",
-            category:
-              "Sales (UPI)",
-            party_name:
-              customerName,
-            amount: upiPaid,
-            payment_method:
-              "UPI",
-            reference,
-            remarks:
-              method === "split"
-                ? "Split sale — UPI portion; not included in physical cash"
-                : "Non-cash sale receipt — not included in physical cash",
-            source:
-              "Sales",
-          });
-        }
+        rows.push({
+          id: `sale-${sale.id}`,
+          date,
+          entry_type:
+            "Receipt",
+          category:
+            "Sales (Cash)",
+          party_name:
+            customerName,
+          amount: paid,
+          payment_method:
+            "Cash",
+          reference:
+            sale.sale_no !== null &&
+            sale.sale_no !== undefined
+              ? String(
+                  sale.sale_no
+                )
+              : "-",
+          remarks: null,
+          source: "Sales",
+        });
       });
 
       /*
        * COLLECTIONS
-       *
-       * Cash, UPI and Split (Cash + UPI) collections are visible.
-       * Split produces two receipt rows with the same customer/date.
-       * Only Cash collection receipts affect physical cash.
+       * Only Cash collections enter physical Cash Book.
+       * Reference = linked bill no(s).
+       * Opening-balance-only collection =
+       * "Opening Balance".
        */
       (
         (collectionsResult.data ||
@@ -843,42 +776,14 @@ export default function CashBook() {
               .trim()
               .toLowerCase();
 
-          const total =
+          const value =
             numeric(
               collection.amount
             );
 
-          const storedCash =
-            numeric(
-              collection.cash_amount
-            );
-
-          const storedUpi =
-            numeric(
-              collection.upi_amount
-            );
-
-          const fallbackCash =
-            method === "cash"
-              ? total
-              : 0;
-
-          const fallbackUpi =
-            method === "upi"
-              ? total
-              : 0;
-
-          const cashPaid =
-            storedCash > 0
-              ? storedCash
-              : fallbackCash;
-
-          const upiPaid =
-            storedUpi > 0
-              ? storedUpi
-              : fallbackUpi;
-
           if (
+            method !== "cash" ||
+            value <= 0 ||
             date < fromDate ||
             date > toDate
           ) {
@@ -891,7 +796,8 @@ export default function CashBook() {
                   String(
                     collection.customer_id
                   )
-                ) || "Customer"
+                ) ||
+                "Customer"
               : "Customer";
 
           const allocatedSaleIds =
@@ -915,76 +821,37 @@ export default function CashBook() {
               )
             );
 
-          const reference =
-            billNumbers.length > 0
-              ? billNumbers.join(", ")
-              : "Opening Balance";
-
-          if (
-            (method === "cash" ||
-              method === "split") &&
-            cashPaid > 0
-          ) {
-            rows.push({
-              id: `collection-${collection.id}-cash`,
-              date,
-              entry_type:
-                "Receipt",
-              category:
-                "Customer Collection (Cash)",
-              party_name:
-                customerName,
-              amount: cashPaid,
-              payment_method:
-                "Cash",
-              reference,
-              remarks:
-                method === "split"
-                  ? "Split collection — cash portion"
-                  : collection.remarks ||
-                    null,
-              source:
-                "Collections",
-            });
-          }
-
-          if (
-            (method === "upi" ||
-              method === "split") &&
-            upiPaid > 0
-          ) {
-            rows.push({
-              id: `collection-${collection.id}-upi`,
-              date,
-              entry_type:
-                "Receipt",
-              category:
-                "Customer Collection (UPI)",
-              party_name:
-                customerName,
-              amount: upiPaid,
-              payment_method:
-                "UPI",
-              reference,
-              remarks:
-                method === "split"
-                  ? "Split collection — UPI portion; not included in physical cash"
-                  : collection.remarks ||
-                    "Non-cash collection",
-              source:
-                "Collections",
-            });
-          }
+          rows.push({
+            id: `collection-${collection.id}`,
+            date,
+            entry_type:
+              "Receipt",
+            category:
+              "Customer Collection",
+            party_name:
+              customerName,
+            amount: value,
+            payment_method:
+              "Cash",
+            reference:
+              billNumbers.length > 0
+                ? billNumbers.join(
+                    ", "
+                  )
+                : "Opening Balance",
+            remarks:
+              collection.remarks ||
+              null,
+            source:
+              "Collections",
+          });
         }
       );
 
       /*
        * PURCHASE PAYMENTS
        * Only Cash purchase payments reduce physical cash.
-       *
-       * Use paid_amount as the primary value. For legacy Cash
-       * purchases where paid_amount is zero/null but total_amount
-       * is positive, use total_amount as a safe fallback.
+       * UPI / Bank / Credit are excluded.
        */
       (
         (purchasesResult.data ||
@@ -1004,31 +871,16 @@ export default function CashBook() {
               .trim()
               .toLowerCase();
 
-          if (
-            method !== "cash" ||
-            date < fromDate ||
-            date > toDate
-          ) {
-            return;
-          }
-
-          const storedPaid =
+          const paid =
             numeric(
               purchase.paid_amount
             );
 
-          const total =
-            numeric(
-              purchase.total_amount
-            );
-
-          const paid =
-            storedPaid > 0
-              ? storedPaid
-              : total;
-
           if (
-            paid <= 0
+            method !== "cash" ||
+            paid <= 0 ||
+            date < fromDate ||
+            date > toDate
           ) {
             return;
           }
@@ -1049,14 +901,7 @@ export default function CashBook() {
             reference:
               purchase.invoice_no ||
               "-",
-            remarks:
-              numeric(
-                purchase.balance_amount
-              ) > 0
-                ? `Purchase balance ₹${numeric(
-                    purchase.balance_amount
-                  ).toFixed(2)}`
-                : null,
+            remarks: null,
             source:
               "Purchases",
           });
@@ -1068,6 +913,9 @@ export default function CashBook() {
        * Current MANVI expense records represent cash
        * business expenses in the existing Cash Book logic.
        */
+      const expenseReferenceCounters =
+        new Map<string, number>();
+
       (
         (expensesResult.data ||
           []) as ExpenseRow[]
@@ -1091,6 +939,23 @@ export default function CashBook() {
             return;
           }
 
+          const referenceKey =
+            `${date}|${String(
+              expense.category || "Expense"
+            )
+              .trim()
+              .toLowerCase()}`;
+
+          const nextSequence =
+            (expenseReferenceCounters.get(
+              referenceKey
+            ) || 0) + 1;
+
+          expenseReferenceCounters.set(
+            referenceKey,
+            nextSequence
+          );
+
           rows.push({
             id: `expense-${expense.id}`,
             date,
@@ -1105,8 +970,9 @@ export default function CashBook() {
             payment_method:
               "Cash",
             reference:
-              String(
-                expense.id
+              getExpenseReference(
+                expense,
+                nextSequence
               ),
             remarks:
               expense.remarks ||
@@ -1306,43 +1172,12 @@ export default function CashBook() {
       filter,
     ]);
 
-  const purchasePaymentTotal =
-    filteredEntries
-      .filter(
-        (row) =>
-          row.source === "Purchases" &&
-          row.entry_type === "Payment"
-      )
-      .reduce(
-        (sum, row) =>
-          sum + row.amount,
-        0
-      );
-
-  const purchasePaymentCount =
-    filteredEntries.filter(
-      (row) =>
-        row.source === "Purchases" &&
-        row.entry_type === "Payment"
-    ).length;
-
-  /*
-   * PHYSICAL CASH RECONCILIATION
-   *
-   * UPI receipts are visible in the transaction list, but they
-   * must never increase physical cash. Therefore only entries
-   * marked Cash participate in the cash balance calculation.
-   */
   const receipts =
     filteredEntries
       .filter(
         (row) =>
           row.entry_type ===
-            "Receipt" &&
-          row.payment_method
-            .trim()
-            .toLowerCase() ===
-            "cash"
+          "Receipt"
       )
       .reduce(
         (sum, row) =>
@@ -1355,11 +1190,7 @@ export default function CashBook() {
       .filter(
         (row) =>
           row.entry_type ===
-            "Payment" &&
-          row.payment_method
-            .trim()
-            .toLowerCase() ===
-            "cash"
+          "Payment"
       )
       .reduce(
         (sum, row) =>
@@ -1791,23 +1622,6 @@ export default function CashBook() {
           </div>
         </div>
 
-        <div className="rounded-2xl bg-purple-600 p-5 text-white shadow">
-          <div className="text-sm opacity-80">
-            Purchase Payments
-          </div>
-
-          <div className="mt-2 text-2xl font-bold">
-            {money(
-              purchasePaymentTotal
-            )}
-          </div>
-
-          <div className="mt-1 text-xs text-purple-100">
-            {purchasePaymentCount} cash purchase
-            {purchasePaymentCount === 1 ? "" : "s"}
-          </div>
-        </div>
-
         <div className="rounded-2xl bg-indigo-600 p-5 text-white shadow">
           <div className="text-sm opacity-80">
             Cash Balance
@@ -1821,118 +1635,6 @@ export default function CashBook() {
         </div>
       </div>
 
-      {/* UPI SUMMARY / TRANSACTIONS */}
-
-      {(() => {
-        const upiEntries = filteredEntries.filter(
-          (row) =>
-            row.payment_method
-              .trim()
-              .toLowerCase() ===
-            "upi" &&
-            row.entry_type ===
-              "Receipt"
-        );
-
-        const upiTotal =
-          upiEntries.reduce(
-            (sum, row) =>
-              sum + row.amount,
-            0
-          );
-
-        return (
-          <div className="mb-6 overflow-hidden rounded-2xl bg-white shadow-lg">
-            <div className="flex items-center justify-between border-b p-5">
-              <div>
-                <h2 className="text-xl font-bold text-blue-700">
-                  UPI Transactions
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  All UPI sale payments and customer UPI collections.
-                  UPI does not affect physical cash.
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-blue-50 px-5 py-3 text-right">
-                <p className="text-xs font-semibold text-slate-500">
-                  Total UPI Receipts
-                </p>
-                <p className="text-2xl font-bold text-blue-700">
-                  {money(upiTotal)}
-                </p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1000px]">
-                <thead className="bg-blue-700 text-white">
-                  <tr>
-                    <th className="p-3 text-left">
-                      Date
-                    </th>
-                    <th className="p-3 text-left">
-                      Type
-                    </th>
-                    <th className="p-3 text-left">
-                      Category
-                    </th>
-                    <th className="p-3 text-left">
-                      Party
-                    </th>
-                    <th className="p-3 text-left">
-                      Reference
-                    </th>
-                    <th className="p-3 text-right">
-                      UPI Amount
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {upiEntries.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="p-8 text-center text-slate-500"
-                      >
-                        No UPI transactions found for the selected period.
-                      </td>
-                    </tr>
-                  ) : (
-                    upiEntries.map((row) => (
-                      <tr
-                        key={`upi-section-${row.id}`}
-                        className="border-b hover:bg-slate-50"
-                      >
-                        <td className="p-3">
-                          {formatDate(row.date)}
-                        </td>
-                        <td className="p-3 font-semibold text-green-600">
-                          {row.entry_type}
-                        </td>
-                        <td className="p-3">
-                          {row.category}
-                        </td>
-                        <td className="p-3 font-semibold">
-                          {row.party_name || "-"}
-                        </td>
-                        <td className="p-3">
-                          {row.reference || "-"}
-                        </td>
-                        <td className="p-3 text-right font-bold text-blue-700">
-                          {money(row.amount)}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      })()}
-
       {/* TRANSACTIONS */}
       <div className="overflow-hidden rounded-2xl bg-white shadow-lg">
         <div className="flex items-center justify-between border-b p-5">
@@ -1942,10 +1644,8 @@ export default function CashBook() {
             </h2>
 
             <p className="mt-1 text-sm text-slate-500">
-              Sales, customer collections, CASH PURCHASE PAYMENTS,
-              UPI receipts, expenses and manual entries.
-              UPI receipts are displayed but do not affect physical cash.
-              Purchases are read directly from the purchases table.
+              Sales, customer collections, cash purchase payments,
+              expenses and manual entries.
             </p>
           </div>
 
@@ -1983,7 +1683,7 @@ export default function CashBook() {
                 </th>
 
                 <th className="p-3 text-left">
-                  Reference
+                  Reference No.
                 </th>
 
                 <th className="p-3 text-right">
@@ -2275,7 +1975,7 @@ export default function CashBook() {
 
               <div>
                 <label className="mb-2 block text-sm font-semibold">
-                  Reference
+                  Reference No.
                 </label>
 
                 <input
