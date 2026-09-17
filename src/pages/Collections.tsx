@@ -149,6 +149,8 @@ export default function Collections() {
 
   const [balance, setBalance] = useState(0);
 
+  const [outstandingSales, setOutstandingSales] = useState<OutstandingSale[]>([]);
+
   const [amount, setAmount] = useState("");
 
   const [paymentMethod, setPaymentMethod] =
@@ -327,6 +329,7 @@ export default function Collections() {
   async function loadBalance(id: string) {
     if (!id) {
       setBalance(0);
+      setOutstandingSales([]);
       return;
     }
 
@@ -352,16 +355,21 @@ export default function Collections() {
         throw error;
       }
 
+      const outstandingRows = (data || []).map(
+        (sale: any) => ({
+          id: sale.id,
+          sale_date: sale.sale_date,
+          balance_amount:
+            Number(sale.balance_amount) || 0,
+        })
+      ) as OutstandingSale[];
+
+      setOutstandingSales(outstandingRows);
+
       const salesOutstanding =
-        (data || []).reduce(
-          (
-            total: number,
-            sale: any
-          ) =>
-            total +
-            (Number(
-              sale.balance_amount
-            ) || 0),
+        outstandingRows.reduce(
+          (total: number, sale: OutstandingSale) =>
+            total + sale.balance_amount,
           0
         );
 
@@ -1749,6 +1757,50 @@ export default function Collections() {
               ₹{balance.toFixed(2)}
             </div>
           </div>
+
+          {/* OUTSTANDING SALES */}
+
+          {customerId && outstandingSales.length > 0 && (
+            <div className="md:col-span-3 mt-1 rounded-xl border border-red-200 bg-red-50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="font-bold text-red-700">
+                    Outstanding Sales
+                  </h3>
+                  <p className="text-sm text-red-600">
+                    Unpaid sale balances for this customer
+                  </p>
+                </div>
+                <div className="font-bold text-red-700">
+                  {outstandingSales.length} sale
+                  {outstandingSales.length === 1 ? "" : "s"}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto bg-white rounded-lg border border-red-100">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-red-100 text-red-800">
+                      <th className="text-left px-3 py-2">Sale Date</th>
+                      <th className="text-right px-3 py-2">Outstanding</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {outstandingSales.map((sale) => (
+                      <tr key={sale.id} className="border-t border-red-100">
+                        <td className="px-3 py-2">
+                          {formatDateDDMMYYYY(sale.sale_date)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold text-red-700">
+                          ₹{sale.balance_amount.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* AMOUNT */}
 
