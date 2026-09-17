@@ -132,11 +132,11 @@ sale_date: string;
 customer_id: string | null;
 customer_name: string;
 payment_method: string;
-cash_amount?: number;
-upi_amount?: number;
 total_amount: number;
 paid_amount: number;
 balance_amount: number;
+cash_amount: number;
+upi_amount: number;
 };
 
 export default function Sales() {
@@ -210,32 +210,42 @@ items: SaleItem[],
 total: number,
 paidValue: number,
 balanceValue: number,
-method: string
+method: string,
+cashValue: number = 0,
+upiValue: number = 0
 ) {
 const itemLines = items
-.map(
-(item) =>
-`${item.product_name} ${item.pack_size ? `(${getPackDisplay(item.pack_size)})` : ""} × ${item.quantity} @ ₹${item.rate.toFixed(2)} = ₹${item.amount.toFixed(2)}`
-)
+.map((item, index) => {
+const pack = item.pack_size ? ` (${getPackDisplay(item.pack_size)})` : "";
+return `${index + 1}. ${item.product_name}${pack}\n   Qty: ${item.quantity}  Rate: ₹${item.rate.toFixed(2)}  Amount: ₹${item.amount.toFixed(2)}`;
+})
 .join("\n");
+
+const paymentLines = method === "Split"
+? [
+`Payment: Split`,
+`Cash Paid: ₹${cashValue.toFixed(2)}`,
+`UPI Paid: ₹${upiValue.toFixed(2)}`,
+].join("\n")
+: `Payment: ${method}`;
 
 return [
 "*MANVI MILK AGENCIES*",
-"Sales Bill",
+"*BILL*",
+"────────────────────────",
 `Customer: ${customerName}`,
 `Date: ${formatDisplayDate(date)}`,
-"",
+"────────────────────────",
 itemLines,
-"",
-`Total: ₹${total.toFixed(2)}`,
-`Paid: ₹${paidValue.toFixed(2)}`,
-`Balance: ₹${balanceValue.toFixed(2)}`,
-`Payment: ${method}`,
-"",
+"────────────────────────",
+`TOTAL: ₹${total.toFixed(2)}`,
+`PAID: ₹${paidValue.toFixed(2)}`,
+`BALANCE: ₹${balanceValue.toFixed(2)}`,
+paymentLines,
+"────────────────────────",
 "Thank you for your business.",
 ].join("\n");
 }
-
 function openWhatsAppBill() {
 if (!selectedCustomer) {
 alert("Please select a customer first.");
@@ -260,7 +270,9 @@ saleItems,
 totalSale,
 paid,
 balance,
-paymentMethod
+paymentMethod,
+Number(cashAmount) || 0,
+Number(upiAmount) || 0
 );
 
 const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
@@ -323,13 +335,6 @@ RECENT SALES
 
 const [recentSales, setRecentSales] =
 useState<RecentSale[]>([]);
-
-/* =========================================================
-VIEW SAVED BILL
-========================================================= */
-const [viewingBill, setViewingBill] = useState<RecentSale | null>(null);
-const [viewingBillItems, setViewingBillItems] = useState<SaleItem[]>([]);
-const [loadingBill, setLoadingBill] = useState(false);
 
 /* =========================================================
 LOADING
@@ -471,11 +476,11 @@ error,
           sale_date,
           customer_id,
           payment_method,
-          cash_amount,
-          upi_amount,
           total_amount,
           paid_amount,
-          balance_amount
+          balance_amount,
+          cash_amount,
+          upi_amount
         `)
 .order("sale_date", {
 ascending: false,
@@ -512,10 +517,6 @@ ascending: false,
         payment_method:
           sale.payment_method ||
           "Cash",
-        cash_amount:
-          Number(sale.cash_amount) || 0,
-        upi_amount:
-          Number(sale.upi_amount) || 0,
         total_amount:
           Number(
             sale.total_amount
@@ -527,6 +528,14 @@ ascending: false,
         balance_amount:
           Number(
             sale.balance_amount
+          ) || 0,
+        cash_amount:
+          Number(
+            sale.cash_amount
+          ) || 0,
+        upi_amount:
+          Number(
+            sale.upi_amount
           ) || 0,
       })
     );
@@ -693,6 +702,8 @@ async function punchTodaysSale() {
     setSaleItems(validItems);
     setPaymentMethod(previousSale.payment_method || "Cash");
     setPaidAmount("0");
+    setCashAmount("0");
+    setUpiAmount("0");
     setEditingSaleId(null);
     setEditingItemIndex(null);
     setProductId("");
@@ -952,16 +963,17 @@ Number(item.amount || 0),
 PAID / BALANCE
 ========================================================= */
 
-const cashPaid = Number(cashAmount) || 0;
-const upiPaid = Number(upiAmount) || 0;
+const cashPaid = Math.max(0, Number(cashAmount) || 0);
+const upiPaid = Math.max(0, Number(upiAmount) || 0);
 
-const paid = paymentMethod === "Split"
-  ? cashPaid + upiPaid
-  : Number(paidAmount) || 0;
+const paid =
+  paymentMethod === "Split"
+    ? cashPaid + upiPaid
+    : Math.max(0, Number(paidAmount) || 0);
 
 const balance = Math.max(
-0,
-totalSale - paid
+  0,
+  totalSale - paid
 );
 
 /* =========================================================
@@ -1322,7 +1334,9 @@ setQuantity("1");
 setSellingRate("");
 
 setPaidAmount("0");
+
 setCashAmount("0");
+
 setUpiAmount("0");
 
 setPaymentMethod("Cash");
@@ -1383,13 +1397,13 @@ if (paid > totalSale) {
   return;
 }
 
-if (paymentMethod === "Split" && cashPaid < 0 || paymentMethod === "Split" && upiPaid < 0) {
-  alert("Split payment amounts cannot be negative.");
+if (paymentMethod === "Split" && cashPaid < 0) {
+  alert("Cash amount cannot be negative.");
   return;
 }
 
-if (paymentMethod === "Split" && paid <= 0) {
-  alert("Enter Cash and/or UPI amount for split payment.");
+if (paymentMethod === "Split" && upiPaid < 0) {
+  alert("UPI amount cannot be negative.");
   return;
 }
 
@@ -1463,12 +1477,6 @@ try {
       payment_method:
         paymentMethod,
 
-      cash_amount:
-        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
-
-      upi_amount:
-        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
-
       total_amount:
         totalSale,
 
@@ -1477,6 +1485,12 @@ try {
 
       balance_amount:
         balance,
+
+      cash_amount:
+        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+
+      upi_amount:
+        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
     })
     .select()
     .single();
@@ -1800,12 +1814,6 @@ GET OLD SALE ITEMS
       payment_method:
         paymentMethod,
 
-      cash_amount:
-        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
-
-      upi_amount:
-        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
-
       total_amount:
         totalSale,
 
@@ -1814,6 +1822,12 @@ GET OLD SALE ITEMS
 
       balance_amount:
         balance,
+
+      cash_amount:
+        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+
+      upi_amount:
+        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
     })
     .eq(
       "id",
@@ -1979,11 +1993,11 @@ setLoading(true);
       sale_date,
       customer_id,
       payment_method,
-      cash_amount,
-      upi_amount,
       total_amount,
       paid_amount,
-      balance_amount
+      balance_amount,
+      cash_amount,
+      upi_amount
       `
     )
     .eq(
@@ -2043,15 +2057,20 @@ setLoading(true);
       "Cash"
   );
 
-  setCashAmount(String(Number(sale.cash_amount) || 0));
-  setUpiAmount(String(Number(sale.upi_amount) || 0));
-
   setPaidAmount(
     String(
       Number(
         sale.paid_amount
       ) || 0
     )
+  );
+
+  setCashAmount(
+    String(Number(sale.cash_amount) || 0)
+  );
+
+  setUpiAmount(
+    String(Number(sale.upi_amount) || 0)
   );
 
   /* =====================================================
@@ -2159,105 +2178,81 @@ setLoading(true);
 }
 
 /* =========================================================
-VIEW SAVED BILL
+PRINT SAVED BILL
 ========================================================= */
-async function viewSavedBill(sale: RecentSale) {
+async function printSavedBill(saleId: string) {
   try {
-    setLoadingBill(true);
-    setViewingBill(sale);
-    setViewingBillItems([]);
+    setLoading(true);
 
-    const {
-      data: items,
-      error: itemsError,
-    } = await supabase
-      .from("sale_items")
-      .select(`
-        id,
-        product_id,
-        quantity,
-        rate,
-        amount,
-        cost_rate
-      `)
-      .eq("sale_id", sale.id);
+    const [{ data: sale, error: saleError }, { data: items, error: itemsError }] =
+      await Promise.all([
+        supabase
+          .from("sales")
+          .select("id, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
+          .eq("id", saleId)
+          .single(),
+        supabase
+          .from("sale_items")
+          .select("product_id, quantity, rate, amount")
+          .eq("sale_id", saleId)
+          .order("id", { ascending: true }),
+      ]);
 
-    if (itemsError) {
-      throw itemsError;
-    }
+    if (saleError) throw saleError;
+    if (itemsError) throw itemsError;
+    if (!sale) throw new Error("Sale not found.");
 
-    const convertedItems: SaleItem[] = (items || []).map(
-      (item: any) => {
-        const product = products.find(
-          (p) => p.id === item.product_id
-        );
-        const brand = brands.find(
-          (b) => b.id === product?.brand_id
-        );
+    const customer = customers.find((c) => c.id === sale.customer_id);
+    const customerName = customer?.customer_name || "Walk-in";
+    const safe = (value: unknown) =>
+      String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 
-        return {
-          id: item.id,
-          product_id: item.product_id,
-          brand_id: product?.brand_id || null,
-          brand_name: brand?.brand_name || "No Brand",
-          product_name: product?.product_name || "Unknown Product",
-          pack_size: product?.pack_size || "",
-          unit: getProductUnit(product),
-          quantity: Number(item.quantity) || 0,
-          rate: Number(item.rate) || 0,
-          purchase_rate: Number(item.cost_rate ?? product?.purchase_rate ?? 0) || 0,
-          amount: Number(item.amount) || 0,
-        };
-      }
-    );
+    const rows = (items || [])
+      .map((item: any, index: number) => {
+        const product = products.find((p) => p.id === item.product_id);
+        return `<tr>
+          <td>${index + 1}</td>
+          <td>${safe(product?.product_name || "Product")}</td>
+          <td>${safe(product?.pack_size || "")}</td>
+          <td>${Number(item.quantity || 0)}</td>
+          <td>₹ ${Number(item.rate || 0).toFixed(2)}</td>
+          <td>₹ ${Number(item.amount || 0).toFixed(2)}</td>
+        </tr>`;
+      })
+      .join("");
 
-    setViewingBillItems(convertedItems);
+    const method = String(sale.payment_method || "Cash");
+    const splitHtml = method === "Split"
+      ? `<div>Cash: ₹ ${Number(sale.cash_amount || 0).toFixed(2)} &nbsp; | &nbsp; UPI: ₹ ${Number(sale.upi_amount || 0).toFixed(2)}</div>`
+      : "";
+
+    const html = `<!doctype html><html><head><title>MANVI Sales Bill</title>
+      <style>
+        body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{text-align:center;margin:0 0 4px}h2{text-align:center;margin:0 0 18px;font-size:16px} .meta{margin-bottom:16px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#f1f5f9}td:nth-child(1),td:nth-child(4){text-align:center}td:nth-child(5),td:nth-child(6){text-align:right}.totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}.grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}.footer{text-align:center;margin-top:28px;font-size:13px;color:#555}@media print{body{padding:8px}}
+      </style></head><body>
+      <h1>MANVI MILK AGENCIES</h1><h2>BILL</h2>
+      <div class="meta"><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
+      <table><thead><tr><th>#</th><th>Product</th><th>Pack</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="totals"><div>Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ₹ ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ₹ ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
+      <div class="footer">Thank you for your business.</div>
+      <script>window.onload=function(){window.print();}</script></body></html>`;
+
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) throw new Error("Popup blocked. Please allow popups for MANVI ERP.");
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
   } catch (error: any) {
-    console.error("View bill error:", error);
-    setViewingBill(null);
-    alert(
-      "Unable to open bill:\n" +
-        (error?.message || "Unable to load bill items.")
-    );
+    console.error("Print bill error:", error);
+    alert("Unable to open bill:\n" + (error?.message || "Unknown error"));
   } finally {
-    setLoadingBill(false);
+    setLoading(false);
   }
-}
-
-function getBillCustomerMobile(sale: RecentSale | null) {
-  if (!sale?.customer_id) return "";
-  const customer = customers.find(
-    (item) => item.id === sale.customer_id
-  );
-  return customer?.mobile || "";
-}
-
-function sendSavedBillOnWhatsApp() {
-  if (!viewingBill) return;
-
-  const phone = getWhatsAppNumber(
-    getBillCustomerMobile(viewingBill)
-  );
-
-  if (!phone) {
-    alert(
-      "This customer does not have a valid mobile number. Add the mobile number in Customers first."
-    );
-    return;
-  }
-
-  const message = buildWhatsAppBillMessage(
-    viewingBill.customer_name,
-    viewingBill.sale_date,
-    viewingBillItems,
-    viewingBill.total_amount,
-    viewingBill.paid_amount,
-    viewingBill.balance_amount,
-    viewingBill.payment_method
-  );
-
-  const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 /* =========================================================
@@ -2607,7 +2602,9 @@ return (
       {paymentMethod === "Split" ? (
         <>
           <div>
-            <label className="block font-semibold mb-2">Cash Amount</label>
+            <label className="block font-semibold mb-2">
+              Cash Amount
+            </label>
             <input
               type="number"
               min="0"
@@ -2620,7 +2617,9 @@ return (
           </div>
 
           <div>
-            <label className="block font-semibold mb-2">UPI Amount</label>
+            <label className="block font-semibold mb-2">
+              UPI Amount
+            </label>
             <input
               type="number"
               min="0"
@@ -2630,7 +2629,6 @@ return (
               className="w-full border rounded-xl px-4 py-3"
               placeholder="0"
             />
-            <p className="text-sm text-gray-500 mt-1">Paid = Cash + UPI</p>
           </div>
         </>
       ) : (
@@ -2638,7 +2636,6 @@ return (
           <label className="block font-semibold mb-2">
             Amount Paid
           </label>
-
           <input
             type="number"
             min="0"
@@ -2652,6 +2649,19 @@ return (
       )}
 
     </div>
+
+    {paymentMethod === "Split" && (
+      <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+          <div><span className="text-gray-600">Cash:</span> <strong>₹ {cashPaid.toFixed(2)}</strong></div>
+          <div><span className="text-gray-600">UPI:</span> <strong>₹ {upiPaid.toFixed(2)}</strong></div>
+          <div><span className="text-gray-600">Total Paid:</span> <strong>₹ {paid.toFixed(2)}</strong></div>
+        </div>
+        {paid > totalSale && (
+          <p className="mt-2 text-sm font-semibold text-red-600">Cash + UPI cannot exceed the sale total.</p>
+        )}
+      </div>
+    )}
 
     {/* ===================================================
         ADD PRODUCTS
@@ -3408,9 +3418,12 @@ return (
                   </td>
 
                   <td className="p-3">
-                    {
-                      sale.payment_method
-                    }
+                    <div>{sale.payment_method}</div>
+                    {sale.payment_method === "Split" && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        C ₹{sale.cash_amount.toFixed(2)} + UPI ₹{sale.upi_amount.toFixed(2)}
+                      </div>
+                    )}
                   </td>
 
                   <td className="p-3 text-right font-bold">
@@ -3436,18 +3449,12 @@ return (
 
                   <td className="p-3">
 
-                    <div className="flex justify-center gap-2 flex-wrap">
+                    <div className="flex justify-center gap-2">
 
                       <button
                         type="button"
-                        disabled={
-                          loading || loadingBill
-                        }
-                        onClick={() =>
-                          viewSavedBill(
-                            sale
-                          )
-                        }
+                        disabled={loading}
+                        onClick={() => void printSavedBill(sale.id)}
                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
                       >
                         🧾 Bill
@@ -3499,154 +3506,6 @@ return (
     </div>
 
   </div>
-
-  {/* ===================================================
-      SAVED BILL PREVIEW
-  =================================================== */}
-  {viewingBill && (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl">
-        <div className="p-5 border-b flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-2xl font-bold text-blue-700">MANVI MILK AGENCIES</h2>
-            <p className="text-gray-500">Sales Bill</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setViewingBill(null)}
-            className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-semibold"
-          >
-            ✕ Close
-          </button>
-        </div>
-
-        <div className="p-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-sm text-gray-500">Customer</p>
-              <p className="font-bold text-lg">{viewingBill.customer_name}</p>
-            </div>
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-sm text-gray-500">Bill Date</p>
-              <p className="font-bold text-lg">{formatDisplayDate(viewingBill.sale_date)}</p>
-            </div>
-          </div>
-
-          {loadingBill ? (
-            <div className="py-10 text-center text-gray-500 font-semibold">Loading bill...</div>
-          ) : (
-            <>
-              <div className="overflow-x-auto border rounded-xl">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-blue-600 text-white">
-                      <th className="p-3 text-left">Product</th>
-                      <th className="p-3 text-right">Qty</th>
-                      <th className="p-3 text-right">Rate</th>
-                      <th className="p-3 text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {viewingBillItems.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="p-6 text-center text-gray-500">No bill items found.</td>
-                      </tr>
-                    ) : (
-                      viewingBillItems.map((item, index) => (
-                        <tr key={item.id || `${item.product_id}-${index}`} className="border-b">
-                          <td className="p-3">
-                            <div className="font-semibold">{item.product_name}</div>
-                            {item.pack_size && (
-                              <div className="text-xs text-gray-500">{getPackDisplay(item.pack_size)}</div>
-                            )}
-                          </td>
-                          <td className="p-3 text-right">{item.quantity}</td>
-                          <td className="p-3 text-right">₹{item.rate.toFixed(2)}</td>
-                          <td className="p-3 text-right font-semibold">₹{item.amount.toFixed(2)}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-5 ml-auto max-w-sm space-y-2">
-                <div className="flex justify-between text-lg">
-                  <span>Total</span>
-                  <strong>₹{viewingBill.total_amount.toFixed(2)}</strong>
-                </div>
-                <div className="flex justify-between text-lg text-green-700">
-                  <span>Paid</span>
-                  <strong>₹{viewingBill.paid_amount.toFixed(2)}</strong>
-                </div>
-                <div className="flex justify-between text-xl text-red-600 border-t pt-2">
-                  <span>Balance</span>
-                  <strong>₹{viewingBill.balance_amount.toFixed(2)}</strong>
-                </div>
-                <div className="flex justify-between text-sm text-gray-600">
-                  <span>Payment</span>
-                  <strong>{viewingBill.payment_method}</strong>
-                </div>
-                {viewingBill.payment_method === "Split" && (
-                  <>
-                    <div className="flex justify-between text-sm text-gray-600">
-                      <span>Cash</span>
-                      <strong>₹{(viewingBill.cash_amount || 0).toFixed(2)}</strong>
-                    </div>
-                    <div className="flex justify-between text-sm text-gray-600">
-                      <span>UPI</span>
-                      <strong>₹{(viewingBill.upi_amount || 0).toFixed(2)}</strong>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {viewingBill.balance_amount > 0 && businessUpiId.trim() && (
-                <div className="mt-6 rounded-2xl border border-purple-200 bg-purple-50 p-5 flex flex-col sm:flex-row items-center gap-5">
-                  <div className="bg-white p-3 rounded-xl border">
-                    <QRCodeSVG
-                      value={(() => {
-                        const params = new URLSearchParams({
-                          pa: businessUpiId.trim(),
-                          pn: "MANVI MILK AGENCIES",
-                          am: viewingBill.balance_amount.toFixed(2),
-                          cu: "INR",
-                        });
-                        return `upi://pay?${params.toString()}`;
-                      })()}
-                      size={150}
-                      includeMargin
-                    />
-                  </div>
-                  <div>
-                    <p className="font-bold text-purple-800">UPI Payment QR</p>
-                    <p className="text-sm text-purple-700">Scan to pay balance ₹{viewingBill.balance_amount.toFixed(2)}</p>
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-6 flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={sendSavedBillOnWhatsApp}
-                  className="bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl font-bold"
-                >
-                  📲 WhatsApp Bill
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewingBill(null)}
-                  className="bg-gray-500 hover:bg-gray-600 text-white px-5 py-3 rounded-xl font-bold"
-                >
-                  Close
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  )}
 
 </div>
 
