@@ -287,7 +287,7 @@ export default function Suppliers() {
         const { error } = await supabase
           .from("suppliers")
           .update({
-            supplier_supplier_name: cleanName,
+            supplier_name: cleanName,
             mobile: cleanMobile || null,
             address: cleanAddress || null,
             opening_balance: opening,
@@ -305,7 +305,7 @@ export default function Suppliers() {
         const { error } = await supabase
           .from("suppliers")
           .insert({
-            supplier_supplier_name: cleanName,
+            supplier_name: cleanName,
             mobile: cleanMobile || null,
             address: cleanAddress || null,
             opening_balance: opening,
