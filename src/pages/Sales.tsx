@@ -623,7 +623,7 @@ Loads the customer's latest previous sale and prepares
 the same products/quantities as today's draft.
 It does NOT save until Save Sale is pressed.
 ========================================================= */
-async function punchTodaysSale() {
+async function punchSaleForDate(targetDate: string = saleDate) {
   if (!customerId) {
     alert("Please select a customer first.");
     return;
@@ -645,7 +645,7 @@ async function punchTodaysSale() {
         paid_amount
       `)
       .eq("customer_id", customerId)
-      .lt("sale_date", saleDate)
+      .lt("sale_date", targetDate)
       .order("sale_date", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -753,19 +753,46 @@ async function punchTodaysSale() {
     });
 
     alert(
-      `Today's sale prepared from ${formatDisplayDate(
-        previousSale.sale_date
-      )}.\n\nPlease check the quantities and press Save Sale.`
+      `Sale prepared for ${formatDisplayDate(
+        targetDate
+      )} from ${formatDisplayDate(previousSale.sale_date)}.\n\nPlease check the quantities and press Save Sale.`
     );
   } catch (error: any) {
-    console.error("Punch today's sale error:", error);
+    console.error("Punch sale error:", error);
     alert(
-      "Unable to punch today's sale:\n" +
+      "Unable to punch sale:\n" +
         (error?.message || "Unknown error")
     );
   } finally {
     setLoading(false);
   }
+}
+
+
+
+async function punchTodaysSale() {
+  await punchSaleForDate(saleDate);
+}
+
+async function punchYesterdaysSale() {
+  if (!customerId) {
+    alert("Please select a customer first.");
+    return;
+  }
+
+  const yesterday = new Date();
+  yesterday.setHours(0, 0, 0, 0);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  const year = yesterday.getFullYear();
+  const month = String(yesterday.getMonth() + 1).padStart(2, "0");
+  const day = String(yesterday.getDate()).padStart(2, "0");
+  const yesterdayString = `${year}-${month}-${day}`;
+
+  setSaleDate(yesterdayString);
+  setSaleDateDisplay(formatDisplayDate(yesterdayString));
+
+  await punchSaleForDate(yesterdayString);
 }
 
 /* =========================================================
@@ -2706,17 +2733,28 @@ return (
 
       {customerId && (
         <div className="md:col-span-4">
-          <button
-            type="button"
-            disabled={loading || loadingData}
-            onClick={punchTodaysSale}
-            className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
-          >
-            ⚡ {getPunchButtonLabel(saleDate)}
-          </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <button
+              type="button"
+              disabled={loading || loadingData}
+              onClick={punchTodaysSale}
+              className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
+            >
+              ⚡ Punch Selected Date
+            </button>
+
+            <button
+              type="button"
+              disabled={loading || loadingData}
+              onClick={punchYesterdaysSale}
+              className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
+            >
+              📅 Punch Yesterday's Sale
+            </button>
+          </div>
 
           <p className="mt-2 text-sm text-gray-500">
-            Loads the customer's latest previous sale before the selected date for this entry. Check quantities before saving.
+            Selected Date punches the selected date. Yesterday punches yesterday's entry and loads the customer's latest previous sale. Check quantities before saving.
           </p>
         </div>
       )}
