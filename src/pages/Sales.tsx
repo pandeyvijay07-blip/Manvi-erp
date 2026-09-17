@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "../lib/supabase";
 import CustomerRouteSearch from "../components/CustomerRouteSearch";
 
@@ -97,6 +98,7 @@ brand_name: string;
 type Customer = {
 id: string;
 customer_name: string;
+mobile?: string | null;
 route?: string | null;
 };
 
@@ -130,6 +132,8 @@ sale_date: string;
 customer_id: string | null;
 customer_name: string;
 payment_method: string;
+cash_amount?: number;
+upi_amount?: number;
 total_amount: number;
 paid_amount: number;
 balance_amount: number;
@@ -163,6 +167,118 @@ useState("Cash");
 
 const [paidAmount, setPaidAmount] =
 useState("0");
+
+const [cashAmount, setCashAmount] =
+useState("0");
+
+const [upiAmount, setUpiAmount] =
+useState("0");
+
+/* =========================================================
+UPI / WHATSAPP BILL
+========================================================= */
+const [businessUpiId, setBusinessUpiId] = useState(() => {
+try {
+return window.localStorage.getItem("manvi_upi_id") || "";
+} catch {
+return "";
+}
+});
+
+function saveBusinessUpiId(value: string) {
+const normalized = value.trim();
+setBusinessUpiId(normalized);
+try {
+window.localStorage.setItem("manvi_upi_id", normalized);
+} catch {
+// Local storage may be unavailable in restricted browsers.
+}
+}
+
+function getWhatsAppNumber(value: string | null | undefined) {
+const digits = String(value || "").replace(/\D/g, "");
+if (!digits) return "";
+if (digits.length === 10) return `91${digits}`;
+if (digits.length === 12 && digits.startsWith("91")) return digits;
+return digits;
+}
+
+function buildWhatsAppBillMessage(
+customerName: string,
+date: string,
+items: SaleItem[],
+total: number,
+paidValue: number,
+balanceValue: number,
+method: string
+) {
+const itemLines = items
+.map(
+(item) =>
+`${item.product_name} ${item.pack_size ? `(${getPackDisplay(item.pack_size)})` : ""} × ${item.quantity} @ ₹${item.rate.toFixed(2)} = ₹${item.amount.toFixed(2)}`
+)
+.join("\n");
+
+return [
+"*MANVI MILK AGENCIES*",
+"Sales Bill",
+`Customer: ${customerName}`,
+`Date: ${formatDisplayDate(date)}`,
+"",
+itemLines,
+"",
+`Total: ₹${total.toFixed(2)}`,
+`Paid: ₹${paidValue.toFixed(2)}`,
+`Balance: ₹${balanceValue.toFixed(2)}`,
+`Payment: ${method}`,
+"",
+"Thank you for your business.",
+].join("\n");
+}
+
+function openWhatsAppBill() {
+if (!selectedCustomer) {
+alert("Please select a customer first.");
+return;
+}
+
+if (saleItems.length === 0) {
+alert("Please add at least one product before sending the bill.");
+return;
+}
+
+const phone = getWhatsAppNumber(selectedCustomer.mobile);
+if (!phone) {
+alert("This customer does not have a valid mobile number. Add the mobile number in Customers first.");
+return;
+}
+
+const message = buildWhatsAppBillMessage(
+selectedCustomer.customer_name,
+saleDate,
+saleItems,
+totalSale,
+paid,
+balance,
+paymentMethod
+);
+
+const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function getUpiPaymentUrl() {
+if (!businessUpiId.trim() || balance <= 0) return "";
+
+const params = new URLSearchParams({
+pa: businessUpiId.trim(),
+pn: "MANVI MILK AGENCIES",
+am: balance.toFixed(2),
+cu: "INR",
+});
+
+return `upi://pay?${params.toString()}`;
+}
 
 /* =========================================================
 PRODUCT ENTRY
@@ -207,6 +323,13 @@ RECENT SALES
 
 const [recentSales, setRecentSales] =
 useState<RecentSale[]>([]);
+
+/* =========================================================
+VIEW SAVED BILL
+========================================================= */
+const [viewingBill, setViewingBill] = useState<RecentSale | null>(null);
+const [viewingBillItems, setViewingBillItems] = useState<SaleItem[]>([]);
+const [loadingBill, setLoadingBill] = useState(false);
 
 /* =========================================================
 LOADING
@@ -269,7 +392,7 @@ setLoadingData(true);
 
     supabase
       .from("customers")
-      .select("id, customer_name, route")
+      .select("id, customer_name, mobile, route")
       .order("customer_name"),
 
     /*
@@ -348,6 +471,8 @@ error,
           sale_date,
           customer_id,
           payment_method,
+          cash_amount,
+          upi_amount,
           total_amount,
           paid_amount,
           balance_amount
@@ -387,6 +512,10 @@ ascending: false,
         payment_method:
           sale.payment_method ||
           "Cash",
+        cash_amount:
+          Number(sale.cash_amount) || 0,
+        upi_amount:
+          Number(sale.upi_amount) || 0,
         total_amount:
           Number(
             sale.total_amount
@@ -444,23 +573,12 @@ customerId,
 ]);
 
 /* =========================================================
-YESTERDAY'S SALE
-Loads the selected customer's sale from the previous
-calendar day into today's draft.
-It does NOT save automatically. The loaded sale remains
-fully editable before Save Sale is pressed.
+PUNCH TODAY'S SALE
+Loads the customer's latest previous sale and prepares
+the same products/quantities as today's draft.
+It does NOT save until Save Sale is pressed.
 ========================================================= */
-function getPreviousSaleDate(value: string) {
-  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
-  const date = new Date(year, month - 1, day);
-  date.setDate(date.getDate() - 1);
-
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate()
-  ).padStart(2, "0")}`;
-}
-
-async function loadYesterdaysSale() {
+async function punchTodaysSale() {
   if (!customerId) {
     alert("Please select a customer first.");
     return;
@@ -468,8 +586,6 @@ async function loadYesterdaysSale() {
 
   try {
     setLoading(true);
-
-    const yesterdayDate = getPreviousSaleDate(saleDate);
 
     const {
       data: previousSale,
@@ -484,8 +600,8 @@ async function loadYesterdaysSale() {
         paid_amount
       `)
       .eq("customer_id", customerId)
-      .eq("sale_date", yesterdayDate)
-      .order("id", { ascending: false })
+      .lt("sale_date", saleDate)
+      .order("sale_date", { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -494,11 +610,7 @@ async function loadYesterdaysSale() {
     }
 
     if (!previousSale) {
-      alert(
-        `No sale found for this customer on ${formatDisplayDate(
-          yesterdayDate
-        )}.`
-      );
+      alert("No previous sale found for this customer.");
       return;
     }
 
@@ -522,7 +634,7 @@ async function loadYesterdaysSale() {
     }
 
     if (!previousItems || previousItems.length === 0) {
-      alert("Yesterday's sale has no products.");
+      alert("Previous sale has no products.");
       return;
     }
 
@@ -574,13 +686,10 @@ async function loadYesterdaysSale() {
     );
 
     if (validItems.length === 0) {
-      alert("Yesterday's sale products could not be found in Products.");
+      alert("Previous sale products could not be found.");
       return;
     }
 
-    // Load into the current draft only.
-    // The user can edit quantities/products/rates/payment
-    // and must press Save Sale to create today's sale.
     setSaleItems(validItems);
     setPaymentMethod(previousSale.payment_method || "Cash");
     setPaidAmount("0");
@@ -597,14 +706,14 @@ async function loadYesterdaysSale() {
     });
 
     alert(
-      `Yesterday's sale (${formatDisplayDate(
+      `Today's sale prepared from ${formatDisplayDate(
         previousSale.sale_date
-      )}) loaded.\n\nYou can edit the products or quantities, then press Save Sale.`
+      )}.\n\nPlease check the quantities and press Save Sale.`
     );
   } catch (error: any) {
-    console.error("Load yesterday's sale error:", error);
+    console.error("Punch today's sale error:", error);
     alert(
-      "Unable to load yesterday's sale:\n" +
+      "Unable to punch today's sale:\n" +
         (error?.message || "Unknown error")
     );
   } finally {
@@ -843,8 +952,12 @@ Number(item.amount || 0),
 PAID / BALANCE
 ========================================================= */
 
-const paid =
-Number(paidAmount) || 0;
+const cashPaid = Number(cashAmount) || 0;
+const upiPaid = Number(upiAmount) || 0;
+
+const paid = paymentMethod === "Split"
+  ? cashPaid + upiPaid
+  : Number(paidAmount) || 0;
 
 const balance = Math.max(
 0,
@@ -1209,6 +1322,8 @@ setQuantity("1");
 setSellingRate("");
 
 setPaidAmount("0");
+setCashAmount("0");
+setUpiAmount("0");
 
 setPaymentMethod("Cash");
 
@@ -1265,6 +1380,16 @@ if (paid > totalSale) {
   alert(
     "Paid amount cannot be greater than total sale."
   );
+  return;
+}
+
+if (paymentMethod === "Split" && cashPaid < 0 || paymentMethod === "Split" && upiPaid < 0) {
+  alert("Split payment amounts cannot be negative.");
+  return;
+}
+
+if (paymentMethod === "Split" && paid <= 0) {
+  alert("Enter Cash and/or UPI amount for split payment.");
   return;
 }
 
@@ -1337,6 +1462,12 @@ try {
 
       payment_method:
         paymentMethod,
+
+      cash_amount:
+        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+
+      upi_amount:
+        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
 
       total_amount:
         totalSale,
@@ -1669,6 +1800,12 @@ GET OLD SALE ITEMS
       payment_method:
         paymentMethod,
 
+      cash_amount:
+        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+
+      upi_amount:
+        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
+
       total_amount:
         totalSale,
 
@@ -1842,6 +1979,8 @@ setLoading(true);
       sale_date,
       customer_id,
       payment_method,
+      cash_amount,
+      upi_amount,
       total_amount,
       paid_amount,
       balance_amount
@@ -1903,6 +2042,9 @@ setLoading(true);
     sale.payment_method ||
       "Cash"
   );
+
+  setCashAmount(String(Number(sale.cash_amount) || 0));
+  setUpiAmount(String(Number(sale.upi_amount) || 0));
 
   setPaidAmount(
     String(
@@ -2014,6 +2156,108 @@ setLoading(true);
   setLoading(false);
 }
 
+}
+
+/* =========================================================
+VIEW SAVED BILL
+========================================================= */
+async function viewSavedBill(sale: RecentSale) {
+  try {
+    setLoadingBill(true);
+    setViewingBill(sale);
+    setViewingBillItems([]);
+
+    const {
+      data: items,
+      error: itemsError,
+    } = await supabase
+      .from("sale_items")
+      .select(`
+        id,
+        product_id,
+        quantity,
+        rate,
+        amount,
+        cost_rate
+      `)
+      .eq("sale_id", sale.id);
+
+    if (itemsError) {
+      throw itemsError;
+    }
+
+    const convertedItems: SaleItem[] = (items || []).map(
+      (item: any) => {
+        const product = products.find(
+          (p) => p.id === item.product_id
+        );
+        const brand = brands.find(
+          (b) => b.id === product?.brand_id
+        );
+
+        return {
+          id: item.id,
+          product_id: item.product_id,
+          brand_id: product?.brand_id || null,
+          brand_name: brand?.brand_name || "No Brand",
+          product_name: product?.product_name || "Unknown Product",
+          pack_size: product?.pack_size || "",
+          unit: getProductUnit(product),
+          quantity: Number(item.quantity) || 0,
+          rate: Number(item.rate) || 0,
+          purchase_rate: Number(item.cost_rate ?? product?.purchase_rate ?? 0) || 0,
+          amount: Number(item.amount) || 0,
+        };
+      }
+    );
+
+    setViewingBillItems(convertedItems);
+  } catch (error: any) {
+    console.error("View bill error:", error);
+    setViewingBill(null);
+    alert(
+      "Unable to open bill:\n" +
+        (error?.message || "Unable to load bill items.")
+    );
+  } finally {
+    setLoadingBill(false);
+  }
+}
+
+function getBillCustomerMobile(sale: RecentSale | null) {
+  if (!sale?.customer_id) return "";
+  const customer = customers.find(
+    (item) => item.id === sale.customer_id
+  );
+  return customer?.mobile || "";
+}
+
+function sendSavedBillOnWhatsApp() {
+  if (!viewingBill) return;
+
+  const phone = getWhatsAppNumber(
+    getBillCustomerMobile(viewingBill)
+  );
+
+  if (!phone) {
+    alert(
+      "This customer does not have a valid mobile number. Add the mobile number in Customers first."
+    );
+    return;
+  }
+
+  const message = buildWhatsAppBillMessage(
+    viewingBill.customer_name,
+    viewingBill.sale_date,
+    viewingBillItems,
+    viewingBill.total_amount,
+    viewingBill.paid_amount,
+    viewingBill.balance_amount,
+    viewingBill.payment_method
+  );
+
+  const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 /* =========================================================
@@ -2302,14 +2546,14 @@ return (
           <button
             type="button"
             disabled={loading || loadingData}
-            onClick={loadYesterdaysSale}
+            onClick={punchTodaysSale}
             className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
           >
-            📋 Yesterday's Sale
+            ⚡ Punch Today's Sale
           </button>
 
           <p className="mt-2 text-sm text-gray-500">
-            Loads the customer's sale from yesterday. You can edit it before saving.
+            Loads the customer's last sale for today's entry. Check quantities before saving.
           </p>
         </div>
       )}
@@ -2351,30 +2595,61 @@ return (
           <option value="Advance">
             Advance
           </option>
+
+          <option value="Split">
+            Split (Cash + UPI)
+          </option>
         </select>
       </div>
 
       {/* PAID */}
 
-      <div>
-        <label className="block font-semibold mb-2">
-          Amount Paid
-        </label>
+      {paymentMethod === "Split" ? (
+        <>
+          <div>
+            <label className="block font-semibold mb-2">Cash Amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={cashAmount}
+              onChange={(e) => setCashAmount(e.target.value)}
+              className="w-full border rounded-xl px-4 py-3"
+              placeholder="0"
+            />
+          </div>
 
-        <input
-          type="number"
-          min="0"
-          step="0.01"
-          value={paidAmount}
-          onChange={(e) =>
-            setPaidAmount(
-              e.target.value
-            )
-          }
-          className="w-full border rounded-xl px-4 py-3"
-          placeholder="0"
-        />
-      </div>
+          <div>
+            <label className="block font-semibold mb-2">UPI Amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={upiAmount}
+              onChange={(e) => setUpiAmount(e.target.value)}
+              className="w-full border rounded-xl px-4 py-3"
+              placeholder="0"
+            />
+            <p className="text-sm text-gray-500 mt-1">Paid = Cash + UPI</p>
+          </div>
+        </>
+      ) : (
+        <div>
+          <label className="block font-semibold mb-2">
+            Amount Paid
+          </label>
+
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={paidAmount}
+            onChange={(e) => setPaidAmount(e.target.value)}
+            className="w-full border rounded-xl px-4 py-3"
+            placeholder="0"
+          />
+        </div>
+      )}
 
     </div>
 
@@ -2925,6 +3200,70 @@ return (
     </div>
 
     {/* ===================================================
+        UPI QR + WHATSAPP
+    =================================================== */}
+    <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div className="rounded-2xl border border-purple-200 bg-purple-50 p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-bold text-purple-800">UPI QR</h3>
+            <p className="text-sm text-purple-700 mt-1">Scan to pay the current balance.</p>
+          </div>
+          <span className="font-bold text-purple-800">₹ {balance.toFixed(2)}</span>
+        </div>
+
+        <div className="mt-4 flex flex-col sm:flex-row gap-4 items-center">
+          <div className="bg-white p-3 rounded-xl border">
+            {getUpiPaymentUrl() ? (
+              <QRCodeSVG value={getUpiPaymentUrl()} size={180} includeMargin />
+            ) : (
+              <div className="w-[180px] h-[180px] flex items-center justify-center text-center text-sm text-gray-500 p-4">
+                Enter the business UPI ID below to generate the QR.
+              </div>
+            )}
+          </div>
+
+          <div className="w-full">
+            <label className="block font-semibold mb-2">Business UPI ID</label>
+            <input
+              type="text"
+              value={businessUpiId}
+              onChange={(e) => saveBusinessUpiId(e.target.value)}
+              placeholder="example@upi"
+              className="w-full border rounded-xl px-4 py-3 bg-white"
+            />
+            <p className="text-xs text-gray-500 mt-2">Saved on this device for future bills.</p>
+            {balance <= 0 && (
+              <p className="text-sm font-semibold text-green-700 mt-2">No balance due.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-green-200 bg-green-50 p-5">
+        <h3 className="text-xl font-bold text-green-800">WhatsApp Bill</h3>
+        <p className="text-sm text-green-700 mt-1">Open WhatsApp with the customer bill already prepared.</p>
+
+        <div className="mt-4 rounded-xl bg-white border p-4">
+          <p className="font-semibold">Customer</p>
+          <p className="text-gray-700">{selectedCustomer?.customer_name || "Select customer"}</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Mobile: {selectedCustomer?.mobile || "Not available"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={openWhatsAppBill}
+          disabled={!selectedCustomer || saleItems.length === 0}
+          className="w-full mt-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-6 py-3 rounded-xl font-bold"
+        >
+          📲 WhatsApp Bill
+        </button>
+      </div>
+    </div>
+
+    {/* ===================================================
         SAVE BUTTONS
     =================================================== */}
 
@@ -3097,7 +3436,22 @@ return (
 
                   <td className="p-3">
 
-                    <div className="flex justify-center gap-2">
+                    <div className="flex justify-center gap-2 flex-wrap">
+
+                      <button
+                        type="button"
+                        disabled={
+                          loading || loadingBill
+                        }
+                        onClick={() =>
+                          viewSavedBill(
+                            sale
+                          )
+                        }
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        🧾 Bill
+                      </button>
 
                       <button
                         type="button"
@@ -3145,6 +3499,154 @@ return (
     </div>
 
   </div>
+
+  {/* ===================================================
+      SAVED BILL PREVIEW
+  =================================================== */}
+  {viewingBill && (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl">
+        <div className="p-5 border-b flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-bold text-blue-700">MANVI MILK AGENCIES</h2>
+            <p className="text-gray-500">Sales Bill</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setViewingBill(null)}
+            className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-semibold"
+          >
+            ✕ Close
+          </button>
+        </div>
+
+        <div className="p-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+            <div className="rounded-xl bg-gray-50 p-4">
+              <p className="text-sm text-gray-500">Customer</p>
+              <p className="font-bold text-lg">{viewingBill.customer_name}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 p-4">
+              <p className="text-sm text-gray-500">Bill Date</p>
+              <p className="font-bold text-lg">{formatDisplayDate(viewingBill.sale_date)}</p>
+            </div>
+          </div>
+
+          {loadingBill ? (
+            <div className="py-10 text-center text-gray-500 font-semibold">Loading bill...</div>
+          ) : (
+            <>
+              <div className="overflow-x-auto border rounded-xl">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-blue-600 text-white">
+                      <th className="p-3 text-left">Product</th>
+                      <th className="p-3 text-right">Qty</th>
+                      <th className="p-3 text-right">Rate</th>
+                      <th className="p-3 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viewingBillItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-6 text-center text-gray-500">No bill items found.</td>
+                      </tr>
+                    ) : (
+                      viewingBillItems.map((item, index) => (
+                        <tr key={item.id || `${item.product_id}-${index}`} className="border-b">
+                          <td className="p-3">
+                            <div className="font-semibold">{item.product_name}</div>
+                            {item.pack_size && (
+                              <div className="text-xs text-gray-500">{getPackDisplay(item.pack_size)}</div>
+                            )}
+                          </td>
+                          <td className="p-3 text-right">{item.quantity}</td>
+                          <td className="p-3 text-right">₹{item.rate.toFixed(2)}</td>
+                          <td className="p-3 text-right font-semibold">₹{item.amount.toFixed(2)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-5 ml-auto max-w-sm space-y-2">
+                <div className="flex justify-between text-lg">
+                  <span>Total</span>
+                  <strong>₹{viewingBill.total_amount.toFixed(2)}</strong>
+                </div>
+                <div className="flex justify-between text-lg text-green-700">
+                  <span>Paid</span>
+                  <strong>₹{viewingBill.paid_amount.toFixed(2)}</strong>
+                </div>
+                <div className="flex justify-between text-xl text-red-600 border-t pt-2">
+                  <span>Balance</span>
+                  <strong>₹{viewingBill.balance_amount.toFixed(2)}</strong>
+                </div>
+                <div className="flex justify-between text-sm text-gray-600">
+                  <span>Payment</span>
+                  <strong>{viewingBill.payment_method}</strong>
+                </div>
+                {viewingBill.payment_method === "Split" && (
+                  <>
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>Cash</span>
+                      <strong>₹{(viewingBill.cash_amount || 0).toFixed(2)}</strong>
+                    </div>
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>UPI</span>
+                      <strong>₹{(viewingBill.upi_amount || 0).toFixed(2)}</strong>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {viewingBill.balance_amount > 0 && businessUpiId.trim() && (
+                <div className="mt-6 rounded-2xl border border-purple-200 bg-purple-50 p-5 flex flex-col sm:flex-row items-center gap-5">
+                  <div className="bg-white p-3 rounded-xl border">
+                    <QRCodeSVG
+                      value={(() => {
+                        const params = new URLSearchParams({
+                          pa: businessUpiId.trim(),
+                          pn: "MANVI MILK AGENCIES",
+                          am: viewingBill.balance_amount.toFixed(2),
+                          cu: "INR",
+                        });
+                        return `upi://pay?${params.toString()}`;
+                      })()}
+                      size={150}
+                      includeMargin
+                    />
+                  </div>
+                  <div>
+                    <p className="font-bold text-purple-800">UPI Payment QR</p>
+                    <p className="text-sm text-purple-700">Scan to pay balance ₹{viewingBill.balance_amount.toFixed(2)}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={sendSavedBillOnWhatsApp}
+                  className="bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl font-bold"
+                >
+                  📲 WhatsApp Bill
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingBill(null)}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-5 py-3 rounded-xl font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )}
 
 </div>
 
