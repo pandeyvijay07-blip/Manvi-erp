@@ -886,6 +886,29 @@ export default function Purchases() {
   // CLEAR PURCHASE
   // ====================================================
 
+  function setPurchaseDateOffset(days: number) {
+
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + days);
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const iso = `${year}-${month}-${day}`;
+
+    setPurchaseDate(iso);
+    setPurchaseDateDisplay(formatDate(iso));
+  }
+
+  function punchYesterdayPurchase() {
+    setPurchaseDateOffset(-1);
+  }
+
+  function punchTodayPurchase() {
+    setPurchaseDateOffset(0);
+  }
+
   function clearPurchase() {
 
     const today = todayInput();
@@ -1779,14 +1802,64 @@ export default function Purchases() {
               "
             />
 
+            <div
+              className="
+                mt-3
+                flex
+                flex-col
+                gap-2
+                sm:flex-row
+              "
+            >
+              <button
+                type="button"
+                onClick={punchTodayPurchase}
+                disabled={saving}
+                className="
+                  flex-1
+                  rounded-lg
+                  bg-blue-600
+                  px-4
+                  py-2.5
+                  text-sm
+                  font-bold
+                  text-white
+                  hover:bg-blue-700
+                  disabled:opacity-50
+                "
+              >
+                📅 Today Purchase
+              </button>
+
+              <button
+                type="button"
+                onClick={punchYesterdayPurchase}
+                disabled={saving}
+                className="
+                  flex-1
+                  rounded-lg
+                  bg-orange-500
+                  px-4
+                  py-2.5
+                  text-sm
+                  font-bold
+                  text-white
+                  hover:bg-orange-600
+                  disabled:opacity-50
+                "
+              >
+                ↩ Yesterday Purchase
+              </button>
+            </div>
+
             <p
               className="
-                mt-1
+                mt-2
                 text-xs
                 text-slate-500
               "
             >
-              Date format: DD/MM/YYYY
+              Yesterday Purchase changes the date only. Enter the purchase details and save manually.
             </p>
 
           </div>
