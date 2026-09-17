@@ -23,7 +23,6 @@ type RecentCollection = {
   cash_amount: number;
   upi_amount: number;
   remarks: string;
-  source: "Collection" | "Sale";
 };
 
 type Allocation = {
@@ -235,68 +234,33 @@ export default function Collections() {
 
   async function loadRecentCollections() {
     try {
-      /*
-       * Recent Collections shows:
-       * 1. Payments entered in Collections
-       * 2. Payments received directly during Sales Punch
-       *
-       * Sale payments are DISPLAYED here only.
-       * They are not inserted into collections, so balances
-       * are never reduced twice.
-       */
+      const { data, error } = await supabase
+        .from("collections")
+        .select(
+          `
+          id,
+          collection_date,
+          customer_id,
+          amount,
+          payment_method,
+          cash_amount,
+          upi_amount,
+          remarks
+          `
+        )
+        .order("collection_date", {
+          ascending: false,
+        })
+        .limit(30);
 
-      const [
-        { data: collectionRows, error: collectionError },
-        { data: saleRows, error: saleError },
-      ] = await Promise.all([
-        supabase
-          .from("collections")
-          .select(
-            `
-            id,
-            collection_date,
-            customer_id,
-            amount,
-            payment_method,
-            cash_amount,
-            upi_amount,
-            remarks
-            `
-          )
-          .order("collection_date", {
-            ascending: false,
-          })
-          .limit(30),
-
-        supabase
-          .from("sales")
-          .select(
-            `
-            id,
-            sale_date,
-            customer_id,
-            paid_amount,
-            payment_method,
-            cash_amount,
-            upi_amount
-            `
-          )
-          .gt("paid_amount", 0)
-          .order("sale_date", {
-            ascending: false,
-          })
-          .limit(30),
-      ]);
-
-      if (collectionError) {
-        throw collectionError;
+      if (error) {
+        throw error;
       }
 
-      if (saleError) {
-        throw saleError;
-      }
-
-      const customerMap = new Map<string, string>();
+      const customerMap = new Map<
+        string,
+        string
+      >();
 
       customers.forEach((customer) => {
         customerMap.set(
@@ -305,75 +269,29 @@ export default function Collections() {
         );
       });
 
-      const collectionItems: RecentCollection[] =
-        (collectionRows || []).map((row: any) => ({
+      setRecentCollections(
+        (data || []).map((row: any) => ({
           id: row.id,
-          collection_date: row.collection_date,
-          customer_id: row.customer_id,
+          collection_date:
+            row.collection_date,
+          customer_id:
+            row.customer_id,
           customer_name:
-            customerMap.get(row.customer_id) || "Unknown",
-          amount: Number(row.amount) || 0,
-          payment_method: row.payment_method || "Cash",
-          cash_amount: Number(row.cash_amount) || 0,
-          upi_amount: Number(row.upi_amount) || 0,
-          remarks: row.remarks || "",
-          source: "Collection",
-        }));
-
-      const saleItems: RecentCollection[] =
-        (saleRows || []).map((row: any) => {
-          const method = String(
-            row.payment_method || "Cash"
-          ).trim();
-
-          const paid = Number(row.paid_amount) || 0;
-
-          const cash =
-            Number(row.cash_amount) ||
-            (method.toLowerCase() === "cash" ? paid : 0);
-
-          const upi =
-            Number(row.upi_amount) ||
-            (method.toLowerCase() === "upi" ? paid : 0);
-
-          return {
-            id: `sale-${row.id}`,
-            collection_date: row.sale_date,
-            customer_id: row.customer_id,
-            customer_name:
-              customerMap.get(row.customer_id) || "Unknown",
-            amount: paid,
-            payment_method: method || "Cash",
-            cash_amount: cash,
-            upi_amount: upi,
-            remarks: "Sale Payment",
-            source: "Sale",
-          };
-        });
-
-      const combined = [
-        ...collectionItems,
-        ...saleItems,
-      ]
-        .sort((a, b) => {
-          const dateCompare =
-            String(b.collection_date).localeCompare(
-              String(a.collection_date)
-            );
-
-          if (dateCompare !== 0) {
-            return dateCompare;
-          }
-
-          if (a.source !== b.source) {
-            return a.source === "Collection" ? -1 : 1;
-          }
-
-          return 0;
-        })
-        .slice(0, 50);
-
-      setRecentCollections(combined);
+            customerMap.get(
+              row.customer_id
+            ) || "Unknown",
+          amount:
+            Number(row.amount) || 0,
+          payment_method:
+            row.payment_method || "Cash",
+          cash_amount:
+            Number(row.cash_amount) || 0,
+          upi_amount:
+            Number(row.upi_amount) || 0,
+          remarks:
+            row.remarks || "",
+        }))
+      );
     } catch (error: any) {
       console.error(
         "Recent collection error:",
@@ -2195,41 +2113,41 @@ export default function Collections() {
                       </td>
 
                       <td className="p-3">
-                        {collection.source === "Sale" ? (
-                          <span className="inline-block bg-blue-100 text-blue-700 px-3 py-2 rounded-lg font-semibold">
-                            Sale Payment
-                          </span>
-                        ) : (
-                          <div className="flex justify-center gap-2">
 
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() =>
-                                editCollection(
-                                  collection.id
-                                )
-                              }
-                              className="bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
-                            >
-                              Edit
-                            </button>
+                        <div className="flex justify-center gap-2">
 
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() =>
-                                deleteCollection(
-                                  collection.id
-                                )
-                              }
-                              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
-                            >
-                              Delete
-                            </button>
+                          <button
+                            type="button"
+                            disabled={
+                              loading
+                            }
+                            onClick={() =>
+                              editCollection(
+                                collection.id
+                              )
+                            }
+                            className="bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                          >
+                            Edit
+                          </button>
 
-                          </div>
-                        )}
+                          <button
+                            type="button"
+                            disabled={
+                              loading
+                            }
+                            onClick={() =>
+                              deleteCollection(
+                                collection.id
+                              )
+                            }
+                            className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                          >
+                            Delete
+                          </button>
+
+                        </div>
+
                       </td>
 
                     </tr>
