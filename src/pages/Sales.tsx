@@ -44,6 +44,41 @@ function formatDateInput(value: string | null | undefined) {
   return "";
 }
 
+function getPunchButtonLabel(date: string) {
+  const selectedDate = String(date || '').slice(0, 10);
+  const today = getLocalDateString();
+
+  if (!selectedDate) {
+    return "Punch Sale";
+  }
+
+  const selected = new Date(`${selectedDate}T00:00:00`);
+  const current = new Date(`${today}T00:00:00`);
+
+  if (Number.isNaN(selected.getTime()) || Number.isNaN(current.getTime())) {
+    return "Punch Sale";
+  }
+
+  const diffDays = Math.round(
+    (current.getTime() - selected.getTime()) /
+      (1000 * 60 * 60 * 24)
+  );
+
+  if (diffDays === 0) {
+    return "Punch Today's Sale";
+  }
+
+  if (diffDays === 1) {
+    return "Punch Yesterday's Sale";
+  }
+
+  if (diffDays > 1) {
+    return `Punch Sale for ${formatDisplayDate(selectedDate)}`;
+  }
+
+  return "Punch Sale";
+}
+
 function parseDateInput(value: string) {
   const digits = value.replace(/\D/g, "");
 
@@ -2677,11 +2712,11 @@ return (
             onClick={punchTodaysSale}
             className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
           >
-            ⚡ Punch Today's Sale
+            ⚡ {getPunchButtonLabel(saleDate)}
           </button>
 
           <p className="mt-2 text-sm text-gray-500">
-            Loads the customer's last sale for today's entry. Check quantities before saving.
+            Loads the customer's latest previous sale before the selected date for this entry. Check quantities before saving.
           </p>
         </div>
       )}
