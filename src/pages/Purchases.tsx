@@ -46,8 +46,6 @@ type SavedPurchase = {
   payment_method: string | null;
   paid_amount: number | string | null;
   balance_amount: number | string | null;
-  cash_amount: number | string | null;
-  upi_amount: number | string | null;
 };
 
 // ======================================================
@@ -250,18 +248,6 @@ export default function Purchases() {
   const [
     paidAmount,
     setPaidAmount,
-  ] =
-    useState("0");
-
-  const [
-    cashAmount,
-    setCashAmount,
-  ] =
-    useState("0");
-
-  const [
-    upiAmount,
-    setUpiAmount,
   ] =
     useState("0");
 
@@ -482,9 +468,7 @@ export default function Purchases() {
               total_amount,
               payment_method,
               paid_amount,
-              balance_amount,
-              cash_amount,
-              upi_amount
+              balance_amount
             `
           )
           .order(
@@ -883,31 +867,154 @@ export default function Purchases() {
   }
 
   // ====================================================
-  // CLEAR PURCHASE
+  // COPY YESTERDAY'S PURCHASE
   // ====================================================
 
-  function setPurchaseDateOffset(days: number) {
+  async function copyYesterdayPurchase() {
+    if (purchaseRows.length > 0) {
+      const confirmed = window.confirm(
+        "Current purchase entries will be replaced with yesterday's purchase. Continue?"
+      );
 
-    const date = new Date();
-    date.setHours(12, 0, 0, 0);
-    date.setDate(date.getDate() + days);
+      if (!confirmed) {
+        return;
+      }
+    }
 
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const iso = `${year}-${month}-${day}`;
+    setLoading(true);
 
-    setPurchaseDate(iso);
-    setPurchaseDateDisplay(formatDate(iso));
+    try {
+      const today = todayInput();
+      const yesterdayDate = new Date(`${today}T00:00:00`);
+      yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+
+      const year = yesterdayDate.getFullYear();
+      const month = String(yesterdayDate.getMonth() + 1).padStart(2, "0");
+      const day = String(yesterdayDate.getDate()).padStart(2, "0");
+      const yesterday = `${year}-${month}-${day}`;
+
+      const { data: yesterdayPurchases, error: purchaseError } =
+        await supabase
+          .from("purchases")
+          .select(`
+            id,
+            purchase_date,
+            invoice_no,
+            supplier_name,
+            total_amount,
+            payment_method,
+            paid_amount,
+            balance_amount
+          `)
+          .eq("purchase_date", yesterday)
+          .order("id", { ascending: false })
+          .limit(1);
+
+      if (purchaseError) {
+        throw purchaseError;
+      }
+
+      const previousPurchase = yesterdayPurchases?.[0];
+
+      if (!previousPurchase?.id) {
+        alert(
+          `No purchase was found for yesterday (${formatDate(yesterday)}).`
+        );
+        return;
+      }
+
+      const { data: yesterdayItems, error: itemsError } =
+        await supabase
+          .from("purchase_items")
+          .select(`
+            product_id,
+            quantity,
+            rate,
+            amount
+          `)
+          .eq("purchase_id", previousPurchase.id);
+
+      if (itemsError) {
+        throw itemsError;
+      }
+
+      if (!yesterdayItems || yesterdayItems.length === 0) {
+        alert(
+          `Yesterday's purchase (${previousPurchase.invoice_no || "No invoice"}) has no product items.`
+        );
+        return;
+      }
+
+      const copiedRows: PurchaseRow[] = yesterdayItems
+        .map((item: any) => {
+          const product = products.find(
+            (productItem) =>
+              String(productItem.id) === String(item.product_id)
+          );
+
+          if (!product) {
+            return null;
+          }
+
+          const copiedQuantity = Number(item.quantity || 0);
+          const copiedRate = Number(item.rate || 0);
+
+          return {
+            product_id: product.id,
+            product_name: product.product_name,
+            size: Number(product.size || 1),
+            unit: product.unit || "Litre",
+            quantity: copiedQuantity,
+            rate: copiedRate,
+            amount: copiedQuantity * copiedRate,
+            brand_id: product.brand_id,
+          };
+        })
+        .filter((row): row is PurchaseRow => row !== null && row.quantity > 0);
+
+      if (copiedRows.length === 0) {
+        alert(
+          "Yesterday's purchase products could not be matched with Product Master."
+        );
+        return;
+      }
+
+      // IMPORTANT: this is only a draft. Nothing is saved until the user
+      // presses Punch / Save Purchase. Payment is reset to avoid duplicating
+      // yesterday's Cash / UPI / Bank payment.
+      setPurchaseRows(copiedRows);
+      setPurchaseDate(today);
+      setPurchaseDateDisplay(formatDate(today));
+      setSupplierName(previousPurchase.supplier_name || "");
+      setInvoiceNo("");
+      setPaymentMethod("Credit");
+      setPaidAmount("0");
+      setSelectedBrandId("");
+      setSelectedProductId("");
+      setQuantity("");
+      setRate("");
+
+      alert(
+        `Yesterday's purchase loaded successfully.\n\n` +
+        `Date: ${formatDate(yesterday)}\n` +
+        `Supplier: ${previousPurchase.supplier_name || "-"}\n` +
+        `Products: ${copiedRows.length}\n\n` +
+        "It is a draft only. Enter today's invoice number and payment, then press Punch / Save Purchase."
+      );
+    } catch (error: any) {
+      console.error("COPY YESTERDAY PURCHASE ERROR:", error);
+      alert(
+        "Unable to copy yesterday's purchase:\n\n" +
+          (error?.message || "Unknown error")
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function punchYesterdayPurchase() {
-    setPurchaseDateOffset(-1);
-  }
-
-  function punchTodayPurchase() {
-    setPurchaseDateOffset(0);
-  }
+  // ====================================================
+  // CLEAR PURCHASE
+  // ====================================================
 
   function clearPurchase() {
 
@@ -936,9 +1043,6 @@ export default function Purchases() {
     setPaidAmount(
       "0"
     );
-
-    setCashAmount("0");
-    setUpiAmount("0");
 
     setSelectedBrandId(
       ""
@@ -1019,25 +1123,6 @@ export default function Purchases() {
       paidAmount
     );
 
-  const numericCashAmount =
-    Math.max(
-      0,
-      Number(cashAmount) || 0
-    );
-
-  const numericUpiAmount =
-    Math.max(
-      0,
-      Number(upiAmount) || 0
-    );
-
-  const effectivePaidAmount =
-    paymentMethod === "Split"
-      ? numericCashAmount + numericUpiAmount
-      : Number.isFinite(numericPaidAmount)
-      ? Math.max(0, numericPaidAmount)
-      : 0;
-
   // ====================================================
   // PURCHASE BALANCE
   // ====================================================
@@ -1046,7 +1131,13 @@ export default function Purchases() {
     Math.max(
       0,
       totalPurchaseAmount -
-        effectivePaidAmount
+        (
+          Number.isFinite(
+            numericPaidAmount
+          )
+            ? numericPaidAmount
+            : 0
+        )
     );
 
   // ====================================================
@@ -1066,31 +1157,27 @@ export default function Purchases() {
       value ===
       "Credit"
     ) {
-      setPaidAmount("0");
-      setCashAmount("0");
-      setUpiAmount("0");
+
+      setPaidAmount(
+        "0"
+      );
+
       return;
     }
 
-    if (value === "Split") {
-      setPaidAmount("0");
-      setCashAmount("0");
-      setUpiAmount("0");
-      return;
-    }
-
-    // If switching to a normal paid method,
+    // If switching from Credit,
     // automatically suggest full payment.
     if (
       totalPurchaseAmount > 0
     ) {
-      setPaidAmount(
-        totalPurchaseAmount.toFixed(2)
-      );
-    }
 
-    setCashAmount("0");
-    setUpiAmount("0");
+      setPaidAmount(
+        totalPurchaseAmount.toFixed(
+          2
+        )
+      );
+
+    }
 
   }
 
@@ -1197,46 +1284,38 @@ export default function Purchases() {
     // -----------------------------------------------
 
     const finalPaid =
-      paymentMethod === "Split"
-        ? numericCashAmount + numericUpiAmount
-        : Number(paidAmount);
+      Number(
+        paidAmount
+      );
 
     if (
-      !Number.isFinite(finalPaid) ||
+      !Number.isFinite(
+        finalPaid
+      ) ||
       finalPaid < 0
     ) {
+
       alert(
         "Please enter a valid paid amount."
       );
+
       return;
+
     }
 
     if (
       finalPaid >
       totalPurchaseAmount
     ) {
+
       alert(
         `Paid amount cannot exceed purchase total of ${money(
           totalPurchaseAmount
         )}.`
       );
-      return;
-    }
 
-    if (
-      paymentMethod === "Split" &&
-      numericCashAmount < 0
-    ) {
-      alert("Please enter a valid Cash amount.");
       return;
-    }
 
-    if (
-      paymentMethod === "Split" &&
-      numericUpiAmount < 0
-    ) {
-      alert("Please enter a valid UPI amount.");
-      return;
     }
 
     // -----------------------------------------------
@@ -1244,13 +1323,17 @@ export default function Purchases() {
     // -----------------------------------------------
 
     if (
-      paymentMethod === "Credit" &&
+      paymentMethod ===
+        "Credit" &&
       finalPaid !== 0
     ) {
+
       alert(
         "For Credit purchase, Paid Amount should be 0."
       );
+
       return;
+
     }
 
     setSaving(
@@ -1300,20 +1383,6 @@ export default function Purchases() {
                   finalPaid
               ),
 
-            cash_amount:
-              paymentMethod === "Split"
-                ? numericCashAmount
-                : paymentMethod === "Cash"
-                ? finalPaid
-                : 0,
-
-            upi_amount:
-              paymentMethod === "Split"
-                ? numericUpiAmount
-                : paymentMethod === "UPI"
-                ? finalPaid
-                : 0,
-
           })
           .select(
             `
@@ -1324,9 +1393,7 @@ export default function Purchases() {
               total_amount,
               payment_method,
               paid_amount,
-              balance_amount,
-              cash_amount,
-              upi_amount
+              balance_amount
             `
           )
           .single();
@@ -1802,64 +1869,14 @@ export default function Purchases() {
               "
             />
 
-            <div
-              className="
-                mt-3
-                flex
-                flex-col
-                gap-2
-                sm:flex-row
-              "
-            >
-              <button
-                type="button"
-                onClick={punchTodayPurchase}
-                disabled={saving}
-                className="
-                  flex-1
-                  rounded-lg
-                  bg-blue-600
-                  px-4
-                  py-2.5
-                  text-sm
-                  font-bold
-                  text-white
-                  hover:bg-blue-700
-                  disabled:opacity-50
-                "
-              >
-                📅 Today Purchase
-              </button>
-
-              <button
-                type="button"
-                onClick={punchYesterdayPurchase}
-                disabled={saving}
-                className="
-                  flex-1
-                  rounded-lg
-                  bg-orange-500
-                  px-4
-                  py-2.5
-                  text-sm
-                  font-bold
-                  text-white
-                  hover:bg-orange-600
-                  disabled:opacity-50
-                "
-              >
-                ↩ Yesterday Purchase
-              </button>
-            </div>
-
             <p
               className="
-                mt-2
+                mt-1
                 text-xs
                 text-slate-500
               "
             >
-              Yesterday Purchase changes the date only. Enter the purchase details and save manually.
+              Date format: DD/MM/YYYY
             </p>
 
           </div>
@@ -1998,145 +2015,75 @@ export default function Purchases() {
                 Credit
               </option>
 
-              <option value="Split">
-                Split (Cash + UPI)
-              </option>
-
             </select>
 
           </div>
 
-          {/* PAID / SPLIT */}
+          {/* PAID */}
 
-          {paymentMethod === "Split" ? (
-            <>
-              <div>
-                <label
-                  className="
-                    mb-2
-                    block
-                    text-sm
-                    font-semibold
-                    text-slate-700
-                  "
-                >
-                  Cash Amount
-                </label>
+          <div>
 
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cashAmount}
-                  onChange={(e) =>
-                    setCashAmount(e.target.value)
-                  }
-                  className="
-                    w-full
-                    rounded-lg
-                    border-2
-                    border-green-200
-                    bg-white
-                    p-3
-                    font-bold
-                  "
-                />
-              </div>
+            <label
+              className="
+                mb-2
+                block
+                text-sm
+                font-semibold
+                text-slate-700
+              "
+            >
+              Paid Amount
+            </label>
 
-              <div>
-                <label
-                  className="
-                    mb-2
-                    block
-                    text-sm
-                    font-semibold
-                    text-slate-700
-                  "
-                >
-                  UPI Amount
-                </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={
+                paidAmount
+              }
+              onChange={(e) =>
+                handlePaidAmountChange(
+                  e.target.value
+                )
+              }
+              disabled={
+                paymentMethod ===
+                "Credit"
+              }
+              className={`
+                w-full
+                rounded-lg
+                border-2
+                p-3
+                font-bold
+                ${
+                  paymentMethod ===
+                  "Credit"
+                    ? "bg-slate-100 border-slate-200 text-slate-500"
+                    : "bg-white border-green-200"
+                }
+              `}
+            />
 
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={upiAmount}
-                  onChange={(e) =>
-                    setUpiAmount(e.target.value)
-                  }
-                  className="
-                    w-full
-                    rounded-lg
-                    border-2
-                    border-purple-200
-                    bg-white
-                    p-3
-                    font-bold
-                  "
-                />
+            {paymentMethod ===
+              "Credit" && (
 
-                <p className="mt-1 text-xs text-slate-500">
-                  Split Paid: {money(effectivePaidAmount)}
-                </p>
-              </div>
-            </>
-          ) : (
-            <div>
-
-              <label
+              <p
                 className="
-                  mb-2
-                  block
-                  text-sm
-                  font-semibold
-                  text-slate-700
+                  mt-1
+                  text-xs
+                  text-slate-500
                 "
               >
-                Paid Amount
-              </label>
+                Credit purchase:
+                paid amount is
+                automatically ₹0.
+              </p>
 
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={paidAmount}
-                onChange={(e) =>
-                  handlePaidAmountChange(
-                    e.target.value
-                  )
-                }
-                disabled={
-                  paymentMethod === "Credit"
-                }
-                className={`
-                  w-full
-                  rounded-lg
-                  border-2
-                  p-3
-                  font-bold
-                  ${
-                    paymentMethod === "Credit"
-                      ? "bg-slate-100 border-slate-200 text-slate-500"
-                      : "bg-white border-green-200"
-                  }
-                `}
-              />
+            )}
 
-              {paymentMethod === "Credit" && (
-                <p
-                  className="
-                    mt-1
-                    text-xs
-                    text-slate-500
-                  "
-                >
-                  Credit purchase:
-                  paid amount is automatically ₹0.
-                </p>
-              )}
-
-            </div>
-          )}
+          </div>
 
           {/* BALANCE */}
 
@@ -3335,7 +3282,7 @@ export default function Purchases() {
               "
             >
               {money(
-                effectivePaidAmount
+                numericPaidAmount
               )}
             </p>
 
@@ -3434,8 +3381,32 @@ export default function Purchases() {
               flex-col
               gap-3
               sm:flex-row
+              sm:flex-wrap
             "
           >
+
+            <button
+              type="button"
+              onClick={
+                copyYesterdayPurchase
+              }
+              disabled={
+                saving || loading
+              }
+              className="
+                rounded-lg
+                bg-blue-600
+                px-6
+                py-3
+                font-bold
+                text-white
+                shadow
+                hover:bg-blue-700
+                disabled:opacity-50
+              "
+            >
+              ↩ Copy Yesterday's Purchase
+            </button>
 
             <button
               type="button"
@@ -3443,7 +3414,7 @@ export default function Purchases() {
                 clearPurchase
               }
               disabled={
-                saving
+                saving || loading
               }
               className="
                 rounded-lg
@@ -3740,12 +3711,6 @@ export default function Purchases() {
                             "Credit"
                           }
                         </span>
-
-                        {purchase.payment_method === "Split" && (
-                          <div className="mt-1 text-xs text-slate-500">
-                            Cash {money(purchase.cash_amount)} + UPI {money(purchase.upi_amount)}
-                          </div>
-                        )}
 
                       </td>
 
