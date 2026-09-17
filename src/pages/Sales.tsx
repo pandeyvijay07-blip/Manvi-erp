@@ -3587,29 +3587,12 @@ return (
                       <button
                         type="button"
                         disabled={loading}
-                        onClick={() => void generateSavedBillPdf(sale.id)}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
-                      >
-                        📄 Generate Bill
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={loading}
                         onClick={() => void shareSavedBillPdf(sale.id)}
                         className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
                       >
                         📲 WhatsApp PDF
                       </button>
 
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => void printSavedBill(sale.id)}
-                        className="bg-gray-700 hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
-                      >
-                        🖨️ Print
-                      </button>
 
                       <button
                         type="button"
