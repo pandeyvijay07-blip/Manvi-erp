@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 type Brand = {
@@ -7,104 +7,190 @@ type Brand = {
   created_at?: string;
 };
 
+type ProductRow = {
+  id: string;
+  brand_id: string | null;
+};
+
+function text(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function getErrorMessage(error: unknown, fallback = "Unknown error.") {
+  if (error && typeof error === "object") {
+    const item = error as {
+      message?: unknown;
+      details?: unknown;
+      hint?: unknown;
+    };
+
+    const message = text(item.message);
+    const details = text(item.details);
+    const hint = text(item.hint);
+
+    return (
+      [message, details, hint].filter(Boolean).join(" • ") ||
+      fallback
+    );
+  }
+
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function Brands() {
   const [brands, setBrands] = useState<Brand[]>([]);
+
   const [brandName, setBrandName] = useState("");
+  const [search, setSearch] = useState("");
+
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [loadWarning, setLoadWarning] = useState("");
 
   useEffect(() => {
-    loadBrands();
+    void loadBrands();
   }, []);
+
+  // ---------------------------------------------------------
+  // LOAD BRANDS
+  // ---------------------------------------------------------
 
   async function loadBrands() {
     setLoading(true);
+    setLoadWarning("");
 
-    const { data, error } = await supabase
-      .from("brands")
-      .select("id, brand_name, created_at")
-      .order("brand_name");
+    try {
+      const { data, error } = await supabase
+        .from("brands")
+        .select("id, brand_name, created_at")
+        .order("brand_name", {
+          ascending: true,
+        });
 
-    if (error) {
-      console.error(error);
-      alert("Unable to load brands: " + error.message);
+      if (error) {
+        throw error;
+      }
+
+      setBrands((data || []) as Brand[]);
+    } catch (error) {
+      console.error("LOAD BRANDS ERROR:", error);
+
+      setBrands([]);
+
+      alert(
+        `Unable to load brands.\n\n${getErrorMessage(
+          error,
+          "Unknown error."
+        )}`
+      );
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setBrands((data || []) as Brand[]);
-    setLoading(false);
   }
+
+  // ---------------------------------------------------------
+  // CLEAR FORM
+  // ---------------------------------------------------------
 
   function clearForm() {
     setBrandName("");
     setEditingId(null);
   }
 
-  async function saveBrand() {
-    const name = brandName.trim();
+  // ---------------------------------------------------------
+  // SAVE / UPDATE BRAND
+  // ---------------------------------------------------------
 
-    if (!name) {
+  async function saveBrand() {
+    const cleanName = brandName.trim();
+
+    if (!cleanName) {
       alert("Please enter brand name.");
       return;
     }
 
-    setLoading(true);
+    if (cleanName.length > 100) {
+      alert("Brand name cannot exceed 100 characters.");
+      return;
+    }
+
+    // Duplicate check for BOTH ADD and EDIT
+    const duplicate = brands.some(
+      (brand) =>
+        brand.id !== editingId &&
+        brand.brand_name.trim().toLowerCase() ===
+          cleanName.toLowerCase()
+    );
+
+    if (duplicate) {
+      alert("This brand already exists.");
+      return;
+    }
+
+    setSaving(true);
 
     try {
+      // -----------------------------------------------------
       // EDIT
+      // -----------------------------------------------------
+
       if (editingId) {
         const { error } = await supabase
           .from("brands")
           .update({
-            brand_name: name,
+            brand_name: cleanName,
           })
           .eq("id", editingId);
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
 
         alert("Brand updated successfully.");
       }
 
+      // -----------------------------------------------------
       // ADD
+      // -----------------------------------------------------
+
       else {
-        const { data: existing } = await supabase
-          .from("brands")
-          .select("id")
-          .ilike("brand_name", name)
-          .limit(1);
-
-        if (existing && existing.length > 0) {
-          alert("This brand already exists.");
-          setLoading(false);
-          return;
-        }
-
         const { error } = await supabase
           .from("brands")
           .insert({
-            brand_name: name,
+            brand_name: cleanName,
           });
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
 
         alert("Brand added successfully.");
       }
 
       clearForm();
-      await loadBrands();
 
-    } catch (error: any) {
-      console.error("BRAND ERROR:", error);
+      await loadBrands();
+    } catch (error) {
+      console.error("SAVE BRAND ERROR:", error);
 
       alert(
-        "Brand Error: " +
-          (error?.message || "Unable to save brand.")
+        `Unable to save brand.\n\n${getErrorMessage(
+          error,
+          "Unknown error."
+        )}`
       );
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
+
+  // ---------------------------------------------------------
+  // EDIT BRAND
+  // ---------------------------------------------------------
 
   function editBrand(brand: Brand) {
     setEditingId(brand.id);
@@ -116,197 +202,385 @@ export default function Brands() {
     });
   }
 
+  // ---------------------------------------------------------
+  // DELETE BRAND
+  // ---------------------------------------------------------
+
   async function deleteBrand(brand: Brand) {
     const confirmed = window.confirm(
-      `Delete brand "${brand.brand_name}"?\n\nOnly delete a brand if its products are not being used.`
+      `Delete brand "${brand.brand_name}"?\n\n` +
+        `The brand can only be deleted if no products are linked to it.`
     );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
-    setLoading(true);
+    setDeletingId(brand.id);
 
     try {
+      // -----------------------------------------------------
+      // CHECK WHETHER PRODUCTS USE THIS BRAND
+      // -----------------------------------------------------
+
+      const { data: products, error: productError } =
+        await supabase
+          .from("products")
+          .select("id, brand_id")
+          .eq("brand_id", brand.id);
+
+      if (productError) {
+        throw productError;
+      }
+
+      const productRows = (products || []) as ProductRow[];
+
+      if (productRows.length > 0) {
+        alert(
+          `Cannot delete "${brand.brand_name}".\n\n` +
+            `${productRows.length} product${
+              productRows.length === 1 ? "" : "s"
+            } linked to this brand.\n\n` +
+            `Please remove or change the brand from those products first.`
+        );
+
+        return;
+      }
+
+      // -----------------------------------------------------
+      // DELETE
+      // -----------------------------------------------------
+
       const { error } = await supabase
         .from("brands")
         .delete()
         .eq("id", brand.id);
 
-      if (error) throw error;
-
-      alert("Brand deleted successfully.");
+      if (error) {
+        throw error;
+      }
 
       if (editingId === brand.id) {
         clearForm();
       }
 
-      await loadBrands();
+      alert("Brand deleted successfully.");
 
-    } catch (error: any) {
+      await loadBrands();
+    } catch (error) {
       console.error("DELETE BRAND ERROR:", error);
 
       alert(
-        "Unable to delete brand: " +
-          (error?.message || "Unknown error")
+        `Unable to delete brand.\n\n${getErrorMessage(
+          error,
+          "Unknown error."
+        )}`
       );
     } finally {
-      setLoading(false);
+      setDeletingId(null);
     }
   }
 
-  return (
-    <div className="max-w-5xl mx-auto pb-10">
+  // ---------------------------------------------------------
+  // FILTER
+  // ---------------------------------------------------------
 
-      {/* HEADER */}
+  const filteredBrands = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) {
+      return brands;
+    }
+
+    return brands.filter((brand) =>
+      brand.brand_name.toLowerCase().includes(query)
+    );
+  }, [brands, search]);
+
+  // ---------------------------------------------------------
+  // STATS
+  // ---------------------------------------------------------
+
+  const totalBrands = brands.length;
+  const filteredCount = filteredBrands.length;
+
+  // ---------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------
+
+  return (
+    <div className="mx-auto w-full max-w-6xl min-w-0 pb-10">
+      {/* =====================================================
+          HEADER
+      ====================================================== */}
 
       <div className="mb-6">
-
         <h1 className="text-3xl font-bold text-blue-700">
           Brands
         </h1>
 
         <p className="mt-1 text-gray-600">
-          Add and manage milk brands.
+          Manage milk brands used in MANVI ERP.
         </p>
-
       </div>
 
-      {/* ADD BRAND */}
+      {/* =====================================================
+          SUMMARY
+      ====================================================== */}
 
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="rounded-xl border bg-white p-5 shadow">
+          <p className="text-sm text-gray-500">
+            Total Brands
+          </p>
 
-        <h2 className="text-xl font-bold mb-2">
-          {editingId ? "Edit Brand" : "Add New Brand"}
-        </h2>
+          <p className="mt-2 text-3xl font-bold text-blue-700">
+            {totalBrands}
+          </p>
+        </div>
 
-        <p className="text-sm text-gray-500 mb-5">
-          One brand can have multiple products.
-        </p>
+        <div className="rounded-xl border bg-white p-5 shadow">
+          <p className="text-sm text-gray-500">
+            Showing
+          </p>
 
-        <div className="flex flex-col md:flex-row gap-3">
+          <p className="mt-2 text-3xl font-bold text-purple-700">
+            {filteredCount}
+          </p>
+        </div>
+      </div>
 
-          <input
-            type="text"
-            value={brandName}
-            onChange={(e) =>
-              setBrandName(e.target.value)
-            }
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                saveBrand();
-              }
-            }}
-            placeholder="Example: Amul"
-            className="flex-1 border rounded-lg p-3"
-          />
+      {/* =====================================================
+          ADD / EDIT FORM
+      ====================================================== */}
 
-          <button
-            type="button"
-            onClick={saveBrand}
-            disabled={loading}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-7 py-3 rounded-lg font-semibold"
-          >
-            {loading
-              ? "Saving..."
-              : editingId
-              ? "Update Brand"
-              : "+ Add Brand"}
-          </button>
+      <div className="mb-6 rounded-xl bg-white p-5 shadow-lg sm:p-6">
+        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">
+              {editingId ? "Edit Brand" : "Add New Brand"}
+            </h2>
+
+            <p className="mt-1 text-sm text-gray-500">
+              One brand can have multiple products.
+            </p>
+          </div>
 
           {editingId && (
             <button
               type="button"
               onClick={clearForm}
-              className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg"
+              disabled={saving}
+              className="w-full rounded-lg border border-slate-300 px-5 py-3 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 sm:w-auto"
             >
               Cancel
             </button>
           )}
-
         </div>
 
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <input
+            type="text"
+            value={brandName}
+            maxLength={100}
+            disabled={saving}
+            onChange={(e) =>
+              setBrandName(e.target.value)
+            }
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void saveBrand();
+              }
+            }}
+            placeholder="Example: Amul"
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 p-3 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+          />
+
+          <button
+            type="button"
+            onClick={() => void saveBrand()}
+            disabled={saving || !brandName.trim()}
+            className="w-full rounded-lg bg-blue-600 px-7 py-3 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+          >
+            {saving
+              ? "Saving..."
+              : editingId
+              ? "Update Brand"
+              : "+ Add Brand"}
+          </button>
+        </div>
       </div>
 
-      {/* BRAND LIST */}
+      {/* =====================================================
+          SEARCH
+      ====================================================== */}
 
-      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+      <div className="mb-4 rounded-xl bg-white p-5 shadow-lg">
+        <label className="mb-2 block text-sm font-semibold text-slate-700">
+          Search Brand
+        </label>
 
-        <div className="p-5 border-b">
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
+            placeholder="Search brand name..."
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 p-3 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+          />
 
-          <h2 className="text-xl font-bold">
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="rounded-lg bg-slate-500 px-5 py-3 font-semibold text-white hover:bg-slate-600"
+            >
+              Clear Search
+            </button>
+          )}
+        </div>
+
+        <p className="mt-3 text-sm text-gray-500">
+          Showing{" "}
+          <span className="font-semibold text-slate-800">
+            {filteredCount}
+          </span>{" "}
+          brand{filteredCount === 1 ? "" : "s"}.
+        </p>
+      </div>
+
+      {/* =====================================================
+          BRAND LIST
+      ====================================================== */}
+
+      <div className="overflow-hidden rounded-xl bg-white shadow-lg">
+        <div className="border-b p-5">
+          <h2 className="text-xl font-bold text-slate-800">
             Brand List
           </h2>
 
-          <p className="text-sm text-gray-500 mt-1">
-            {brands.length} brands
+          <p className="mt-1 text-sm text-gray-500">
+            Add, edit or delete your milk brands.
           </p>
-
         </div>
 
-        {loading && brands.length === 0 ? (
+        {/* LOADING */}
+
+        {loading ? (
           <div className="p-8 text-center text-gray-500">
             Loading brands...
           </div>
-        ) : brands.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            No brands found.
+        ) : filteredBrands.length === 0 ? (
+          /* EMPTY */
+
+          <div className="p-8 text-center">
+            <p className="font-semibold text-slate-700">
+              {brands.length === 0
+                ? "No brands found."
+                : "No matching brands found."}
+            </p>
+
+            <p className="mt-1 text-sm text-gray-500">
+              {brands.length === 0
+                ? "Add your first milk brand above."
+                : "Try another search term."}
+            </p>
           </div>
         ) : (
+          /* LIST */
+
           <div className="divide-y">
+            {filteredBrands.map((brand, index) => {
+              const isEditing =
+                editingId === brand.id;
 
-            {brands.map((brand, index) => (
+              const isDeleting =
+                deletingId === brand.id;
 
-              <div
-                key={brand.id}
-                className="flex items-center justify-between p-4 hover:bg-gray-50"
-              >
+              return (
+                <div
+                  key={brand.id}
+                  className={`flex flex-col gap-4 p-4 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between ${
+                    isEditing
+                      ? "bg-blue-50"
+                      : ""
+                  }`}
+                >
+                  {/* BRAND INFO */}
 
-                <div className="flex items-center gap-4">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-700">
+                      {index + 1}
+                    </div>
 
-                  <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
-                    {index + 1}
+                    <div className="min-w-0">
+                      <p className="truncate text-lg font-semibold text-slate-800">
+                        {brand.brand_name}
+                      </p>
+
+                      <p className="text-xs text-gray-500">
+                        Milk Brand
+                      </p>
+                    </div>
                   </div>
 
-                  <div>
-                    <p className="font-semibold text-lg">
-                      {brand.brand_name}
-                    </p>
+                  {/* ACTIONS */}
 
-                    <p className="text-xs text-gray-500">
-                      Brand
-                    </p>
+                  <div className="flex w-full gap-2 sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        editBrand(brand)
+                      }
+                      disabled={
+                        saving ||
+                        deletingId !== null
+                      }
+                      className="flex-1 rounded-lg bg-yellow-500 px-4 py-2 font-semibold text-white hover:bg-yellow-600 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none"
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void deleteBrand(brand)
+                      }
+                      disabled={
+                        saving ||
+                        deletingId !== null
+                      }
+                      className="flex-1 rounded-lg bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none"
+                    >
+                      {isDeleting
+                        ? "Checking..."
+                        : "Delete"}
+                    </button>
                   </div>
-
                 </div>
-
-                <div className="flex gap-2">
-
-                  <button
-                    type="button"
-                    onClick={() => editBrand(brand)}
-                    className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg"
-                  >
-                    Edit
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => deleteBrand(brand)}
-                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
-                  >
-                    Delete
-                  </button>
-
-                </div>
-
-              </div>
-
-            ))}
-
+              );
+            })}
           </div>
         )}
-
       </div>
 
+      {/* =====================================================
+          INFORMATION
+      ====================================================== */}
+
+      <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800">
+        <p className="font-semibold">
+          Brand management
+        </p>
+
+        <p className="mt-1">
+          A brand can contain multiple products.
+          Brands linked to products cannot be deleted.
+        </p>
+      </div>
     </div>
   );
 }
