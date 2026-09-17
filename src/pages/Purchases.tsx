@@ -46,6 +46,8 @@ type SavedPurchase = {
   payment_method: string | null;
   paid_amount: number | string | null;
   balance_amount: number | string | null;
+  cash_amount: number | string | null;
+  upi_amount: number | string | null;
 };
 
 // ======================================================
@@ -248,6 +250,18 @@ export default function Purchases() {
   const [
     paidAmount,
     setPaidAmount,
+  ] =
+    useState("0");
+
+  const [
+    cashAmount,
+    setCashAmount,
+  ] =
+    useState("0");
+
+  const [
+    upiAmount,
+    setUpiAmount,
   ] =
     useState("0");
 
@@ -468,7 +482,9 @@ export default function Purchases() {
               total_amount,
               payment_method,
               paid_amount,
-              balance_amount
+              balance_amount,
+              cash_amount,
+              upi_amount
             `
           )
           .order(
@@ -898,6 +914,9 @@ export default function Purchases() {
       "0"
     );
 
+    setCashAmount("0");
+    setUpiAmount("0");
+
     setSelectedBrandId(
       ""
     );
@@ -977,6 +996,25 @@ export default function Purchases() {
       paidAmount
     );
 
+  const numericCashAmount =
+    Math.max(
+      0,
+      Number(cashAmount) || 0
+    );
+
+  const numericUpiAmount =
+    Math.max(
+      0,
+      Number(upiAmount) || 0
+    );
+
+  const effectivePaidAmount =
+    paymentMethod === "Split"
+      ? numericCashAmount + numericUpiAmount
+      : Number.isFinite(numericPaidAmount)
+      ? Math.max(0, numericPaidAmount)
+      : 0;
+
   // ====================================================
   // PURCHASE BALANCE
   // ====================================================
@@ -985,13 +1023,7 @@ export default function Purchases() {
     Math.max(
       0,
       totalPurchaseAmount -
-        (
-          Number.isFinite(
-            numericPaidAmount
-          )
-            ? numericPaidAmount
-            : 0
-        )
+        effectivePaidAmount
     );
 
   // ====================================================
@@ -1011,27 +1043,31 @@ export default function Purchases() {
       value ===
       "Credit"
     ) {
-
-      setPaidAmount(
-        "0"
-      );
-
+      setPaidAmount("0");
+      setCashAmount("0");
+      setUpiAmount("0");
       return;
     }
 
-    // If switching from Credit,
+    if (value === "Split") {
+      setPaidAmount("0");
+      setCashAmount("0");
+      setUpiAmount("0");
+      return;
+    }
+
+    // If switching to a normal paid method,
     // automatically suggest full payment.
     if (
       totalPurchaseAmount > 0
     ) {
-
       setPaidAmount(
-        totalPurchaseAmount.toFixed(
-          2
-        )
+        totalPurchaseAmount.toFixed(2)
       );
-
     }
+
+    setCashAmount("0");
+    setUpiAmount("0");
 
   }
 
@@ -1138,38 +1174,46 @@ export default function Purchases() {
     // -----------------------------------------------
 
     const finalPaid =
-      Number(
-        paidAmount
-      );
+      paymentMethod === "Split"
+        ? numericCashAmount + numericUpiAmount
+        : Number(paidAmount);
 
     if (
-      !Number.isFinite(
-        finalPaid
-      ) ||
+      !Number.isFinite(finalPaid) ||
       finalPaid < 0
     ) {
-
       alert(
         "Please enter a valid paid amount."
       );
-
       return;
-
     }
 
     if (
       finalPaid >
       totalPurchaseAmount
     ) {
-
       alert(
         `Paid amount cannot exceed purchase total of ${money(
           totalPurchaseAmount
         )}.`
       );
-
       return;
+    }
 
+    if (
+      paymentMethod === "Split" &&
+      numericCashAmount < 0
+    ) {
+      alert("Please enter a valid Cash amount.");
+      return;
+    }
+
+    if (
+      paymentMethod === "Split" &&
+      numericUpiAmount < 0
+    ) {
+      alert("Please enter a valid UPI amount.");
+      return;
     }
 
     // -----------------------------------------------
@@ -1177,17 +1221,13 @@ export default function Purchases() {
     // -----------------------------------------------
 
     if (
-      paymentMethod ===
-        "Credit" &&
+      paymentMethod === "Credit" &&
       finalPaid !== 0
     ) {
-
       alert(
         "For Credit purchase, Paid Amount should be 0."
       );
-
       return;
-
     }
 
     setSaving(
@@ -1237,6 +1277,20 @@ export default function Purchases() {
                   finalPaid
               ),
 
+            cash_amount:
+              paymentMethod === "Split"
+                ? numericCashAmount
+                : paymentMethod === "Cash"
+                ? finalPaid
+                : 0,
+
+            upi_amount:
+              paymentMethod === "Split"
+                ? numericUpiAmount
+                : paymentMethod === "UPI"
+                ? finalPaid
+                : 0,
+
           })
           .select(
             `
@@ -1247,7 +1301,9 @@ export default function Purchases() {
               total_amount,
               payment_method,
               paid_amount,
-              balance_amount
+              balance_amount,
+              cash_amount,
+              upi_amount
             `
           )
           .single();
@@ -1869,75 +1925,145 @@ export default function Purchases() {
                 Credit
               </option>
 
+              <option value="Split">
+                Split (Cash + UPI)
+              </option>
+
             </select>
 
           </div>
 
-          {/* PAID */}
+          {/* PAID / SPLIT */}
 
-          <div>
+          {paymentMethod === "Split" ? (
+            <>
+              <div>
+                <label
+                  className="
+                    mb-2
+                    block
+                    text-sm
+                    font-semibold
+                    text-slate-700
+                  "
+                >
+                  Cash Amount
+                </label>
 
-            <label
-              className="
-                mb-2
-                block
-                text-sm
-                font-semibold
-                text-slate-700
-              "
-            >
-              Paid Amount
-            </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={cashAmount}
+                  onChange={(e) =>
+                    setCashAmount(e.target.value)
+                  }
+                  className="
+                    w-full
+                    rounded-lg
+                    border-2
+                    border-green-200
+                    bg-white
+                    p-3
+                    font-bold
+                  "
+                />
+              </div>
 
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={
-                paidAmount
-              }
-              onChange={(e) =>
-                handlePaidAmountChange(
-                  e.target.value
-                )
-              }
-              disabled={
-                paymentMethod ===
-                "Credit"
-              }
-              className={`
-                w-full
-                rounded-lg
-                border-2
-                p-3
-                font-bold
-                ${
-                  paymentMethod ===
-                  "Credit"
-                    ? "bg-slate-100 border-slate-200 text-slate-500"
-                    : "bg-white border-green-200"
-                }
-              `}
-            />
+              <div>
+                <label
+                  className="
+                    mb-2
+                    block
+                    text-sm
+                    font-semibold
+                    text-slate-700
+                  "
+                >
+                  UPI Amount
+                </label>
 
-            {paymentMethod ===
-              "Credit" && (
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={upiAmount}
+                  onChange={(e) =>
+                    setUpiAmount(e.target.value)
+                  }
+                  className="
+                    w-full
+                    rounded-lg
+                    border-2
+                    border-purple-200
+                    bg-white
+                    p-3
+                    font-bold
+                  "
+                />
 
-              <p
+                <p className="mt-1 text-xs text-slate-500">
+                  Split Paid: {money(effectivePaidAmount)}
+                </p>
+              </div>
+            </>
+          ) : (
+            <div>
+
+              <label
                 className="
-                  mt-1
-                  text-xs
-                  text-slate-500
+                  mb-2
+                  block
+                  text-sm
+                  font-semibold
+                  text-slate-700
                 "
               >
-                Credit purchase:
-                paid amount is
-                automatically ₹0.
-              </p>
+                Paid Amount
+              </label>
 
-            )}
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={paidAmount}
+                onChange={(e) =>
+                  handlePaidAmountChange(
+                    e.target.value
+                  )
+                }
+                disabled={
+                  paymentMethod === "Credit"
+                }
+                className={`
+                  w-full
+                  rounded-lg
+                  border-2
+                  p-3
+                  font-bold
+                  ${
+                    paymentMethod === "Credit"
+                      ? "bg-slate-100 border-slate-200 text-slate-500"
+                      : "bg-white border-green-200"
+                  }
+                `}
+              />
 
-          </div>
+              {paymentMethod === "Credit" && (
+                <p
+                  className="
+                    mt-1
+                    text-xs
+                    text-slate-500
+                  "
+                >
+                  Credit purchase:
+                  paid amount is automatically ₹0.
+                </p>
+              )}
+
+            </div>
+          )}
 
           {/* BALANCE */}
 
@@ -3136,7 +3262,7 @@ export default function Purchases() {
               "
             >
               {money(
-                numericPaidAmount
+                effectivePaidAmount
               )}
             </p>
 
@@ -3541,6 +3667,12 @@ export default function Purchases() {
                             "Credit"
                           }
                         </span>
+
+                        {purchase.payment_method === "Split" && (
+                          <div className="mt-1 text-xs text-slate-500">
+                            Cash {money(purchase.cash_amount)} + UPI {money(purchase.upi_amount)}
+                          </div>
+                        )}
 
                       </td>
 
