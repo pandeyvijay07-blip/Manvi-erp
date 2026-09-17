@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { jsPDF } from "jspdf";
 import { supabase } from "../lib/supabase";
 import CustomerRouteSearch from "../components/CustomerRouteSearch";
 
@@ -2178,6 +2179,139 @@ setLoading(true);
 }
 
 /* =========================================================
+GENERATE SAVED BILL PDF
+========================================================= */
+async function generateSavedBillPdf(saleId: string): Promise<File | null> {
+  try {
+    setLoading(true);
+
+    const [{ data: sale, error: saleError }, { data: items, error: itemsError }] =
+      await Promise.all([
+        supabase
+          .from("sales")
+          .select("id, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
+          .eq("id", saleId)
+          .single(),
+        supabase
+          .from("sale_items")
+          .select("product_id, quantity, rate, amount")
+          .eq("sale_id", saleId)
+          .order("id", { ascending: true }),
+      ]);
+
+    if (saleError) throw saleError;
+    if (itemsError) throw itemsError;
+    if (!sale) throw new Error("Sale not found.");
+
+    const customer = customers.find((c) => c.id === sale.customer_id);
+    const customerName = customer?.customer_name || "Walk-in";
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const left = 14;
+    let y = 16;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.text("MANVI MILK AGENCIES", pageWidth / 2, y, { align: "center" });
+    y += 8;
+    doc.setFontSize(12);
+    doc.text("BILL", pageWidth / 2, y, { align: "center" });
+    y += 10;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text(`Customer: ${customerName}`, left, y);
+    doc.text(`Date: ${formatDisplayDate(sale.sale_date)}`, pageWidth - left, y, { align: "right" });
+    y += 7;
+
+    const method = String(sale.payment_method || "Cash");
+    doc.text(`Payment: ${method}`, left, y);
+    y += 7;
+    if (method === "Split") {
+      doc.text(`Cash: Rs. ${Number(sale.cash_amount || 0).toFixed(2)}    UPI: Rs. ${Number(sale.upi_amount || 0).toFixed(2)}`, left, y);
+      y += 7;
+    }
+
+    const cols = [left, 25, 125, 196];
+    const headers = ["#", "Product", "Qty", "Amount"];
+    doc.setFillColor(235, 242, 255);
+    doc.rect(left, y - 5, pageWidth - left * 2, 8, "F");
+    doc.setFont("helvetica", "bold");
+    doc.text(headers[0], cols[0], y);
+    doc.text(headers[1], cols[1], y);
+    doc.text(headers[2], cols[2], y, { align: "right" });
+    doc.text(headers[3], cols[3], y, { align: "right" });
+    y += 6;
+
+    doc.setFont("helvetica", "normal");
+    for (let i = 0; i < (items || []).length; i++) {
+      const item: any = items![i];
+      const product = products.find((p) => p.id === item.product_id);
+      const name = String(product?.product_name || "Product");
+      const pack = product?.pack_size ? ` (${String(product.pack_size)})` : "";
+      const lines = doc.splitTextToSize(name + pack, 75);
+      if (y > 270) {
+        doc.addPage();
+        y = 18;
+      }
+      doc.text(String(i + 1), cols[0], y);
+      doc.text(lines, cols[1], y);
+      doc.text(Number(item.quantity || 0).toFixed(2).replace(/\.00$/, ""), cols[2], y, { align: "right" });
+      doc.text(`Rs. ${Number(item.amount || 0).toFixed(2)}`, cols[3], y, { align: "right" });
+      y += Math.max(6, lines.length * 5);
+    }
+
+    y += 4;
+    doc.line(left, y, pageWidth - left, y);
+    y += 8;
+    doc.setFont("helvetica", "bold");
+    doc.text(`TOTAL: Rs. ${Number(sale.total_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    y += 7;
+    doc.setFont("helvetica", "normal");
+    doc.text(`PAID: Rs. ${Number(sale.paid_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    y += 7;
+    doc.text(`BALANCE: Rs. ${Number(sale.balance_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    y += 14;
+    doc.setFontSize(9);
+    doc.text("Thank you for your business.", pageWidth / 2, y, { align: "center" });
+
+    const safeCustomer = customerName.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "") || "Customer";
+    const fileName = `MANVI_BILL_${safeCustomer}_${String(sale.sale_date).slice(0, 10)}.pdf`;
+    const blob = doc.output("blob");
+    const file = new File([blob], fileName, { type: "application/pdf" });
+    doc.save(fileName);
+    return file;
+  } catch (error: any) {
+    console.error("Generate PDF bill error:", error);
+    alert("Unable to generate bill PDF:\n" + (error?.message || "Unknown error"));
+    return null;
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function shareSavedBillPdf(saleId: string) {
+  const file = await generateSavedBillPdf(saleId);
+  if (!file) return;
+
+  try {
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+      await navigator.share({
+        title: "MANVI BILL",
+        text: "Bill",
+        files: [file],
+      });
+    } else {
+      alert("Bill PDF generated and downloaded. On mobile, open the PDF and use Share → WhatsApp.");
+    }
+  } catch (error: any) {
+    if (error?.name !== "AbortError") {
+      alert("Bill PDF was generated and downloaded. You can share the downloaded PDF on WhatsApp.");
+    }
+  }
+}
+
+/* =========================================================
 PRINT SAVED BILL
 ========================================================= */
 async function printSavedBill(saleId: string) {
@@ -2220,7 +2354,6 @@ async function printSavedBill(saleId: string) {
           <td>${safe(product?.product_name || "Product")}</td>
           <td>${safe(product?.pack_size || "")}</td>
           <td>${Number(item.quantity || 0)}</td>
-          <td>₹ ${Number(item.rate || 0).toFixed(2)}</td>
           <td>₹ ${Number(item.amount || 0).toFixed(2)}</td>
         </tr>`;
       })
@@ -2231,13 +2364,13 @@ async function printSavedBill(saleId: string) {
       ? `<div>Cash: ₹ ${Number(sale.cash_amount || 0).toFixed(2)} &nbsp; | &nbsp; UPI: ₹ ${Number(sale.upi_amount || 0).toFixed(2)}</div>`
       : "";
 
-    const html = `<!doctype html><html><head><title>MANVI Sales Bill</title>
+    const html = `<!doctype html><html><head><title>MANVI BILL</title>
       <style>
-        body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{text-align:center;margin:0 0 4px}h2{text-align:center;margin:0 0 18px;font-size:16px} .meta{margin-bottom:16px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#f1f5f9}td:nth-child(1),td:nth-child(4){text-align:center}td:nth-child(5),td:nth-child(6){text-align:right}.totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}.grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}.footer{text-align:center;margin-top:28px;font-size:13px;color:#555}@media print{body{padding:8px}}
+        body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{text-align:center;margin:0 0 4px}h2{text-align:center;margin:0 0 18px;font-size:16px} .meta{margin-bottom:16px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#f1f5f9}td:nth-child(1),td:nth-child(4){text-align:center}td:nth-child(5){text-align:right}.totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}.grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}.footer{text-align:center;margin-top:28px;font-size:13px;color:#555}@media print{body{padding:8px}}
       </style></head><body>
       <h1>MANVI MILK AGENCIES</h1><h2>BILL</h2>
       <div class="meta"><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
-      <table><thead><tr><th>#</th><th>Product</th><th>Pack</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>#</th><th>Product</th><th>Pack</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="totals"><div>Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ₹ ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ₹ ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
       <div class="footer">Thank you for your business.</div>
       <script>window.onload=function(){window.print();}</script></body></html>`;
@@ -3454,10 +3587,28 @@ return (
                       <button
                         type="button"
                         disabled={loading}
-                        onClick={() => void printSavedBill(sale.id)}
+                        onClick={() => void generateSavedBillPdf(sale.id)}
                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
                       >
-                        🧾 Bill
+                        📄 Generate Bill
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void shareSavedBillPdf(sale.id)}
+                        className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        📲 WhatsApp PDF
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void printSavedBill(sale.id)}
+                        className="bg-gray-700 hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        🖨️ Print
                       </button>
 
                       <button
