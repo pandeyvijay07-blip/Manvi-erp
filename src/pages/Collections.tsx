@@ -1781,16 +1781,12 @@ export default function Collections() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-red-100 text-red-800">
-                      <th className="text-left px-3 py-2">Sale Date</th>
                       <th className="text-right px-3 py-2">Outstanding</th>
                     </tr>
                   </thead>
                   <tbody>
                     {outstandingSales.map((sale) => (
                       <tr key={sale.id} className="border-t border-red-100">
-                        <td className="px-3 py-2">
-                          {formatDateDDMMYYYY(sale.sale_date)}
-                        </td>
                         <td className="px-3 py-2 text-right font-semibold text-red-700">
                           ₹{sale.balance_amount.toFixed(2)}
                         </td>
