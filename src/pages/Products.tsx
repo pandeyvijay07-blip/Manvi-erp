@@ -39,6 +39,9 @@ export default function Products() {
   const [loading, setLoading] =
     useState(false);
 
+  const [deletingId, setDeletingId] =
+    useState<string | null>(null);
+
   const [saving, setSaving] =
     useState(false);
 
@@ -342,6 +345,25 @@ export default function Products() {
       return;
     }
 
+    // Prevent duplicate product names within the same brand.
+    const duplicateProduct = products.some(
+      (product) =>
+        product.id !== editingId &&
+        String(product.brand_id || "") === String(brandId) &&
+        product.product_name.trim().toLowerCase() ===
+          productName.trim().toLowerCase() &&
+        Number(product.size ?? 0) === sizeNumber &&
+        String(product.unit || "Litre").toLowerCase() ===
+          unit.toLowerCase()
+    );
+
+    if (duplicateProduct) {
+      alert(
+        "This product already exists for the selected brand, size and unit."
+      );
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -485,115 +507,108 @@ export default function Products() {
       return;
     }
 
-    // =================================================
-    // CHECK CUSTOMER PRICES
-    // =================================================
+    setDeletingId(product.id);
 
-    const {
-      count:
-        customerPriceCount,
-    } = await supabase
-      .from("customer_prices")
-      .select(
-        "product_id",
-        {
-          count:
-            "exact",
+    try {
+      // =================================================
+      // CHECK CUSTOMER PRICES
+      // =================================================
+
+      const {
+        count: customerPriceCount,
+        error: customerPriceError,
+      } = await supabase
+        .from("customer_prices")
+        .select("product_id", {
+          count: "exact",
           head: true,
-        }
-      )
-      .eq(
-        "product_id",
-        product.id
-      );
+        })
+        .eq("product_id", product.id);
 
-    if (
-      (customerPriceCount ||
-        0) > 0
-    ) {
-      alert(
-        "This product has customer prices and cannot be deleted."
-      );
-      return;
-    }
+      if (customerPriceError) {
+        throw customerPriceError;
+      }
 
-    // =================================================
-    // CHECK SALES
-    // =================================================
+      if ((customerPriceCount || 0) > 0) {
+        alert(
+          "This product has customer prices and cannot be deleted."
+        );
+        return;
+      }
 
-    const {
-      count:
-        saleCount,
-    } = await supabase
-      .from("sale_items")
-      .select(
-        "product_id",
-        {
-          count:
-            "exact",
+      // =================================================
+      // CHECK SALES
+      // =================================================
+
+      const {
+        count: saleCount,
+        error: saleError,
+      } = await supabase
+        .from("sale_items")
+        .select("product_id", {
+          count: "exact",
           head: true,
-        }
-      )
-      .eq(
-        "product_id",
-        product.id
-      );
+        })
+        .eq("product_id", product.id);
 
-    if (
-      (saleCount || 0) > 0
-    ) {
-      alert(
-        "This product has sales history and cannot be deleted."
-      );
-      return;
-    }
+      if (saleError) {
+        throw saleError;
+      }
 
-    // =================================================
-    // CHECK PURCHASES
-    // =================================================
+      if ((saleCount || 0) > 0) {
+        alert(
+          "This product has sales history and cannot be deleted."
+        );
+        return;
+      }
 
-    const {
-      count:
-        purchaseCount,
-    } = await supabase
-      .from("purchase_items")
-      .select(
-        "product_id",
-        {
-          count:
-            "exact",
+      // =================================================
+      // CHECK PURCHASES
+      // =================================================
+
+      const {
+        count: purchaseCount,
+        error: purchaseError,
+      } = await supabase
+        .from("purchase_items")
+        .select("product_id", {
+          count: "exact",
           head: true,
-        }
-      )
-      .eq(
-        "product_id",
-        product.id
-      );
+        })
+        .eq("product_id", product.id);
 
-    if (
-      (purchaseCount || 0) > 0
-    ) {
-      alert(
-        "This product has purchase history and cannot be deleted."
-      );
-      return;
-    }
+      if (purchaseError) {
+        throw purchaseError;
+      }
 
-    // =================================================
-    // DELETE
-    // =================================================
+      if ((purchaseCount || 0) > 0) {
+        alert(
+          "This product has purchase history and cannot be deleted."
+        );
+        return;
+      }
 
-    const {
-      error,
-    } = await supabase
-      .from("products")
-      .delete()
-      .eq(
-        "id",
-        product.id
-      );
+      // =================================================
+      // DELETE
+      // =================================================
 
-    if (error) {
+      const { error } = await supabase
+        .from("products")
+        .delete()
+        .eq("id", product.id);
+
+      if (error) {
+        throw error;
+      }
+
+      if (editingId === product.id) {
+        clearForm();
+      }
+
+      alert("Product deleted successfully.");
+
+      await loadProducts();
+    } catch (error: any) {
       console.error(
         "DELETE PRODUCT ERROR:",
         error
@@ -601,24 +616,12 @@ export default function Products() {
 
       alert(
         "Unable to delete product:\n\n" +
-          error.message
+          (error?.message ||
+            "Unknown error.")
       );
-
-      return;
+    } finally {
+      setDeletingId(null);
     }
-
-    if (
-      editingId ===
-      product.id
-    ) {
-      clearForm();
-    }
-
-    alert(
-      "Product deleted successfully."
-    );
-
-    await loadProducts();
   }
 
   // =====================================================
@@ -727,7 +730,7 @@ export default function Products() {
   // =====================================================
 
   return (
-    <div className="max-w-7xl mx-auto pb-10">
+    <div className="mx-auto w-full max-w-7xl min-w-0 pb-10">
 
       {/* =================================================
           HEADER
@@ -752,7 +755,7 @@ export default function Products() {
 
       <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
 
-        <div className="flex items-center justify-between mb-5">
+        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 
           <div>
 
@@ -1356,7 +1359,11 @@ export default function Products() {
                               product
                             )
                           }
-                          className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg"
+                          disabled={
+                            saving ||
+                            deletingId !== null
+                          }
+                          className="bg-yellow-500 hover:bg-yellow-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg"
                         >
                           Edit
                         </button>
@@ -1364,13 +1371,19 @@ export default function Products() {
                         <button
                           type="button"
                           onClick={() =>
-                            deleteProduct(
+                            void deleteProduct(
                               product
                             )
                           }
-                          className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+                          disabled={
+                            saving ||
+                            deletingId !== null
+                          }
+                          className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg"
                         >
-                          Delete
+                          {deletingId === product.id
+                            ? "Checking..."
+                            : "Delete"}
                         </button>
 
                       </div>
