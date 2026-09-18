@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabase";
 type Customer = {
   id: string;
   customer_name: string;
+  route: string;
   opening_balance: number;
 };
 
@@ -148,6 +149,9 @@ export default function Collections() {
 
   const [customerId, setCustomerId] = useState("");
 
+  const [routeFilter, setRouteFilter] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
+
   const [balance, setBalance] = useState(0);
 
   const [outstandingSales, setOutstandingSales] = useState<OutstandingSale[]>([]);
@@ -199,6 +203,7 @@ export default function Collections() {
           `
           id,
           customer_name,
+          route,
           opening_balance
           `
         )
@@ -213,6 +218,7 @@ export default function Collections() {
           id: customer.id,
           customer_name:
             customer.customer_name || "",
+          route: customer.route || "",
           opening_balance:
             Number(
               customer.opening_balance
@@ -1658,6 +1664,8 @@ export default function Collections() {
 
   function clearForm() {
     setCustomerId("");
+    setRouteFilter("");
+    setCustomerSearch("");
 
     setBalance(0);
 
@@ -1685,6 +1693,46 @@ export default function Collections() {
 
     setEditingCollectionId(null);
   }
+
+  /* =====================================================
+     ROUTE + CUSTOMER SEARCH
+     ===================================================== */
+
+  const routeOptions = useMemo(() => {
+    const uniqueRoutes = new Set<string>();
+
+    customers.forEach((customer) => {
+      const route = String(customer.route || "").trim();
+
+      if (route) {
+        uniqueRoutes.add(route);
+      }
+    });
+
+    return Array.from(uniqueRoutes).sort((a, b) =>
+      a.localeCompare(b, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    );
+  }, [customers]);
+
+  const filteredCustomers = useMemo(() => {
+    const query = customerSearch.trim().toLowerCase();
+
+    return customers.filter((customer) => {
+      const matchesRoute =
+        !routeFilter ||
+        String(customer.route || "").trim().toLowerCase() ===
+          routeFilter.trim().toLowerCase();
+
+      const matchesCustomer =
+        !query ||
+        customer.customer_name.toLowerCase().includes(query);
+
+      return matchesRoute && matchesCustomer;
+    });
+  }, [customers, routeFilter, customerSearch]);
 
   /* =====================================================
      SELECTED CUSTOMER
@@ -1725,7 +1773,7 @@ export default function Collections() {
      ===================================================== */
 
   return (
-    <div className="space-y-6">
+    <div className="w-full min-w-0 space-y-6">
 
       {/* =================================================
           HEADER
@@ -1789,6 +1837,84 @@ export default function Collections() {
             />
           </div>
 
+          {/* ROUTE */}
+
+          <div>
+            <label className="block font-semibold mb-2">
+              Route
+            </label>
+
+            <select
+              value={routeFilter}
+              onChange={(e) => {
+                setRouteFilter(e.target.value);
+
+                // Clear selected customer if it no longer
+                // belongs to the selected route.
+                if (
+                  e.target.value &&
+                  customerId
+                ) {
+                  const selected = customers.find(
+                    (customer) =>
+                      customer.id === customerId
+                  );
+
+                  if (
+                    selected &&
+                    String(selected.route || "").trim().toLowerCase() !==
+                      e.target.value.trim().toLowerCase()
+                  ) {
+                    setCustomerId("");
+                    setBalance(0);
+                    setOutstandingSales([]);
+                  }
+                }
+              }}
+              className="w-full border rounded-xl px-4 py-3 bg-white"
+            >
+              <option value="">
+                All Routes
+              </option>
+
+              {routeOptions.map((route) => (
+                <option
+                  key={route}
+                  value={route}
+                >
+                  {route}
+                </option>
+              ))}
+            </select>
+
+            <p className="mt-1 text-xs text-gray-500">
+              Select a route to show only its customers.
+            </p>
+          </div>
+
+          {/* CUSTOMER SEARCH */}
+
+          <div>
+            <label className="block font-semibold mb-2">
+              Search Customer
+            </label>
+
+            <input
+              type="text"
+              value={customerSearch}
+              onChange={(e) =>
+                setCustomerSearch(e.target.value)
+              }
+              placeholder="Search customer name..."
+              className="w-full border rounded-xl px-4 py-3"
+            />
+
+            <p className="mt-1 text-xs text-gray-500">
+              {filteredCustomers.length} customer
+              {filteredCustomers.length === 1 ? "" : "s"} found
+            </p>
+          </div>
+
           {/* CUSTOMER */}
 
           <div>
@@ -1799,7 +1925,7 @@ export default function Collections() {
             <select
               value={customerId}
               onChange={(e) =>
-                handleCustomerChange(
+                void handleCustomerChange(
                   e.target.value
                 )
               }
@@ -1809,19 +1935,16 @@ export default function Collections() {
                 Select Customer
               </option>
 
-              {customers.map(
+              {filteredCustomers.map(
                 (customer) => (
                   <option
-                    key={
-                      customer.id
-                    }
-                    value={
-                      customer.id
-                    }
+                    key={customer.id}
+                    value={customer.id}
                   >
-                    {
-                      customer.customer_name
-                    }
+                    {customer.customer_name}
+                    {customer.route
+                      ? ` — ${customer.route}`
+                      : ""}
                   </option>
                 )
               )}
@@ -2024,9 +2147,14 @@ export default function Collections() {
             </p>
 
             <p className="font-bold text-blue-700 text-lg">
-              {
-                selectedCustomer.customer_name
-              }
+              {selectedCustomer.customer_name}
+            </p>
+
+            <p className="mt-1 text-sm text-slate-600">
+              Route:{" "}
+              <span className="font-semibold">
+                {selectedCustomer.route || "-"}
+              </span>
             </p>
           </div>
         )}
