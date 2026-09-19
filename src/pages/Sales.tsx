@@ -2297,8 +2297,10 @@ function getBillSetting(settings: any, keys: string[], fallback = "") {
 function getBillCurrencySymbol(currency: string) {
   const value = String(currency || "").trim();
   if (!value) return "₹";
+  // jsPDF's built-in Helvetica font does not reliably render the ₹ glyph.
+  // Use the printable ASCII form on PDF bills so amounts stay aligned.
   if (value.includes("₹") || value.toUpperCase() === "INR" || value.toUpperCase().includes("INDIAN RUPEE")) {
-    return "₹";
+    return "Rs.";
   }
   return value;
 }
@@ -2343,7 +2345,8 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
 
     const doc = new jsPDF({ unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
-    const left = 14;
+    const left = 15;
+    const right = pageWidth - left;
     let y = 16;
 
     doc.setFont("helvetica", "bold");
@@ -2375,7 +2378,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.text(`Bill No: ${billNo}`, left, y);
-    doc.text(`Date: ${formatDisplayDate(sale.sale_date)}`, pageWidth - left, y, { align: "right" });
+    doc.text(`Date: ${formatDisplayDate(sale.sale_date)}`, right, y, { align: "right" });
     y += 7;
     doc.text(`Customer: ${customerName}`, left, y);
     y += 7;
@@ -2388,7 +2391,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
       y += 7;
     }
 
-    const cols = [left, 25, 125, 196];
+    const cols = [left, 28, 145, right];
     const headers = ["#", "Product", "Qty", "Amount"];
     doc.setFillColor(235, 242, 255);
     doc.rect(left, y - 5, pageWidth - left * 2, 8, "F");
@@ -2405,7 +2408,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
       const product = products.find((p) => p.id === item.product_id);
       const name = String(product?.product_name || "Product");
       const pack = product?.pack_size ? ` (${String(product.pack_size)})` : "";
-      const lines = doc.splitTextToSize(name + pack, 75);
+      const lines = doc.splitTextToSize(name + pack, 108);
       if (y > 270) {
         doc.addPage();
         y = 18;
@@ -2421,15 +2424,16 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
     doc.line(left, y, pageWidth - left, y);
     y += 8;
     doc.setFont("helvetica", "bold");
-    doc.text(`TOTAL: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    doc.text(`TOTAL: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}`, right, y, { align: "right" });
     y += 7;
     doc.setFont("helvetica", "normal");
-    doc.text(`PAID: ${currency} ${Number(sale.paid_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    doc.text(`PAID: ${currency} ${Number(sale.paid_amount || 0).toFixed(2)}`, right, y, { align: "right" });
     y += 7;
-    doc.text(`BALANCE: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    doc.text(`BALANCE: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}`, right, y, { align: "right" });
     y += 14;
     doc.setFontSize(9);
-    doc.text(footer, pageWidth / 2, y, { align: "center" });
+    const footerLines = doc.splitTextToSize(footer, pageWidth - left * 2);
+    doc.text(footerLines, pageWidth / 2, y, { align: "center" });
 
     const safeCustomer = customerName.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "") || "Customer";
     const fileName = `MANVI_BILL_${safeCustomer}_${String(sale.sale_date).slice(0, 10)}.pdf`;
