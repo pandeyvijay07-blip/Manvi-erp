@@ -44,41 +44,6 @@ function formatDateInput(value: string | null | undefined) {
   return "";
 }
 
-function getPunchButtonLabel(date: string) {
-  const selectedDate = String(date || '').slice(0, 10);
-  const today = getLocalDateString();
-
-  if (!selectedDate) {
-    return "Punch Sale";
-  }
-
-  const selected = new Date(`${selectedDate}T00:00:00`);
-  const current = new Date(`${today}T00:00:00`);
-
-  if (Number.isNaN(selected.getTime()) || Number.isNaN(current.getTime())) {
-    return "Punch Sale";
-  }
-
-  const diffDays = Math.round(
-    (current.getTime() - selected.getTime()) /
-      (1000 * 60 * 60 * 24)
-  );
-
-  if (diffDays === 0) {
-    return "Punch Today's Sale";
-  }
-
-  if (diffDays === 1) {
-    return "Punch Yesterday's Sale";
-  }
-
-  if (diffDays > 1) {
-    return `Punch Sale for ${formatDisplayDate(selectedDate)}`;
-  }
-
-  return "Punch Sale";
-}
-
 function parseDateInput(value: string) {
   const digits = value.replace(/\D/g, "");
 
@@ -623,7 +588,7 @@ Loads the customer's latest previous sale and prepares
 the same products/quantities as today's draft.
 It does NOT save until Save Sale is pressed.
 ========================================================= */
-async function punchSaleForDate(targetDate: string = saleDate) {
+async function punchTodaysSale() {
   if (!customerId) {
     alert("Please select a customer first.");
     return;
@@ -645,7 +610,7 @@ async function punchSaleForDate(targetDate: string = saleDate) {
         paid_amount
       `)
       .eq("customer_id", customerId)
-      .lt("sale_date", targetDate)
+      .lt("sale_date", saleDate)
       .order("sale_date", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -753,46 +718,19 @@ async function punchSaleForDate(targetDate: string = saleDate) {
     });
 
     alert(
-      `Sale prepared for ${formatDisplayDate(
-        targetDate
-      )} from ${formatDisplayDate(previousSale.sale_date)}.\n\nPlease check the quantities and press Save Sale.`
+      `Today's sale prepared from ${formatDisplayDate(
+        previousSale.sale_date
+      )}.\n\nPlease check the quantities and press Save Sale.`
     );
   } catch (error: any) {
-    console.error("Punch sale error:", error);
+    console.error("Punch today's sale error:", error);
     alert(
-      "Unable to punch sale:\n" +
+      "Unable to punch today's sale:\n" +
         (error?.message || "Unknown error")
     );
   } finally {
     setLoading(false);
   }
-}
-
-
-
-async function punchTodaysSale() {
-  await punchSaleForDate(saleDate);
-}
-
-async function punchYesterdaysSale() {
-  if (!customerId) {
-    alert("Please select a customer first.");
-    return;
-  }
-
-  const yesterday = new Date();
-  yesterday.setHours(0, 0, 0, 0);
-  yesterday.setDate(yesterday.getDate() - 1);
-
-  const year = yesterday.getFullYear();
-  const month = String(yesterday.getMonth() + 1).padStart(2, "0");
-  const day = String(yesterday.getDate()).padStart(2, "0");
-  const yesterdayString = `${year}-${month}-${day}`;
-
-  setSaleDate(yesterdayString);
-  setSaleDateDisplay(formatDisplayDate(yesterdayString));
-
-  await punchSaleForDate(yesterdayString);
 }
 
 /* =========================================================
@@ -2241,17 +2179,58 @@ setLoading(true);
 }
 
 /* =========================================================
+BILL SETTINGS
+The information saved in Settings is loaded every time a bill
+is generated/printed so the latest business details appear on
+the bill automatically.
+========================================================= */
+async function loadBillSettings() {
+  const { data, error } = await supabase
+    .from("settings")
+    .select("*")
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Bill settings error:", error);
+    // Bills can still be generated with the business-name fallback.
+    return null;
+  }
+
+  return (data || null) as any;
+}
+
+function getBillSetting(settings: any, keys: string[], fallback = "") {
+  for (const key of keys) {
+    const value = settings?.[key];
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      return String(value).trim();
+    }
+  }
+  return fallback;
+}
+
+function getBillCurrencySymbol(currency: string) {
+  const value = String(currency || "").trim();
+  if (!value) return "₹";
+  if (value.includes("₹") || value.toUpperCase() === "INR" || value.toUpperCase().includes("INDIAN RUPEE")) {
+    return "₹";
+  }
+  return value;
+}
+
+/* =========================================================
 GENERATE SAVED BILL PDF
 ========================================================= */
 async function generateSavedBillPdf(saleId: string): Promise<File | null> {
   try {
     setLoading(true);
 
-    const [{ data: sale, error: saleError }, { data: items, error: itemsError }] =
+    const [{ data: sale, error: saleError }, { data: items, error: itemsError }, settings] =
       await Promise.all([
         supabase
           .from("sales")
-          .select("id, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
+          .select("id, sale_no, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
           .eq("id", saleId)
           .single(),
         supabase
@@ -2259,6 +2238,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
           .select("product_id, quantity, rate, amount")
           .eq("sale_id", saleId)
           .order("id", { ascending: true }),
+        loadBillSettings(),
       ]);
 
     if (saleError) throw saleError;
@@ -2267,6 +2247,16 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
 
     const customer = customers.find((c) => c.id === sale.customer_id);
     const customerName = customer?.customer_name || "Walk-in";
+
+    const businessName = getBillSetting(settings, ["business_name", "businessName", "name"], "MANVI MILK AGENCIES");
+    const mobile = getBillSetting(settings, ["mobile", "phone", "business_mobile", "whatsapp_number", "whatsappNumber"]);
+    const email = getBillSetting(settings, ["email", "business_email"]);
+    const address = getBillSetting(settings, ["business_address", "address", "businessAddress"]);
+    const billPrefix = getBillSetting(settings, ["bill_prefix", "invoice_prefix", "billPrefix", "invoicePrefix"], "INV");
+    const currency = getBillCurrencySymbol(getBillSetting(settings, ["currency"], "INR"));
+    const footer = getBillSetting(settings, ["invoice_footer", "bill_footer", "footer"], "Thank you for your business.");
+    const billNo = String(sale.sale_no || `${billPrefix}${String(sale.id).slice(0, 8).toUpperCase()}`);
+
     const doc = new jsPDF({ unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
     const left = 14;
@@ -2274,23 +2264,43 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
-    doc.text("MANVI MILK AGENCIES", pageWidth / 2, y, { align: "center" });
-    y += 8;
+    doc.text(businessName, pageWidth / 2, y, { align: "center" });
+    y += 7;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    if (mobile) {
+      doc.text(`Mobile: ${mobile}`, pageWidth / 2, y, { align: "center" });
+      y += 5;
+    }
+    if (email) {
+      doc.text(`Email: ${email}`, pageWidth / 2, y, { align: "center" });
+      y += 5;
+    }
+    if (address) {
+      const addressLines = doc.splitTextToSize(address, pageWidth - left * 2);
+      doc.text(addressLines, pageWidth / 2, y, { align: "center" });
+      y += Math.max(5, addressLines.length * 4);
+    }
+
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
-    doc.text("BILL", pageWidth / 2, y, { align: "center" });
+    doc.text("BILL", pageWidth / 2, y + 2, { align: "center" });
     y += 10;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(`Customer: ${customerName}`, left, y);
+    doc.text(`Bill No: ${billNo}`, left, y);
     doc.text(`Date: ${formatDisplayDate(sale.sale_date)}`, pageWidth - left, y, { align: "right" });
+    y += 7;
+    doc.text(`Customer: ${customerName}`, left, y);
     y += 7;
 
     const method = String(sale.payment_method || "Cash");
     doc.text(`Payment: ${method}`, left, y);
     y += 7;
     if (method === "Split") {
-      doc.text(`Cash: Rs. ${Number(sale.cash_amount || 0).toFixed(2)}    UPI: Rs. ${Number(sale.upi_amount || 0).toFixed(2)}`, left, y);
+      doc.text(`${currency} Cash: ${Number(sale.cash_amount || 0).toFixed(2)}    ${currency} UPI: ${Number(sale.upi_amount || 0).toFixed(2)}`, left, y);
       y += 7;
     }
 
@@ -2319,7 +2329,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
       doc.text(String(i + 1), cols[0], y);
       doc.text(lines, cols[1], y);
       doc.text(Number(item.quantity || 0).toFixed(2).replace(/\.00$/, ""), cols[2], y, { align: "right" });
-      doc.text(`Rs. ${Number(item.amount || 0).toFixed(2)}`, cols[3], y, { align: "right" });
+      doc.text(`${currency} ${Number(item.amount || 0).toFixed(2)}`, cols[3], y, { align: "right" });
       y += Math.max(6, lines.length * 5);
     }
 
@@ -2327,15 +2337,15 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
     doc.line(left, y, pageWidth - left, y);
     y += 8;
     doc.setFont("helvetica", "bold");
-    doc.text(`TOTAL: Rs. ${Number(sale.total_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    doc.text(`TOTAL: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
     y += 7;
     doc.setFont("helvetica", "normal");
-    doc.text(`PAID: Rs. ${Number(sale.paid_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    doc.text(`PAID: ${currency} ${Number(sale.paid_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
     y += 7;
-    doc.text(`BALANCE: Rs. ${Number(sale.balance_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
+    doc.text(`BALANCE: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
     y += 14;
     doc.setFontSize(9);
-    doc.text("Thank you for your business.", pageWidth / 2, y, { align: "center" });
+    doc.text(footer, pageWidth / 2, y, { align: "center" });
 
     const safeCustomer = customerName.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "") || "Customer";
     const fileName = `MANVI_BILL_${safeCustomer}_${String(sale.sale_date).slice(0, 10)}.pdf`;
@@ -2384,7 +2394,7 @@ async function printSavedBill(saleId: string) {
       await Promise.all([
         supabase
           .from("sales")
-          .select("id, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
+          .select("id, sale_no, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
           .eq("id", saleId)
           .single(),
         supabase
@@ -2398,8 +2408,17 @@ async function printSavedBill(saleId: string) {
     if (itemsError) throw itemsError;
     if (!sale) throw new Error("Sale not found.");
 
+    const settings = await loadBillSettings();
     const customer = customers.find((c) => c.id === sale.customer_id);
     const customerName = customer?.customer_name || "Walk-in";
+    const businessName = getBillSetting(settings, ["business_name", "businessName", "name"], "MANVI MILK AGENCIES");
+    const mobile = getBillSetting(settings, ["mobile", "phone", "business_mobile", "whatsapp_number", "whatsappNumber"]);
+    const email = getBillSetting(settings, ["email", "business_email"]);
+    const address = getBillSetting(settings, ["business_address", "address", "businessAddress"]);
+    const billPrefix = getBillSetting(settings, ["bill_prefix", "invoice_prefix", "billPrefix", "invoicePrefix"], "INV");
+    const currency = getBillCurrencySymbol(getBillSetting(settings, ["currency"], "INR"));
+    const footer = getBillSetting(settings, ["invoice_footer", "bill_footer", "footer"], "Thank you for your business.");
+    const billNo = String(sale.sale_no || `${billPrefix}${String(sale.id).slice(0, 8).toUpperCase()}`);
     const safe = (value: unknown) =>
       String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -2430,11 +2449,15 @@ async function printSavedBill(saleId: string) {
       <style>
         body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{text-align:center;margin:0 0 4px}h2{text-align:center;margin:0 0 18px;font-size:16px} .meta{margin-bottom:16px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#f1f5f9}td:nth-child(1),td:nth-child(4){text-align:center}td:nth-child(5){text-align:right}.totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}.grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}.footer{text-align:center;margin-top:28px;font-size:13px;color:#555}@media print{body{padding:8px}}
       </style></head><body>
-      <h1>MANVI MILK AGENCIES</h1><h2>BILL</h2>
-      <div class="meta"><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
+      <h1>${safe(businessName)}</h1>
+      ${mobile ? `<div style="text-align:center">Mobile: ${safe(mobile)}</div>` : ""}
+      ${email ? `<div style="text-align:center">Email: ${safe(email)}</div>` : ""}
+      ${address ? `<div style="text-align:center;margin-bottom:8px">${safe(address)}</div>` : ""}
+      <h2>BILL</h2>
+      <div class="meta"><strong>Bill No:</strong> ${safe(billNo)}<br><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
       <table><thead><tr><th>#</th><th>Product</th><th>Pack</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="totals"><div>Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ₹ ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ₹ ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
-      <div class="footer">Thank you for your business.</div>
+      <div class="totals"><div>Total: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ${currency} ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
+      <div class="footer">${safe(footer)}</div>
       <script>window.onload=function(){window.print();}</script></body></html>`;
 
     const printWindow = window.open("", "_blank", "noopener,noreferrer");
@@ -2733,28 +2756,17 @@ return (
 
       {customerId && (
         <div className="md:col-span-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <button
-              type="button"
-              disabled={loading || loadingData}
-              onClick={punchTodaysSale}
-              className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
-            >
-              ⚡ Punch Selected Date
-            </button>
-
-            <button
-              type="button"
-              disabled={loading || loadingData}
-              onClick={punchYesterdaysSale}
-              className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
-            >
-              📅 Punch Yesterday's Sale
-            </button>
-          </div>
+          <button
+            type="button"
+            disabled={loading || loadingData}
+            onClick={punchTodaysSale}
+            className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
+          >
+            ⚡ Punch Today's Sale
+          </button>
 
           <p className="mt-2 text-sm text-gray-500">
-            Selected Date punches the selected date. Yesterday punches yesterday's entry and loads the customer's latest previous sale. Check quantities before saving.
+            Loads the customer's last sale for today's entry. Check quantities before saving.
           </p>
         </div>
       )}
@@ -3660,12 +3672,29 @@ return (
                       <button
                         type="button"
                         disabled={loading}
+                        onClick={() => void generateSavedBillPdf(sale.id)}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        📄 Generate Bill
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={loading}
                         onClick={() => void shareSavedBillPdf(sale.id)}
                         className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
                       >
                         📲 WhatsApp PDF
                       </button>
 
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void printSavedBill(sale.id)}
+                        className="bg-gray-700 hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        🖨️ Print
+                      </button>
 
                       <button
                         type="button"
