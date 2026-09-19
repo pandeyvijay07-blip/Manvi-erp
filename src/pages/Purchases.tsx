@@ -2276,6 +2276,138 @@ export default function Purchases() {
       </div>
 
       {/* ==================================================
+          STOCK SECTION
+      ================================================== */}
+
+      <div
+        className="
+          mb-6
+          rounded-2xl
+          bg-white
+          p-6
+          shadow-lg
+        "
+      >
+
+        <div
+          className="
+            mb-5
+            flex
+            flex-col
+            gap-2
+            md:flex-row
+            md:items-center
+            md:justify-between
+          "
+        >
+
+          <div>
+            <h2
+              className="
+                text-xl
+                font-bold
+                text-slate-800
+              "
+            >
+              Stock
+            </h2>
+
+            <p
+              className="
+                mt-1
+                text-sm
+                text-slate-500
+              "
+            >
+              Current stock of all products.
+            </p>
+          </div>
+
+          <div
+            className="
+              rounded-lg
+              bg-green-50
+              px-4
+              py-2
+              text-sm
+              font-bold
+              text-green-700
+            "
+          >
+            {products.length} Products
+          </div>
+
+        </div>
+
+        {products.length === 0 ? (
+
+          <div
+            className="
+              rounded-xl
+              bg-yellow-50
+              p-6
+              text-center
+              text-yellow-800
+            "
+          >
+            No products found. Please add products in Products section first.
+          </div>
+
+        ) : (
+
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[650px] text-left text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="px-4 py-3 font-bold text-slate-700">
+                    Brand
+                  </th>
+                  <th className="px-4 py-3 font-bold text-slate-700">
+                    Product
+                  </th>
+                  <th className="px-4 py-3 font-bold text-slate-700">
+                    Pack
+                  </th>
+                  <th className="px-4 py-3 text-right font-bold text-slate-700">
+                    Stock
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {products.map((product) => (
+                  <tr key={product.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-semibold text-slate-700">
+                      {getBrandName(product.brand_id)}
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-slate-800">
+                      {product.product_name}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {Number(product.size || 1)} {product.unit || "Litre"}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <span
+                        className={`inline-flex min-w-[70px] justify-center rounded-full px-3 py-1 font-bold ${
+                          Number(product.stock_qty || 0) > 0
+                            ? "bg-green-100 text-green-700"
+                            : "bg-slate-100 text-slate-500"
+                        }`}
+                      >
+                        {Number(product.stock_qty || 0)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+        )}
+
+      </div>
+
+      {/* ==================================================
           PRODUCT SELECTION
       ================================================== */}
 
@@ -2516,36 +2648,6 @@ export default function Purchases() {
 
                       </div>
 
-                      <div
-                        className="
-                          mt-1
-                          flex
-                          justify-between
-                          text-sm
-                        "
-                      >
-
-                        <span
-                          className="
-                            text-slate-500
-                          "
-                        >
-                          Stock
-                        </span>
-
-                        <span
-                          className="
-                            font-semibold
-                            text-green-700
-                          "
-                        >
-                          {Number(
-                            product.stock_qty ||
-                              0
-                          )}
-                        </span>
-
-                      </div>
 
                     </button>
 
