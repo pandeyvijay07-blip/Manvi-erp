@@ -48,6 +48,20 @@ type SavedPurchase = {
   balance_amount: number | string | null;
 };
 
+type StockFlowRow = {
+  product_id: string;
+  brand_id: string | null;
+  product_name: string;
+  size: number;
+  unit: string;
+  yesterdayClosing: number;
+  todayOpening: number;
+  purchases: number;
+  sales: number;
+  todayClosing: number;
+  nextDayOpening: number;
+};
+
 // ======================================================
 // HELPERS
 // ======================================================
@@ -314,6 +328,44 @@ export default function Purchases() {
     useState(false);
 
   // ====================================================
+  // DATE-WISE STOCK FLOW
+  // ====================================================
+
+  const [
+    stockDate,
+    setStockDate,
+  ] =
+    useState(
+      todayInput()
+    );
+
+  const [
+    stockDateDisplay,
+    setStockDateDisplay,
+  ] =
+    useState(
+      formatDate(todayInput())
+    );
+
+  const [
+    stockFlowRows,
+    setStockFlowRows,
+  ] =
+    useState<StockFlowRow[]>([]);
+
+  const [
+    stockFlowLoading,
+    setStockFlowLoading,
+  ] =
+    useState(false);
+
+  const [
+    stockFlowError,
+    setStockFlowError,
+  ] =
+    useState("");
+
+  // ====================================================
   // INITIAL LOAD
   // ====================================================
 
@@ -326,6 +378,18 @@ export default function Purchases() {
     loadPurchaseHistory();
 
   }, []);
+
+
+  useEffect(() => {
+
+    if (products.length > 0) {
+      void loadStockFlow(stockDate);
+    }
+
+  }, [
+    products,
+    stockDate,
+  ]);
 
   // ====================================================
   // LOAD BRANDS
@@ -512,6 +576,292 @@ export default function Purchases() {
       );
 
     }
+  }
+
+  // ====================================================
+  // DATE-WISE STOCK FLOW
+  // ====================================================
+
+  async function loadStockFlow(
+    selectedDate: string
+  ) {
+
+    if (!selectedDate) {
+      return;
+    }
+
+    const today = todayInput();
+
+    if (selectedDate > today) {
+      setStockFlowRows([]);
+      setStockFlowError(
+        "Future date is not available. Please select today or an earlier date."
+      );
+      return;
+    }
+
+    setStockFlowLoading(true);
+    setStockFlowError("");
+
+    try {
+
+      // --------------------------------------------------
+      // LOAD PURCHASE HEADERS FROM SELECTED DATE TO TODAY
+      // --------------------------------------------------
+
+      const {
+        data: purchaseHeaders,
+        error: purchaseHeaderError,
+      } = await supabase
+        .from("purchases")
+        .select("id, purchase_date")
+        .gte("purchase_date", selectedDate)
+        .lte("purchase_date", today);
+
+      if (purchaseHeaderError) {
+        throw purchaseHeaderError;
+      }
+
+      // --------------------------------------------------
+      // LOAD SALES HEADERS FROM SELECTED DATE TO TODAY
+      // --------------------------------------------------
+
+      const {
+        data: saleHeaders,
+        error: saleHeaderError,
+      } = await supabase
+        .from("sales")
+        .select("id, sale_date")
+        .gte("sale_date", selectedDate)
+        .lte("sale_date", today);
+
+      if (saleHeaderError) {
+        throw saleHeaderError;
+      }
+
+      const purchaseIds =
+        (purchaseHeaders || []).map(
+          (row: any) => row.id
+        );
+
+      const saleIds =
+        (saleHeaders || []).map(
+          (row: any) => row.id
+        );
+
+      // --------------------------------------------------
+      // LOAD PURCHASE ITEMS
+      // --------------------------------------------------
+
+      let purchaseItems: any[] = [];
+
+      if (purchaseIds.length > 0) {
+
+        const {
+          data,
+          error,
+        } = await supabase
+          .from("purchase_items")
+          .select("purchase_id, product_id, quantity")
+          .in("purchase_id", purchaseIds);
+
+        if (error) {
+          throw error;
+        }
+
+        purchaseItems = data || [];
+      }
+
+      // --------------------------------------------------
+      // LOAD SALE ITEMS
+      // --------------------------------------------------
+
+      let saleItems: any[] = [];
+
+      if (saleIds.length > 0) {
+
+        const {
+          data,
+          error,
+        } = await supabase
+          .from("sale_items")
+          .select("sale_id, product_id, quantity")
+          .in("sale_id", saleIds);
+
+        if (error) {
+          throw error;
+        }
+
+        saleItems = data || [];
+      }
+
+      const purchaseDateMap = new Map<string, string>();
+      (purchaseHeaders || []).forEach((row: any) => {
+        purchaseDateMap.set(
+          String(row.id),
+          String(row.purchase_date || "").slice(0, 10)
+        );
+      });
+
+      const saleDateMap = new Map<string, string>();
+      (saleHeaders || []).forEach((row: any) => {
+        saleDateMap.set(
+          String(row.id),
+          String(row.sale_date || "").slice(0, 10)
+        );
+      });
+
+      const purchaseTodayMap = new Map<string, number>();
+      const purchaseAfterMap = new Map<string, number>();
+
+      purchaseItems.forEach((item: any) => {
+        const productId = String(item.product_id);
+        const transactionDate =
+          purchaseDateMap.get(String(item.purchase_id)) || "";
+        const quantity = Number(item.quantity || 0);
+
+        if (!Number.isFinite(quantity)) {
+          return;
+        }
+
+        if (transactionDate === selectedDate) {
+          purchaseTodayMap.set(
+            productId,
+            (purchaseTodayMap.get(productId) || 0) + quantity
+          );
+        } else if (transactionDate > selectedDate) {
+          purchaseAfterMap.set(
+            productId,
+            (purchaseAfterMap.get(productId) || 0) + quantity
+          );
+        }
+      });
+
+      const salesTodayMap = new Map<string, number>();
+      const salesAfterMap = new Map<string, number>();
+
+      saleItems.forEach((item: any) => {
+        const productId = String(item.product_id);
+        const transactionDate =
+          saleDateMap.get(String(item.sale_id)) || "";
+        const quantity = Number(item.quantity || 0);
+
+        if (!Number.isFinite(quantity)) {
+          return;
+        }
+
+        if (transactionDate === selectedDate) {
+          salesTodayMap.set(
+            productId,
+            (salesTodayMap.get(productId) || 0) + quantity
+          );
+        } else if (transactionDate > selectedDate) {
+          salesAfterMap.set(
+            productId,
+            (salesAfterMap.get(productId) || 0) + quantity
+          );
+        }
+      });
+
+      // --------------------------------------------------
+      // RECONSTRUCT THE SELECTED DAY
+      //
+      // Current Stock
+      // - Purchases after selected date
+      // + Sales after selected date
+      // = Selected Date Closing
+      // --------------------------------------------------
+
+      const rows: StockFlowRow[] = products.map(
+        (product) => {
+          const productId = String(product.id);
+
+          const currentStock = Number(
+            product.stock_qty || 0
+          );
+
+          const purchasesAfter =
+            purchaseAfterMap.get(productId) || 0;
+
+          const salesAfter =
+            salesAfterMap.get(productId) || 0;
+
+          const purchasesToday =
+            purchaseTodayMap.get(productId) || 0;
+
+          const salesToday =
+            salesTodayMap.get(productId) || 0;
+
+          const todayClosing =
+            currentStock -
+            purchasesAfter +
+            salesAfter;
+
+          const todayOpening =
+            todayClosing -
+            purchasesToday +
+            salesToday;
+
+          return {
+            product_id: product.id,
+            brand_id: product.brand_id,
+            product_name: product.product_name,
+            size: Number(product.size || 1),
+            unit: product.unit || "Litre",
+            yesterdayClosing: todayOpening,
+            todayOpening,
+            purchases: purchasesToday,
+            sales: salesToday,
+            todayClosing,
+            nextDayOpening: todayClosing,
+          };
+        }
+      );
+
+      setStockFlowRows(rows);
+
+    } catch (error: any) {
+
+      console.error(
+        "DATE-WISE STOCK FLOW ERROR:",
+        error
+      );
+
+      setStockFlowRows([]);
+      setStockFlowError(
+        error?.message ||
+        "Unable to load date-wise stock."
+      );
+
+    } finally {
+
+      setStockFlowLoading(false);
+
+    }
+  }
+
+  function handleStockDateChange(value: string) {
+
+    const formatted =
+      formatDateDDMMYYYYInput(value);
+
+    setStockDateDisplay(formatted);
+
+    const normalized =
+      parseDateDDMMYYYY(formatted);
+
+    if (normalized) {
+      setStockDate(normalized);
+    }
+  }
+
+  function resetStockDateToToday() {
+
+    const today = todayInput();
+
+    setStockDate(today);
+    setStockDateDisplay(formatDate(today));
+
   }
 
   // ====================================================
@@ -2294,9 +2644,9 @@ export default function Purchases() {
             mb-5
             flex
             flex-col
-            gap-2
+            gap-4
             md:flex-row
-            md:items-center
+            md:items-end
             md:justify-between
           "
         >
@@ -2319,350 +2669,158 @@ export default function Purchases() {
                 text-slate-500
               "
             >
-              Current stock of all products.
+              Date-wise stock flow: Yesterday Closing → Today Opening → Purchases → Sales → Today Closing → Next Day Opening.
             </p>
           </div>
 
-          <div
-            className="
-              rounded-lg
-              bg-green-50
-              px-4
-              py-2
-              text-sm
-              font-bold
-              text-green-700
-            "
-          >
-            {products.length} Products
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+
+            <div>
+              <label className="mb-1 block text-xs font-bold text-slate-600">
+                Stock Date
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={stockDateDisplay}
+                onChange={(e) =>
+                  handleStockDateChange(e.target.value)
+                }
+                placeholder="DD/MM/YYYY"
+                maxLength={10}
+                className="w-full rounded-lg border-2 border-blue-200 bg-white px-3 py-2 font-semibold focus:border-blue-500 focus:outline-none sm:w-[170px]"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={resetStockDateToToday}
+              className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700"
+            >
+              Today
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void loadStockFlow(stockDate)}
+              disabled={stockFlowLoading}
+              className="rounded-lg bg-green-600 px-4 py-2 font-bold text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {stockFlowLoading ? "Loading..." : "Refresh Stock"}
+            </button>
+
           </div>
 
         </div>
 
-        {products.length === 0 ? (
+        <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-slate-700">
+          <span className="font-bold">Stock rule:</span>{" "}
+          Yesterday Closing = Today Opening. Today Closing = Today Opening + Purchases − Sales. Next Day Opening = Today Closing.
+        </div>
 
-          <div
-            className="
-              rounded-xl
-              bg-yellow-50
-              p-6
-              text-center
-              text-yellow-800
-            "
-          >
+        {stockFlowError && (
+          <div className="mb-4 rounded-xl bg-red-50 p-4 font-semibold text-red-700">
+            {stockFlowError}
+          </div>
+        )}
+
+        {stockFlowLoading ? (
+
+          <div className="rounded-xl bg-slate-50 p-8 text-center font-semibold text-slate-500">
+            Loading date-wise stock...
+          </div>
+
+        ) : stockFlowRows.length === 0 ? (
+
+          <div className="rounded-xl bg-yellow-50 p-6 text-center text-yellow-800">
             No products found. Please add products in Products section first.
           </div>
 
         ) : (
 
           <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full min-w-[650px] text-left text-sm">
-              <thead className="bg-slate-50">
+            <table className="w-full min-w-[1250px] text-left text-sm">
+              <thead className="bg-slate-800 text-white">
                 <tr>
-                  <th className="px-4 py-3 font-bold text-slate-700">
-                    Brand
-                  </th>
-                  <th className="px-4 py-3 font-bold text-slate-700">
-                    Product
-                  </th>
-                  <th className="px-4 py-3 font-bold text-slate-700">
-                    Pack
-                  </th>
-                  <th className="px-4 py-3 text-right font-bold text-slate-700">
-                    Stock
-                  </th>
+                  <th className="px-3 py-3">Brand</th>
+                  <th className="px-3 py-3">Product</th>
+                  <th className="px-3 py-3">Pack</th>
+                  <th className="px-3 py-3 text-right">Yesterday Closing</th>
+                  <th className="px-3 py-3 text-right">Today Opening</th>
+                  <th className="px-3 py-3 text-right">Purchases</th>
+                  <th className="px-3 py-3 text-right">Sales</th>
+                  <th className="px-3 py-3 text-right">Today Closing</th>
+                  <th className="px-3 py-3 text-right">Next Day Opening</th>
                 </tr>
               </thead>
 
               <tbody className="divide-y divide-slate-100 bg-white">
-                {products.map((product) => (
-                  <tr key={product.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-semibold text-slate-700">
-                      {getBrandName(product.brand_id)}
+                {stockFlowRows.map((row) => (
+                  <tr key={row.product_id} className="hover:bg-slate-50">
+                    <td className="px-3 py-3 font-semibold text-slate-700">
+                      {getBrandName(row.brand_id)}
                     </td>
-                    <td className="px-4 py-3 font-semibold text-slate-800">
-                      {product.product_name}
+                    <td className="px-3 py-3 font-bold text-slate-800">
+                      {row.product_name}
                     </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {Number(product.size || 1)} {product.unit || "Litre"}
+                    <td className="px-3 py-3 text-slate-600">
+                      {row.size} {row.unit}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <span
-                        className={`inline-flex min-w-[70px] justify-center rounded-full px-3 py-1 font-bold ${
-                          Number(product.stock_qty || 0) > 0
-                            ? "bg-green-100 text-green-700"
-                            : "bg-slate-100 text-slate-500"
-                        }`}
-                      >
-                        {Number(product.stock_qty || 0)}
+                    <td className="px-3 py-3 text-right font-semibold text-slate-700">
+                      {row.yesterdayClosing}
+                    </td>
+                    <td className="px-3 py-3 text-right font-bold text-blue-700">
+                      {row.todayOpening}
+                    </td>
+                    <td className="px-3 py-3 text-right font-bold text-green-700">
+                      {row.purchases}
+                    </td>
+                    <td className="px-3 py-3 text-right font-bold text-orange-700">
+                      {row.sales}
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <span className="inline-flex min-w-[70px] justify-center rounded-full bg-green-100 px-3 py-1 font-bold text-green-700">
+                        {row.todayClosing}
                       </span>
+                    </td>
+                    <td className="px-3 py-3 text-right font-bold text-purple-700">
+                      {row.nextDayOpening}
                     </td>
                   </tr>
                 ))}
               </tbody>
+
+              <tfoot className="bg-blue-50 font-bold text-slate-800">
+                <tr>
+                  <td colSpan={3} className="px-3 py-4 text-right">
+                    TOTAL
+                  </td>
+                  <td className="px-3 py-4 text-right">
+                    {stockFlowRows.reduce((sum, row) => sum + row.yesterdayClosing, 0)}
+                  </td>
+                  <td className="px-3 py-4 text-right text-blue-700">
+                    {stockFlowRows.reduce((sum, row) => sum + row.todayOpening, 0)}
+                  </td>
+                  <td className="px-3 py-4 text-right text-green-700">
+                    {stockFlowRows.reduce((sum, row) => sum + row.purchases, 0)}
+                  </td>
+                  <td className="px-3 py-4 text-right text-orange-700">
+                    {stockFlowRows.reduce((sum, row) => sum + row.sales, 0)}
+                  </td>
+                  <td className="px-3 py-4 text-right text-green-700">
+                    {stockFlowRows.reduce((sum, row) => sum + row.todayClosing, 0)}
+                  </td>
+                  <td className="px-3 py-4 text-right text-purple-700">
+                    {stockFlowRows.reduce((sum, row) => sum + row.nextDayOpening, 0)}
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </div>
 
         )}
 
       </div>
-
-      {/* ==================================================
-          PRODUCT SELECTION
-      ================================================== */}
-
-      {selectedBrandId && (
-
-        <div
-          className="
-            mb-6
-            rounded-2xl
-            bg-white
-            p-6
-            shadow-lg
-          "
-        >
-
-          <div className="mb-5">
-
-            <h2
-              className="
-                text-xl
-                font-bold
-                text-slate-800
-              "
-            >
-              2. Select Product
-            </h2>
-
-            <p
-              className="
-                mt-1
-                text-sm
-                text-slate-500
-              "
-            >
-
-              {
-                getBrandName(
-                  selectedBrandId
-                )
-              }
-
-              {" — "}
-
-              {
-                selectedBrandProductCount
-              }{" "}
-              products available.
-
-            </p>
-
-          </div>
-
-          {brandProducts.length ===
-          0 ? (
-
-            <div
-              className="
-                rounded-xl
-                bg-yellow-50
-                p-6
-                text-center
-                text-yellow-800
-              "
-            >
-
-              No products found
-              for this brand.
-
-              <br />
-
-              Please add products
-              in Products section
-              first.
-
-            </div>
-
-          ) : (
-
-            <div
-              className="
-                grid
-                gap-3
-                sm:grid-cols-2
-                lg:grid-cols-3
-                xl:grid-cols-4
-              "
-            >
-
-              {brandProducts.map(
-                (
-                  product
-                ) => {
-
-                  const isSelected =
-                    String(
-                      selectedProductId
-                    ) ===
-                    String(
-                      product.id
-                    );
-
-                  const alreadyAdded =
-                    purchaseRows.some(
-                      (
-                        row
-                      ) =>
-                        String(
-                          row.product_id
-                        ) ===
-                        String(
-                          product.id
-                        )
-                    );
-
-                  return (
-
-                    <button
-                      key={
-                        product.id
-                      }
-                      type="button"
-                      onClick={() =>
-                        handleProductChange(
-                          product.id
-                        )
-                      }
-                      className={`
-                        rounded-xl
-                        border-2
-                        p-4
-                        text-left
-                        transition
-                        ${
-                          isSelected
-                            ? "border-blue-600 bg-blue-50 shadow-md"
-                            : "border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50"
-                        }
-                      `}
-                    >
-
-                      <div
-                        className="
-                          flex
-                          items-start
-                          justify-between
-                          gap-2
-                        "
-                      >
-
-                        <div>
-
-                          <p
-                            className="
-                              font-bold
-                              text-slate-800
-                            "
-                          >
-                            {
-                              product.product_name
-                            }
-                          </p>
-
-                          <p
-                            className="
-                              mt-1
-                              text-sm
-                              text-slate-500
-                            "
-                          >
-
-                            {Number(
-                              product.size ||
-                                1
-                            )}
-
-                            {" "}
-
-                            {
-                              product.unit ||
-                              "Litre"
-                            }
-
-                          </p>
-
-                        </div>
-
-                        {alreadyAdded && (
-
-                          <span
-                            className="
-                              rounded-full
-                              bg-green-100
-                              px-2
-                              py-1
-                              text-xs
-                              font-bold
-                              text-green-700
-                            "
-                          >
-                            Added
-                          </span>
-
-                        )}
-
-                      </div>
-
-                      <div
-                        className="
-                          mt-3
-                          flex
-                          justify-between
-                          text-sm
-                        "
-                      >
-
-                        <span
-                          className="
-                            text-slate-500
-                          "
-                        >
-                          Purchase
-                        </span>
-
-                        <span
-                          className="
-                            font-bold
-                            text-blue-700
-                          "
-                        >
-                          ₹
-                          {Number(
-                            product.purchase_rate ||
-                              0
-                          ).toFixed(
-                            2
-                          )}
-                        </span>
-
-                      </div>
-
-
-                    </button>
-
-                  );
-
-                }
-              )}
-
-            </div>
-
-          )}
-
-        </div>
-
-      )}
 
       {/* ==================================================
           QUANTITY + RATE
