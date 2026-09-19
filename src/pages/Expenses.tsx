@@ -1321,7 +1321,7 @@ export default function Expenses() {
 
                   {employees.map((employee) => (
                     <option key={employee.id} value={employee.id}>
-                      {employee.name || employee.email || "Employee"}
+                      {employee.name || employee.email || "Employee"}{employee.uses_erp ? " (ERP)" : " (Non-ERP)"}
                     </option>
                   ))}
                 </select>
@@ -1444,7 +1444,7 @@ export default function Expenses() {
                   <option value="all">All Employees</option>
                   {employees.map((employee) => (
                     <option key={employee.id} value={employee.id}>
-                      {employee.name || employee.email || "Employee"}
+                      {employee.name || employee.email || "Employee"}{employee.uses_erp ? " (ERP)" : " (Non-ERP)"}
                     </option>
                   ))}
                 </select>
