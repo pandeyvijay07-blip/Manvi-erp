@@ -338,6 +338,17 @@ const [recentSales, setRecentSales] =
 useState<RecentSale[]>([]);
 
 /* =========================================================
+MISSED / LEFT-BEHIND CUSTOMERS
+Customers who do not have any saved sale for the
+currently selected sale date are shown here.
+========================================================= */
+const [missedCustomers, setMissedCustomers] =
+useState<Customer[]>([]);
+
+const [loadingMissedCustomers, setLoadingMissedCustomers] =
+useState(false);
+
+/* =========================================================
 LOADING
 ========================================================= */
 
@@ -552,6 +563,67 @@ ascending: false,
 }
 
 /* =========================================================
+LOAD MISSED / LEFT-BEHIND CUSTOMERS
+
+A customer is considered missed when there is no saved
+sale for that customer on the selected sale date.
+Walk-in sales do not affect this list because they have
+no customer_id.
+========================================================= */
+async function loadMissedCustomers() {
+  if (!saleDate || customers.length === 0) {
+    setMissedCustomers([]);
+    return;
+  }
+
+  try {
+    setLoadingMissedCustomers(true);
+
+    const {
+      data: salesForDate,
+      error,
+    } = await supabase
+      .from("sales")
+      .select("customer_id")
+      .eq("sale_date", saleDate);
+
+    if (error) {
+      throw error;
+    }
+
+    const soldCustomerIds = new Set(
+      (salesForDate || [])
+        .map((sale: any) => String(sale.customer_id || ""))
+        .filter(Boolean)
+    );
+
+    const leftBehind = customers.filter(
+      (customer) => !soldCustomerIds.has(String(customer.id))
+    );
+
+    setMissedCustomers(leftBehind);
+  } catch (error: any) {
+    console.error(
+      "Missed customers error:",
+      error
+    );
+
+    setMissedCustomers([]);
+  } finally {
+    setLoadingMissedCustomers(false);
+  }
+}
+
+function selectMissedCustomer(customerIdToSelect: string) {
+  setCustomerId(customerIdToSelect);
+
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth",
+  });
+}
+
+/* =========================================================
 INITIAL LOAD
 ========================================================= */
 
@@ -565,6 +637,16 @@ loadRecentSales();
 }
 }, [
 customers,
+loadingData,
+]);
+
+useEffect(() => {
+if (!loadingData) {
+loadMissedCustomers();
+}
+}, [
+customers,
+saleDate,
 loadingData,
 ]);
 
@@ -1618,6 +1700,7 @@ try {
   await loadData();
 
   await loadRecentSales();
+  await loadMissedCustomers();
 } catch (error: any) {
   console.error(
     "Save sale error:",
@@ -1953,6 +2036,7 @@ GET OLD SALE ITEMS
   await loadData();
 
   await loadRecentSales();
+  await loadMissedCustomers();
 } catch (error: any) {
   console.error(
     "Update sale error:",
@@ -2633,6 +2717,7 @@ try {
   await loadData();
 
   await loadRecentSales();
+  await loadMissedCustomers();
 } catch (error: any) {
   console.error(
     "Delete sale error:",
@@ -3528,6 +3613,103 @@ return (
       </button>
 
     </div>
+
+  </div>
+
+  {/* =====================================================
+      MISSED / LEFT-BEHIND CUSTOMERS
+  ===================================================== */}
+
+  <div className="bg-white rounded-2xl shadow p-6">
+
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-5">
+
+      <div>
+        <h2 className="text-2xl font-bold text-red-600">
+          Customers Left Behind
+        </h2>
+
+        <p className="text-gray-500 mt-1">
+          Customers with no saved sale for {formatDisplayDate(saleDate)}.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <span className="rounded-full bg-red-100 px-4 py-2 font-bold text-red-700">
+          {missedCustomers.length} Missed
+        </span>
+
+        <button
+          type="button"
+          onClick={loadMissedCustomers}
+          disabled={loadingMissedCustomers || loadingData}
+          className="rounded-lg bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700 disabled:bg-gray-400"
+        >
+          {loadingMissedCustomers ? "Checking..." : "Refresh"}
+        </button>
+      </div>
+
+    </div>
+
+    {loadingMissedCustomers ? (
+      <div className="rounded-xl bg-gray-50 p-6 text-center text-gray-500">
+        Checking customers for this date...
+      </div>
+    ) : missedCustomers.length === 0 ? (
+      <div className="rounded-xl border border-green-200 bg-green-50 p-6 text-center">
+        <div className="text-lg font-bold text-green-700">
+          ✓ No customer left behind
+        </div>
+        <p className="mt-1 text-green-600">
+          Every customer has a saved sale for {formatDisplayDate(saleDate)}.
+        </p>
+      </div>
+    ) : (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {missedCustomers.map((customer) => (
+          <div
+            key={customer.id}
+            className="rounded-xl border-2 border-red-100 bg-red-50 p-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-bold text-gray-900 truncate">
+                  {customer.customer_name}
+                </div>
+
+                {customer.route ? (
+                  <div className="mt-1 text-sm font-medium text-blue-700">
+                    Route: {customer.route}
+                  </div>
+                ) : (
+                  <div className="mt-1 text-sm text-gray-500">
+                    Route: Not set
+                  </div>
+                )}
+
+                {customer.mobile ? (
+                  <div className="mt-1 text-sm text-gray-600">
+                    Mobile: {customer.mobile}
+                  </div>
+                ) : null}
+              </div>
+
+              <span className="shrink-0 rounded-full bg-red-600 px-2 py-1 text-xs font-bold text-white">
+                MISSED
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => selectMissedCustomer(customer.id)}
+              className="mt-4 w-full rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700"
+            >
+              Select Customer / Punch Sale
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
 
   </div>
 
