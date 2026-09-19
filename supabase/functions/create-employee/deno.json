@@ -1,6 +1,5 @@
 {
   "imports": {
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
-    "edge-runtime": "https://edge-runtime.deno.dev/"
+    "@supabase/supabase-js": "jsr:@supabase/supabase-js@2"
   }
 }

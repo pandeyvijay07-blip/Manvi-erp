@@ -1,0 +1,3654 @@
+import { useEffect, useMemo, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import { supabase } from "../lib/supabase";
+import CustomerRouteSearch from "../components/CustomerRouteSearch";
+
+// ---------------------------------------------------------
+// LOCAL BUSINESS DATE
+// Never use toISOString().slice(0, 10) for the sale date.
+// That converts the time to UTC and can save yesterday's
+// date for users in India/Asia after midnight.
+// ---------------------------------------------------------
+function getLocalDateString() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDate(value: string | null | undefined) {
+  if (!value) return "-";
+
+  const datePart = String(value).slice(0, 10);
+  const [year, month, day] = datePart.split("-");
+
+  if (year && month && day) {
+    return `${day}/${month}/${year}`;
+  }
+
+  return String(value);
+}
+
+function formatDateInput(value: string | null | undefined) {
+  if (!value) return "";
+
+  const datePart = String(value).slice(0, 10);
+  const [year, month, day] = datePart.split("-");
+
+  if (year && month && day) {
+    return `${day}/${month}/${year}`;
+  }
+
+  return "";
+}
+
+function parseDateInput(value: string) {
+  const digits = value.replace(/\D/g, "");
+
+  if (digits.length !== 8) {
+    return null;
+  }
+
+  const day = Number(digits.slice(0, 2));
+  const month = Number(digits.slice(2, 4));
+  const year = Number(digits.slice(4, 8));
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function formatTypingDate(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+
+  if (digits.length <= 2) {
+    return digits;
+  }
+
+  if (digits.length <= 4) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function normalizeSaleDate(value: string | null | undefined) {
+  if (!value) return getLocalDateString();
+  return String(value).slice(0, 10);
+}
+
+type Brand = {
+id: string;
+brand_name: string;
+};
+
+type Customer = {
+id: string;
+customer_name: string;
+mobile?: string | null;
+route?: string | null;
+};
+
+type Product = {
+id: string;
+product_name: string;
+brand_id: string | null;
+pack_size: string | null;
+selling_rate: number | null;
+purchase_rate: number | null;
+stock_qty: number | null;
+};
+
+type SaleItem = {
+id?: string;
+product_id: string;
+brand_id: string | null;
+brand_name: string;
+product_name: string;
+pack_size: string;
+unit: string;
+quantity: number;
+rate: number;
+purchase_rate: number;
+amount: number;
+};
+
+type RecentSale = {
+id: string;
+sale_date: string;
+customer_id: string | null;
+customer_name: string;
+payment_method: string;
+cash_amount?: number;
+upi_amount?: number;
+total_amount: number;
+paid_amount: number;
+balance_amount: number;
+};
+
+export default function Sales() {
+/* =========================================================
+MASTER DATA
+========================================================= */
+
+const [brands, setBrands] = useState<Brand[]>([]);
+const [customers, setCustomers] = useState<Customer[]>([]);
+const [products, setProducts] = useState<Product[]>([]);
+
+/* =========================================================
+SALE HEADER
+========================================================= */
+
+const initialSaleDate = getLocalDateString();
+
+const [saleDate, setSaleDate] = useState(initialSaleDate);
+
+const [saleDateDisplay, setSaleDateDisplay] = useState(
+formatDateInput(initialSaleDate)
+);
+
+const [customerId, setCustomerId] = useState("");
+
+const [paymentMethod, setPaymentMethod] =
+useState("Cash");
+
+const [paidAmount, setPaidAmount] =
+useState("0");
+
+const [cashAmount, setCashAmount] =
+useState("0");
+
+const [upiAmount, setUpiAmount] =
+useState("0");
+
+/* =========================================================
+UPI / WHATSAPP BILL
+========================================================= */
+const [businessUpiId, setBusinessUpiId] = useState(() => {
+try {
+return window.localStorage.getItem("manvi_upi_id") || "";
+} catch {
+return "";
+}
+});
+
+function saveBusinessUpiId(value: string) {
+const normalized = value.trim();
+setBusinessUpiId(normalized);
+try {
+window.localStorage.setItem("manvi_upi_id", normalized);
+} catch {
+// Local storage may be unavailable in restricted browsers.
+}
+}
+
+function getWhatsAppNumber(value: string | null | undefined) {
+const digits = String(value || "").replace(/\D/g, "");
+if (!digits) return "";
+if (digits.length === 10) return `91${digits}`;
+if (digits.length === 12 && digits.startsWith("91")) return digits;
+return digits;
+}
+
+function buildWhatsAppBillMessage(
+customerName: string,
+date: string,
+items: SaleItem[],
+total: number,
+paidValue: number,
+balanceValue: number,
+method: string
+) {
+const itemLines = items
+.map(
+(item) =>
+`${item.product_name} ${item.pack_size ? `(${getPackDisplay(item.pack_size)})` : ""} × ${item.quantity} @ ₹${item.rate.toFixed(2)} = ₹${item.amount.toFixed(2)}`
+)
+.join("\n");
+
+return [
+"*MANVI MILK AGENCIES*",
+"Sales Bill",
+`Customer: ${customerName}`,
+`Date: ${formatDisplayDate(date)}`,
+"",
+itemLines,
+"",
+`Total: ₹${total.toFixed(2)}`,
+`Paid: ₹${paidValue.toFixed(2)}`,
+`Balance: ₹${balanceValue.toFixed(2)}`,
+`Payment: ${method}`,
+"",
+"Thank you for your business.",
+].join("\n");
+}
+
+function openWhatsAppBill() {
+if (!selectedCustomer) {
+alert("Please select a customer first.");
+return;
+}
+
+if (saleItems.length === 0) {
+alert("Please add at least one product before sending the bill.");
+return;
+}
+
+const phone = getWhatsAppNumber(selectedCustomer.mobile);
+if (!phone) {
+alert("This customer does not have a valid mobile number. Add the mobile number in Customers first.");
+return;
+}
+
+const message = buildWhatsAppBillMessage(
+selectedCustomer.customer_name,
+saleDate,
+saleItems,
+totalSale,
+paid,
+balance,
+paymentMethod
+);
+
+const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function getUpiPaymentUrl() {
+if (!businessUpiId.trim() || balance <= 0) return "";
+
+const params = new URLSearchParams({
+pa: businessUpiId.trim(),
+pn: "MANVI MILK AGENCIES",
+am: balance.toFixed(2),
+cu: "INR",
+});
+
+return `upi://pay?${params.toString()}`;
+}
+
+/* =========================================================
+PRODUCT ENTRY
+========================================================= */
+
+const [brandId, setBrandId] = useState("");
+
+const [productId, setProductId] = useState("");
+
+const [quantity, setQuantity] = useState("1");
+
+const [sellingRate, setSellingRate] =
+useState("");
+
+const [productSearch, setProductSearch] =
+useState("");
+
+/* =========================================================
+SALE ITEMS
+========================================================= */
+
+const [saleItems, setSaleItems] =
+useState<SaleItem[]>([]);
+
+/* =========================================================
+EDIT CURRENT PRODUCT LINE
+========================================================= */
+
+const [editingItemIndex, setEditingItemIndex] =
+useState<number | null>(null);
+
+/* =========================================================
+EDIT SAVED SALE
+========================================================= */
+
+const [editingSaleId, setEditingSaleId] =
+useState<string | null>(null);
+
+/* =========================================================
+RECENT SALES
+========================================================= */
+
+const [recentSales, setRecentSales] =
+useState<RecentSale[]>([]);
+
+/* =========================================================
+VIEW SAVED BILL
+========================================================= */
+const [viewingBill, setViewingBill] = useState<RecentSale | null>(null);
+const [viewingBillItems, setViewingBillItems] = useState<SaleItem[]>([]);
+const [loadingBill, setLoadingBill] = useState(false);
+
+/* =========================================================
+LOADING
+========================================================= */
+
+const [loading, setLoading] = useState(false);
+
+const [loadingData, setLoadingData] =
+useState(true);
+
+/* =========================================================
+HELPER
+========================================================= */
+
+function getProductUnit(product: Product | undefined) {
+if (!product) {
+return "Litre";
+}
+
+return "Litre";
+
+}
+
+function getPackDisplay(packSize: string | null) {
+if (!packSize) {
+return "-";
+}
+
+const value = Number(packSize);
+
+if (!Number.isFinite(value)) {
+  return packSize;
+}
+
+if (value >= 1000) {
+  return `${value / 1000} L`;
+}
+
+return `${value} ml`;
+
+}
+
+/* =========================================================
+LOAD MASTER DATA
+========================================================= */
+
+async function loadData() {
+try {
+setLoadingData(true);
+
+  const [
+    brandsResponse,
+    customersResponse,
+    productsResponse,
+  ] = await Promise.all([
+    supabase
+      .from("brands")
+      .select("id, brand_name")
+      .order("brand_name"),
+
+    supabase
+      .from("customers")
+      .select("id, customer_name, mobile, route")
+      .order("customer_name"),
+
+    /*
+     * IMPORTANT:
+     * These are the ACTUAL columns in your products table.
+     */
+    supabase
+      .from("products")
+      .select(
+        `
+        id,
+        product_name,
+        brand_id,
+        pack_size,
+        selling_rate,
+        purchase_rate,
+        stock_qty
+        `
+      )
+      .order("product_name"),
+  ]);
+
+  if (brandsResponse.error) {
+    throw brandsResponse.error;
+  }
+
+  if (customersResponse.error) {
+    throw customersResponse.error;
+  }
+
+  if (productsResponse.error) {
+    throw productsResponse.error;
+  }
+
+  setBrands(
+    (brandsResponse.data || []) as Brand[]
+  );
+
+  setCustomers(
+    (customersResponse.data || []) as Customer[]
+  );
+
+  setProducts(
+    (productsResponse.data || []) as Product[]
+  );
+} catch (error: any) {
+  console.error(
+    "Sales master data error:",
+    error
+  );
+
+  alert(
+    "Unable to load sales data:\n" +
+      (error?.message ||
+        "Unknown error")
+  );
+} finally {
+  setLoadingData(false);
+}
+
+}
+
+/* =========================================================
+LOAD RECENT SALES
+========================================================= */
+
+async function loadRecentSales() {
+try {
+const {
+data,
+error,
+} = await supabase
+.from("sales")
+.select(`
+          id,
+          sale_date,
+          customer_id,
+          payment_method,
+          cash_amount,
+          upi_amount,
+          total_amount,
+          paid_amount,
+          balance_amount
+        `)
+.order("sale_date", {
+ascending: false,
+})
+.limit(20);
+
+  if (error) {
+    throw error;
+  }
+
+  const customerMap = new Map<
+    string,
+    string
+  >();
+
+  customers.forEach((customer) => {
+    customerMap.set(
+      customer.id,
+      customer.customer_name
+    );
+  });
+
+  const rows: RecentSale[] =
+    (data || []).map(
+      (sale: any) => ({
+        id: sale.id,
+        sale_date: sale.sale_date,
+        customer_id:
+          sale.customer_id,
+        customer_name:
+          customerMap.get(
+            sale.customer_id
+          ) || "Walk-in",
+        payment_method:
+          sale.payment_method ||
+          "Cash",
+        cash_amount:
+          Number(sale.cash_amount) || 0,
+        upi_amount:
+          Number(sale.upi_amount) || 0,
+        total_amount:
+          Number(
+            sale.total_amount
+          ) || 0,
+        paid_amount:
+          Number(
+            sale.paid_amount
+          ) || 0,
+        balance_amount:
+          Number(
+            sale.balance_amount
+          ) || 0,
+      })
+    );
+
+  setRecentSales(rows);
+} catch (error: any) {
+  console.error(
+    "Recent sales error:",
+    error
+  );
+}
+
+}
+
+/* =========================================================
+INITIAL LOAD
+========================================================= */
+
+useEffect(() => {
+loadData();
+}, []);
+
+useEffect(() => {
+if (!loadingData) {
+loadRecentSales();
+}
+}, [
+customers,
+loadingData,
+]);
+
+/* =========================================================
+SELECTED CUSTOMER
+========================================================= */
+
+const selectedCustomer = useMemo(() => {
+return customers.find(
+(customer) =>
+customer.id === customerId
+);
+}, [
+customers,
+customerId,
+]);
+
+/* =========================================================
+PUNCH TODAY'S SALE
+Loads the customer's latest previous sale and prepares
+the same products/quantities as today's draft.
+It does NOT save until Save Sale is pressed.
+========================================================= */
+async function punchTodaysSale() {
+  if (!customerId) {
+    alert("Please select a customer first.");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const {
+      data: previousSale,
+      error: previousSaleError,
+    } = await supabase
+      .from("sales")
+      .select(`
+        id,
+        sale_date,
+        customer_id,
+        payment_method,
+        paid_amount
+      `)
+      .eq("customer_id", customerId)
+      .lt("sale_date", saleDate)
+      .order("sale_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (previousSaleError) {
+      throw previousSaleError;
+    }
+
+    if (!previousSale) {
+      alert("No previous sale found for this customer.");
+      return;
+    }
+
+    const {
+      data: previousItems,
+      error: previousItemsError,
+    } = await supabase
+      .from("sale_items")
+      .select(`
+        id,
+        product_id,
+        quantity,
+        rate,
+        amount,
+        cost_rate
+      `)
+      .eq("sale_id", previousSale.id);
+
+    if (previousItemsError) {
+      throw previousItemsError;
+    }
+
+    if (!previousItems || previousItems.length === 0) {
+      alert("Previous sale has no products.");
+      return;
+    }
+
+    const punchedItems = await Promise.all(
+      previousItems.map(async (item: any) => {
+        const product = products.find(
+          (p) => p.id === item.product_id
+        );
+
+        if (!product) {
+          return null;
+        }
+
+        const brand = brands.find(
+          (b) => b.id === product.brand_id
+        );
+
+        const customerRate = await getCustomerPrice(
+          customerId,
+          product.id
+        );
+
+        const rate =
+          customerRate !== null
+            ? customerRate
+            : Number(product.selling_rate || item.rate || 0);
+
+        const qty = Number(item.quantity) || 0;
+
+        return {
+          product_id: product.id,
+          brand_id: product.brand_id || null,
+          brand_name: brand?.brand_name || "No Brand",
+          product_name: product.product_name,
+          pack_size: product.pack_size || "",
+          unit: getProductUnit(product),
+          quantity: qty,
+          rate,
+          purchase_rate: Number(
+            product.purchase_rate || item.cost_rate || 0
+          ),
+          amount: qty * rate,
+        } as SaleItem;
+      })
+    );
+
+    const validItems = punchedItems.filter(
+      (item): item is SaleItem => item !== null
+    );
+
+    if (validItems.length === 0) {
+      alert("Previous sale products could not be found.");
+      return;
+    }
+
+    setSaleItems(validItems);
+    setPaymentMethod(previousSale.payment_method || "Cash");
+    setPaidAmount("0");
+    setEditingSaleId(null);
+    setEditingItemIndex(null);
+    setProductId("");
+    setQuantity("1");
+    setSellingRate("");
+    setProductSearch("");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+
+    alert(
+      `Today's sale prepared from ${formatDisplayDate(
+        previousSale.sale_date
+      )}.\n\nPlease check the quantities and press Save Sale.`
+    );
+  } catch (error: any) {
+    console.error("Punch today's sale error:", error);
+    alert(
+      "Unable to punch today's sale:\n" +
+        (error?.message || "Unknown error")
+    );
+  } finally {
+    setLoading(false);
+  }
+}
+
+/* =========================================================
+PRODUCTS FOR BRAND / SEARCH
+========================================================= */
+
+const brandProducts = useMemo(() => {
+let result = products;
+
+if (brandId) {
+  result = result.filter(
+    (product) =>
+      product.brand_id === brandId
+  );
+}
+
+const search =
+  productSearch
+    .trim()
+    .toLowerCase();
+
+if (search) {
+  result = result.filter(
+    (product) => {
+      const brand =
+        brands.find(
+          (b) =>
+            b.id ===
+            product.brand_id
+        );
+
+      const text = [
+        product.product_name,
+        product.pack_size,
+        brand?.brand_name,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return text.includes(
+        search
+      );
+    }
+  );
+}
+
+return result;
+
+}, [
+products,
+brandId,
+productSearch,
+brands,
+]);
+
+/* =========================================================
+SELECTED PRODUCT
+========================================================= */
+
+const selectedProduct = useMemo(() => {
+return products.find(
+(product) =>
+product.id === productId
+);
+}, [
+products,
+productId,
+]);
+
+/* =========================================================
+SELECTED BRAND
+========================================================= */
+
+const selectedBrand = useMemo(() => {
+if (!selectedProduct) {
+return undefined;
+}
+
+return brands.find(
+  (brand) =>
+    brand.id ===
+    selectedProduct.brand_id
+);
+
+}, [
+selectedProduct,
+brands,
+]);
+
+/* =========================================================
+CUSTOMER PRICE
+========================================================= */
+
+async function getCustomerPrice(
+customer: string,
+product: string
+) {
+if (!customer || !product) {
+return null;
+}
+
+try {
+  const {
+    data,
+    error,
+  } = await supabase
+    .from("customer_prices")
+    .select("rate")
+    .eq(
+      "customer_id",
+      customer
+    )
+    .eq(
+      "product_id",
+      product
+    )
+    .maybeSingle();
+
+  if (error) {
+    console.error(
+      "Customer price error:",
+      error
+    );
+
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const rate = Number(
+    data.rate
+  );
+
+  if (
+    !Number.isFinite(rate)
+  ) {
+    return null;
+  }
+
+  return rate;
+} catch (error) {
+  console.error(error);
+  return null;
+}
+
+}
+
+/* =========================================================
+APPLY CUSTOMER RATE
+========================================================= */
+
+useEffect(() => {
+async function applyRate() {
+if (!selectedProduct) {
+setSellingRate("");
+return;
+}
+
+  const customerRate =
+    await getCustomerPrice(
+      customerId,
+      selectedProduct.id
+    );
+
+  if (
+    customerRate !== null
+  ) {
+    setSellingRate(
+      customerRate.toString()
+    );
+  } else {
+    setSellingRate(
+      String(
+        selectedProduct.selling_rate ||
+          0
+      )
+    );
+  }
+}
+
+applyRate();
+
+}, [
+customerId,
+selectedProduct,
+]);
+
+/* =========================================================
+PRODUCT CHANGE
+========================================================= */
+
+function handleProductChange(
+value: string
+) {
+setProductId(value);
+
+const product =
+  products.find(
+    (p) => p.id === value
+  );
+
+if (!product) {
+  setSellingRate("");
+  return;
+}
+
+setSellingRate(
+  String(
+    product.selling_rate || 0
+  )
+);
+
+}
+
+/* =========================================================
+TOTAL SALE
+========================================================= */
+
+const totalSale = useMemo(() => {
+return saleItems.reduce(
+(total, item) =>
+total +
+Number(item.amount || 0),
+0
+);
+}, [saleItems]);
+
+/* =========================================================
+PAID / BALANCE
+========================================================= */
+
+const cashPaid = Number(cashAmount) || 0;
+const upiPaid = Number(upiAmount) || 0;
+
+const paid = paymentMethod === "Split"
+  ? cashPaid + upiPaid
+  : Number(paidAmount) || 0;
+
+const balance = Math.max(
+0,
+totalSale - paid
+);
+
+/* =========================================================
+ADD / UPDATE PRODUCT LINE
+========================================================= */
+
+async function addOrUpdateSaleItem() {
+if (!productId) {
+alert(
+"Please select a product."
+);
+return;
+}
+
+const qty =
+  Number(quantity);
+
+const rate =
+  Number(sellingRate);
+
+if (
+  !Number.isFinite(qty) ||
+  qty <= 0
+) {
+  alert(
+    "Enter a valid quantity."
+  );
+  return;
+}
+
+if (
+  !Number.isFinite(rate) ||
+  rate < 0
+) {
+  alert(
+    "Enter a valid selling rate."
+  );
+  return;
+}
+
+const product =
+  products.find(
+    (p) => p.id === productId
+  );
+
+if (!product) {
+  alert(
+    "Product not found."
+  );
+  return;
+}
+
+const stock =
+  Number(
+    product.stock_qty
+  ) || 0;
+
+/* =====================================================
+   CHECK QUANTITY ALREADY USED IN CURRENT DRAFT
+   ===================================================== */
+
+let alreadyUsed = 0;
+
+saleItems.forEach(
+  (item, index) => {
+    if (
+      item.product_id ===
+        product.id &&
+      index !==
+        editingItemIndex
+    ) {
+      alreadyUsed +=
+        Number(
+          item.quantity
+        ) || 0;
+    }
+  }
+);
+
+const requiredStock =
+  alreadyUsed + qty;
+
+/*
+ * When editing a saved sale, its old stock is
+ * still deducted from database. We allow the old
+ * quantity to be replaced during editing.
+ *
+ * The final validation is also performed again
+ * during updateExistingSale().
+ */
+
+if (
+  !editingSaleId &&
+  requiredStock > stock
+) {
+  alert(
+    `Insufficient stock.\n\nAvailable stock: ${stock}\nRequired: ${requiredStock}`
+  );
+
+  return;
+}
+
+/* =====================================================
+   BRAND
+   ===================================================== */
+
+const brand =
+  brands.find(
+    (b) =>
+      b.id ===
+      product.brand_id
+  );
+
+/* =====================================================
+   NEW SALE ITEM
+   ===================================================== */
+
+const newItem: SaleItem = {
+  product_id:
+    product.id,
+
+  brand_id:
+    product.brand_id ||
+    null,
+
+  brand_name:
+    brand?.brand_name ||
+    "No Brand",
+
+  product_name:
+    product.product_name,
+
+  pack_size:
+    product.pack_size ||
+    "",
+
+  unit:
+    getProductUnit(product),
+
+  quantity: qty,
+
+  rate: rate,
+
+  purchase_rate:
+    Number(product.purchase_rate || 0),
+
+  amount:
+    qty * rate,
+};
+
+/* =====================================================
+   UPDATE DRAFT LINE
+   ===================================================== */
+
+if (
+  editingItemIndex !==
+  null
+) {
+  setSaleItems(
+    (previous) =>
+      previous.map(
+        (item, index) =>
+          index ===
+          editingItemIndex
+            ? {
+                ...newItem,
+                id: item.id,
+              }
+            : item
+      )
+  );
+
+  setEditingItemIndex(
+    null
+  );
+}
+
+/* =====================================================
+   ADD NEW LINE
+   ===================================================== */
+
+else {
+  /*
+   * Do not allow the same product twice.
+   * This prevents stock calculation problems.
+   */
+  const existingIndex =
+    saleItems.findIndex(
+      (item) =>
+        item.product_id ===
+        product.id
+    );
+
+  if (
+    existingIndex !== -1
+  ) {
+    const confirmed =
+      window.confirm(
+        "This product is already added.\n\nDo you want to replace its quantity and rate?"
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setSaleItems(
+      (previous) =>
+        previous.map(
+          (
+            item,
+            index
+          ) =>
+            index ===
+            existingIndex
+              ? newItem
+              : item
+        )
+    );
+  } else {
+    setSaleItems(
+      (previous) => [
+        ...previous,
+        newItem,
+      ]
+    );
+  }
+}
+
+/* =====================================================
+   CLEAR PRODUCT FORM
+   ===================================================== */
+
+setProductId("");
+setQuantity("1");
+setSellingRate("");
+
+}
+
+/* =========================================================
+EDIT DRAFT PRODUCT
+========================================================= */
+
+function editSaleItem(
+index: number
+) {
+const item =
+saleItems[index];
+
+if (!item) {
+  return;
+}
+
+setEditingItemIndex(
+  index
+);
+
+setBrandId(
+  item.brand_id || ""
+);
+
+setProductSearch("");
+
+setProductId(
+  item.product_id
+);
+
+setQuantity(
+  String(item.quantity)
+);
+
+setSellingRate(
+  String(item.rate)
+);
+
+window.scrollTo({
+  top: 250,
+  behavior: "smooth",
+});
+
+}
+
+/* =========================================================
+REMOVE DRAFT PRODUCT
+========================================================= */
+
+function removeSaleItem(
+index: number
+) {
+const item =
+saleItems[index];
+
+if (!item) {
+  return;
+}
+
+const confirmed =
+  window.confirm(
+    `Remove "${item.product_name}" from this sale?`
+  );
+
+if (!confirmed) {
+  return;
+}
+
+setSaleItems(
+  (previous) =>
+    previous.filter(
+      (_, itemIndex) =>
+        itemIndex !== index
+    )
+);
+
+if (
+  editingItemIndex ===
+  index
+) {
+  cancelProductEdit();
+}
+
+}
+
+/* =========================================================
+CANCEL PRODUCT EDIT
+========================================================= */
+
+function cancelProductEdit() {
+setEditingItemIndex(
+null
+);
+
+setProductId("");
+
+setQuantity("1");
+
+setSellingRate("");
+
+setProductSearch("");
+
+}
+
+/* =========================================================
+CLEAR SALE FORM
+========================================================= */
+
+function clearSaleForm() {
+setSaleItems([]);
+
+setCustomerId("");
+
+setBrandId("");
+
+setProductId("");
+
+setProductSearch("");
+
+setQuantity("1");
+
+setSellingRate("");
+
+setPaidAmount("0");
+setCashAmount("0");
+setUpiAmount("0");
+
+setPaymentMethod("Cash");
+
+setEditingItemIndex(
+  null
+);
+
+setEditingSaleId(
+  null
+);
+
+const today = getLocalDateString();
+setSaleDate(today);
+setSaleDateDisplay(formatDateInput(today));
+
+}
+
+/* =========================================================
+SAVE NEW SALE
+========================================================= */
+
+async function saveSale() {
+if (
+saleItems.length === 0
+) {
+alert(
+"Please add at least one product."
+);
+return;
+}
+
+if (!customerId) {
+  alert(
+    "Please select a customer."
+  );
+  return;
+}
+
+if (totalSale <= 0) {
+  alert(
+    "Sale total must be greater than zero."
+  );
+  return;
+}
+
+if (paid < 0) {
+  alert(
+    "Paid amount cannot be negative."
+  );
+  return;
+}
+
+if (paid > totalSale) {
+  alert(
+    "Paid amount cannot be greater than total sale."
+  );
+  return;
+}
+
+if (paymentMethod === "Split" && cashPaid < 0 || paymentMethod === "Split" && upiPaid < 0) {
+  alert("Split payment amounts cannot be negative.");
+  return;
+}
+
+if (paymentMethod === "Split" && paid <= 0) {
+  alert("Enter Cash and/or UPI amount for split payment.");
+  return;
+}
+
+try {
+  setLoading(true);
+
+  /* =====================================================
+     IF EDITING SAVED SALE
+     ===================================================== */
+
+  if (editingSaleId) {
+    await updateExistingSale(
+      editingSaleId
+    );
+
+    return;
+  }
+
+  /* =====================================================
+     FINAL STOCK VALIDATION
+     ===================================================== */
+
+  for (
+    const item of saleItems
+  ) {
+    const product =
+      products.find(
+        (p) =>
+          p.id ===
+          item.product_id
+      );
+
+    if (!product) {
+      throw new Error(
+        `Product not found: ${item.product_name}`
+      );
+    }
+
+    const stock =
+      Number(
+        product.stock_qty
+      ) || 0;
+
+    if (
+      Number(
+        item.quantity
+      ) > stock
+    ) {
+      throw new Error(
+        `Insufficient stock for ${item.product_name}.\nAvailable: ${stock}\nRequired: ${item.quantity}`
+      );
+    }
+  }
+
+  /* =====================================================
+     INSERT SALE HEADER
+     ===================================================== */
+
+  const {
+    data: sale,
+    error: saleError,
+  } = await supabase
+    .from("sales")
+    .insert({
+      sale_date:
+        saleDate,
+
+      customer_id:
+        customerId,
+
+      payment_method:
+        paymentMethod,
+
+      cash_amount:
+        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+
+      upi_amount:
+        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
+
+      total_amount:
+        totalSale,
+
+      paid_amount:
+        paid,
+
+      balance_amount:
+        balance,
+    })
+    .select()
+    .single();
+
+  if (saleError) {
+    throw saleError;
+  }
+
+  if (!sale) {
+    throw new Error(
+      "Sale was not created."
+    );
+  }
+
+  /* =====================================================
+     INSERT SALE ITEMS
+     ===================================================== */
+
+  const itemsToInsert =
+    saleItems.map(
+      (item) => ({
+        sale_id:
+          sale.id,
+
+        product_id:
+          item.product_id,
+
+        quantity:
+          item.quantity,
+
+        rate:
+          item.rate,
+
+        amount:
+          item.amount,
+
+        cost_rate:
+          Number(item.purchase_rate || 0),
+      })
+    );
+
+  const {
+    error: itemError,
+  } = await supabase
+    .from("sale_items")
+    .insert(
+      itemsToInsert
+    );
+
+  if (itemError) {
+    await supabase
+      .from("sales")
+      .delete()
+      .eq(
+        "id",
+        sale.id
+      );
+
+    throw itemError;
+  }
+
+  /* =====================================================
+     UPDATE STOCK
+     ===================================================== */
+
+  for (
+    const item of saleItems
+  ) {
+    const product =
+      products.find(
+        (p) =>
+          p.id ===
+          item.product_id
+      );
+
+    if (!product) {
+      continue;
+    }
+
+    const oldStock =
+      Number(
+        product.stock_qty
+      ) || 0;
+
+    const newStock =
+      oldStock -
+      Number(
+        item.quantity
+      );
+
+    if (
+      newStock < 0
+    ) {
+      throw new Error(
+        `Insufficient stock for ${item.product_name}.`
+      );
+    }
+
+    const {
+      error:
+        stockError,
+    } = await supabase
+      .from("products")
+      .update({
+        stock_qty:
+          newStock,
+      })
+      .eq(
+        "id",
+        item.product_id
+      );
+
+    if (stockError) {
+      throw stockError;
+    }
+  }
+
+  alert(
+    "Sale saved successfully."
+  );
+
+  clearSaleForm();
+
+  await loadData();
+
+  await loadRecentSales();
+} catch (error: any) {
+  console.error(
+    "Save sale error:",
+    error
+  );
+
+  alert(
+    "Sale Error:\n" +
+      (error?.message ||
+        "Unable to save sale.")
+  );
+} finally {
+  setLoading(false);
+}
+
+}
+
+/* =========================================================
+UPDATE EXISTING SALE
+========================================================= */
+
+async function updateExistingSale(
+saleId: string
+) {
+try {
+/* =====================================================
+GET OLD SALE ITEMS
+===================================================== */
+
+  const {
+    data: oldItems,
+    error:
+      oldItemsError,
+  } = await supabase
+    .from("sale_items")
+    .select(
+      "id, product_id, quantity"
+    )
+    .eq(
+      "sale_id",
+      saleId
+    );
+
+  if (oldItemsError) {
+    throw oldItemsError;
+  }
+
+  /* =====================================================
+     CALCULATE STOCK AFTER RESTORING OLD SALE
+     ===================================================== */
+
+  const stockMap =
+    new Map<
+      string,
+      number
+    >();
+
+  products.forEach(
+    (product) => {
+      stockMap.set(
+        product.id,
+        Number(
+          product.stock_qty
+        ) || 0
+      );
+    }
+  );
+
+  /*
+   * Restore stock from old sale.
+   */
+  (oldItems || []).forEach(
+    (oldItem: any) => {
+      const current =
+        stockMap.get(
+          oldItem.product_id
+        ) || 0;
+
+      stockMap.set(
+        oldItem.product_id,
+        current +
+          Number(
+            oldItem.quantity
+          )
+      );
+    }
+  );
+
+  /* =====================================================
+     CHECK NEW STOCK
+     ===================================================== */
+
+  const newQuantityMap =
+    new Map<
+      string,
+      number
+    >();
+
+  saleItems.forEach(
+    (item) => {
+      const current =
+        newQuantityMap.get(
+          item.product_id
+        ) || 0;
+
+      newQuantityMap.set(
+        item.product_id,
+        current +
+          Number(
+            item.quantity
+          )
+      );
+    }
+  );
+
+  for (
+    const [
+      productId,
+      requiredQty,
+    ] of newQuantityMap
+  ) {
+    const available =
+      stockMap.get(
+        productId
+      ) || 0;
+
+    if (
+      requiredQty >
+      available
+    ) {
+      const product =
+        products.find(
+          (p) =>
+            p.id ===
+            productId
+        );
+
+      throw new Error(
+        `Insufficient stock for ${
+          product?.product_name ||
+          "product"
+        }.\nAvailable after restoring old sale: ${available}\nRequired: ${requiredQty}`
+      );
+    }
+  }
+
+  /* =====================================================
+     UPDATE STOCK
+     ===================================================== */
+
+  /*
+   * First restore old stock in database.
+   */
+  for (
+    const [
+      productId,
+      restoredStock,
+    ] of stockMap
+  ) {
+    const {
+      error:
+        restoreError,
+    } = await supabase
+      .from("products")
+      .update({
+        stock_qty:
+          restoredStock,
+      })
+      .eq(
+        "id",
+        productId
+      );
+
+    if (restoreError) {
+      throw restoreError;
+    }
+  }
+
+  /* =====================================================
+     UPDATE SALE HEADER
+     ===================================================== */
+
+  const {
+    error:
+      saleUpdateError,
+  } = await supabase
+    .from("sales")
+    .update({
+      sale_date:
+        saleDate,
+
+      customer_id:
+        customerId,
+
+      payment_method:
+        paymentMethod,
+
+      cash_amount:
+        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+
+      upi_amount:
+        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
+
+      total_amount:
+        totalSale,
+
+      paid_amount:
+        paid,
+
+      balance_amount:
+        balance,
+    })
+    .eq(
+      "id",
+      saleId
+    );
+
+  if (saleUpdateError) {
+    throw saleUpdateError;
+  }
+
+  /* =====================================================
+     DELETE OLD ITEMS
+     ===================================================== */
+
+  const {
+    error:
+      deleteItemsError,
+  } = await supabase
+    .from("sale_items")
+    .delete()
+    .eq(
+      "sale_id",
+      saleId
+    );
+
+  if (deleteItemsError) {
+    throw deleteItemsError;
+  }
+
+  /* =====================================================
+     INSERT NEW ITEMS
+     ===================================================== */
+
+  const itemsToInsert =
+    saleItems.map(
+      (item) => ({
+        sale_id:
+          saleId,
+
+        product_id:
+          item.product_id,
+
+        quantity:
+          item.quantity,
+
+        rate:
+          item.rate,
+
+        amount:
+          item.amount,
+
+        cost_rate:
+          Number(item.purchase_rate || 0),
+      })
+    );
+
+  const {
+    error:
+      insertItemsError,
+  } = await supabase
+    .from("sale_items")
+    .insert(
+      itemsToInsert
+    );
+
+  if (insertItemsError) {
+    throw insertItemsError;
+  }
+
+  /* =====================================================
+     APPLY NEW STOCK
+     ===================================================== */
+
+  for (
+    const [
+      productId,
+      availableStock,
+    ] of stockMap
+  ) {
+    const used =
+      newQuantityMap.get(
+        productId
+      ) || 0;
+
+    const finalStock =
+      availableStock -
+      used;
+
+    if (
+      finalStock < 0
+    ) {
+      throw new Error(
+        "Stock cannot become negative."
+      );
+    }
+
+    const {
+      error:
+        stockError,
+    } = await supabase
+      .from("products")
+      .update({
+        stock_qty:
+          finalStock,
+      })
+      .eq(
+        "id",
+        productId
+      );
+
+    if (stockError) {
+      throw stockError;
+    }
+  }
+
+  alert(
+    "Sale updated successfully."
+  );
+
+  clearSaleForm();
+
+  await loadData();
+
+  await loadRecentSales();
+} catch (error: any) {
+  console.error(
+    "Update sale error:",
+    error
+  );
+
+  alert(
+    "Sale Update Error:\n" +
+      (error?.message ||
+        "Unable to update sale.")
+  );
+}
+
+}
+
+/* =========================================================
+EDIT SAVED SALE
+========================================================= */
+
+async function editSavedSale(
+saleId: string
+) {
+try {
+setLoading(true);
+
+  /* =====================================================
+     SALE HEADER
+     ===================================================== */
+
+  const {
+    data: sale,
+    error:
+      saleError,
+  } = await supabase
+    .from("sales")
+    .select(
+      `
+      id,
+      sale_date,
+      customer_id,
+      payment_method,
+      cash_amount,
+      upi_amount,
+      total_amount,
+      paid_amount,
+      balance_amount
+      `
+    )
+    .eq(
+      "id",
+      saleId
+    )
+    .single();
+
+  if (saleError) {
+    throw saleError;
+  }
+
+  /* =====================================================
+     SALE ITEMS
+     ===================================================== */
+
+  const {
+    data: items,
+    error:
+      itemsError,
+  } = await supabase
+    .from("sale_items")
+    .select(
+      `
+      id,
+      product_id,
+      quantity,
+      rate,
+      amount,
+      cost_rate
+      `
+    )
+    .eq(
+      "sale_id",
+      saleId
+    );
+
+  if (itemsError) {
+    throw itemsError;
+  }
+
+  setEditingSaleId(
+    sale.id
+  );
+
+  const editDate = normalizeSaleDate(sale.sale_date);
+  setSaleDate(editDate);
+  setSaleDateDisplay(formatDateInput(editDate));
+
+  setCustomerId(
+    sale.customer_id ||
+      ""
+  );
+
+  setPaymentMethod(
+    sale.payment_method ||
+      "Cash"
+  );
+
+  setCashAmount(String(Number(sale.cash_amount) || 0));
+  setUpiAmount(String(Number(sale.upi_amount) || 0));
+
+  setPaidAmount(
+    String(
+      Number(
+        sale.paid_amount
+      ) || 0
+    )
+  );
+
+  /* =====================================================
+     CONVERT ITEMS
+     ===================================================== */
+
+  const convertedItems:
+    SaleItem[] =
+    (items || []).map(
+      (item: any) => {
+        const product =
+          products.find(
+            (p) =>
+              p.id ===
+              item.product_id
+          );
+
+        const brand =
+          brands.find(
+            (b) =>
+              b.id ===
+              product?.brand_id
+          );
+
+        return {
+          id:
+            item.id,
+
+          product_id:
+            item.product_id,
+
+          brand_id:
+            product?.brand_id ||
+            null,
+
+          brand_name:
+            brand?.brand_name ||
+            "No Brand",
+
+          product_name:
+            product?.product_name ||
+            "Unknown Product",
+
+          pack_size:
+            product?.pack_size ||
+            "",
+
+          unit:
+            getProductUnit(
+              product
+            ),
+
+          quantity:
+            Number(
+              item.quantity
+            ) || 0,
+
+          rate:
+            Number(
+              item.rate
+            ) || 0,
+
+          purchase_rate:
+            Number(
+              item.cost_rate ??
+              product?.purchase_rate ??
+              0
+            ) || 0,
+
+          amount:
+            Number(
+              item.amount
+            ) || 0,
+        };
+      }
+    );
+
+  setSaleItems(
+    convertedItems
+  );
+
+  setEditingItemIndex(
+    null
+  );
+
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth",
+  });
+} catch (error: any) {
+  console.error(
+    "Edit sale error:",
+    error
+  );
+
+  alert(
+    "Unable to edit sale:\n" +
+      (error?.message ||
+        "Unknown error")
+  );
+} finally {
+  setLoading(false);
+}
+
+}
+
+/* =========================================================
+VIEW SAVED BILL
+========================================================= */
+async function viewSavedBill(sale: RecentSale) {
+  try {
+    setLoadingBill(true);
+    setViewingBill(sale);
+    setViewingBillItems([]);
+
+    const {
+      data: items,
+      error: itemsError,
+    } = await supabase
+      .from("sale_items")
+      .select(`
+        id,
+        product_id,
+        quantity,
+        rate,
+        amount,
+        cost_rate
+      `)
+      .eq("sale_id", sale.id);
+
+    if (itemsError) {
+      throw itemsError;
+    }
+
+    const convertedItems: SaleItem[] = (items || []).map(
+      (item: any) => {
+        const product = products.find(
+          (p) => p.id === item.product_id
+        );
+        const brand = brands.find(
+          (b) => b.id === product?.brand_id
+        );
+
+        return {
+          id: item.id,
+          product_id: item.product_id,
+          brand_id: product?.brand_id || null,
+          brand_name: brand?.brand_name || "No Brand",
+          product_name: product?.product_name || "Unknown Product",
+          pack_size: product?.pack_size || "",
+          unit: getProductUnit(product),
+          quantity: Number(item.quantity) || 0,
+          rate: Number(item.rate) || 0,
+          purchase_rate: Number(item.cost_rate ?? product?.purchase_rate ?? 0) || 0,
+          amount: Number(item.amount) || 0,
+        };
+      }
+    );
+
+    setViewingBillItems(convertedItems);
+  } catch (error: any) {
+    console.error("View bill error:", error);
+    setViewingBill(null);
+    alert(
+      "Unable to open bill:\n" +
+        (error?.message || "Unable to load bill items.")
+    );
+  } finally {
+    setLoadingBill(false);
+  }
+}
+
+function getBillCustomerMobile(sale: RecentSale | null) {
+  if (!sale?.customer_id) return "";
+  const customer = customers.find(
+    (item) => item.id === sale.customer_id
+  );
+  return customer?.mobile || "";
+}
+
+function sendSavedBillOnWhatsApp() {
+  if (!viewingBill) return;
+
+  const phone = getWhatsAppNumber(
+    getBillCustomerMobile(viewingBill)
+  );
+
+  if (!phone) {
+    alert(
+      "This customer does not have a valid mobile number. Add the mobile number in Customers first."
+    );
+    return;
+  }
+
+  const message = buildWhatsAppBillMessage(
+    viewingBill.customer_name,
+    viewingBill.sale_date,
+    viewingBillItems,
+    viewingBill.total_amount,
+    viewingBill.paid_amount,
+    viewingBill.balance_amount,
+    viewingBill.payment_method
+  );
+
+  const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/* =========================================================
+DELETE SAVED SALE
+========================================================= */
+
+async function deleteSavedSale(
+saleId: string
+) {
+const confirmed =
+window.confirm(
+"Delete this sale?\n\nThe stock used by this sale will be restored."
+);
+
+if (!confirmed) {
+  return;
+}
+
+try {
+  setLoading(true);
+
+  /* =====================================================
+     GET OLD ITEMS
+     ===================================================== */
+
+  const {
+    data: oldItems,
+    error:
+      itemsError,
+  } = await supabase
+    .from("sale_items")
+    .select(
+      "product_id, quantity"
+    )
+    .eq(
+      "sale_id",
+      saleId
+    );
+
+  if (itemsError) {
+    throw itemsError;
+  }
+
+  /* =====================================================
+     RESTORE STOCK
+     ===================================================== */
+
+  const restoreMap =
+    new Map<
+      string,
+      number
+    >();
+
+  (
+    oldItems || []
+  ).forEach(
+    (item: any) => {
+      const current =
+        restoreMap.get(
+          item.product_id
+        ) || 0;
+
+      restoreMap.set(
+        item.product_id,
+        current +
+          Number(
+            item.quantity
+          )
+      );
+    }
+  );
+
+  for (
+    const [
+      productId,
+      quantityToRestore,
+    ] of restoreMap
+  ) {
+    const product =
+      products.find(
+        (p) =>
+          p.id ===
+          productId
+      );
+
+    if (!product) {
+      continue;
+    }
+
+    const currentStock =
+      Number(
+        product.stock_qty
+      ) || 0;
+
+    const restoredStock =
+      currentStock +
+      quantityToRestore;
+
+    const {
+      error:
+        stockError,
+    } = await supabase
+      .from("products")
+      .update({
+        stock_qty:
+          restoredStock,
+      })
+      .eq(
+        "id",
+        productId
+      );
+
+    if (stockError) {
+      throw stockError;
+    }
+  }
+
+  /* =====================================================
+     DELETE SALE ITEMS
+     ===================================================== */
+
+  const {
+    error:
+      deleteItemsError,
+  } = await supabase
+    .from("sale_items")
+    .delete()
+    .eq(
+      "sale_id",
+      saleId
+    );
+
+  if (deleteItemsError) {
+    throw deleteItemsError;
+  }
+
+  /* =====================================================
+     DELETE SALE HEADER
+     ===================================================== */
+
+  const {
+    error:
+      deleteSaleError,
+  } = await supabase
+    .from("sales")
+    .delete()
+    .eq(
+      "id",
+      saleId
+    );
+
+  if (deleteSaleError) {
+    throw deleteSaleError;
+  }
+
+  alert(
+    "Sale deleted successfully."
+  );
+
+  await loadData();
+
+  await loadRecentSales();
+} catch (error: any) {
+  console.error(
+    "Delete sale error:",
+    error
+  );
+
+  alert(
+    "Delete Sale Error:\n" +
+      (error?.message ||
+        "Unable to delete sale.")
+  );
+} finally {
+  setLoading(false);
+}
+
+}
+
+/* =========================================================
+LOADING SCREEN
+========================================================= */
+
+if (loadingData) {
+return (
+<div className="p-8">
+<h1 className="text-3xl font-bold text-blue-700">
+Sales
+</h1>
+
+    <p className="mt-3 text-gray-600">
+      Loading sales data...
+    </p>
+  </div>
+);
+
+}
+
+/* =========================================================
+RENDER
+========================================================= */
+
+return (
+<div className="space-y-6">
+
+  {/* =====================================================
+      PAGE HEADER
+  ===================================================== */}
+
+  <div>
+    <h1 className="text-3xl font-bold text-blue-700">
+      Sales Entry
+    </h1>
+
+    <p className="text-gray-600 mt-1">
+      {editingSaleId
+        ? "Edit existing sale"
+        : "Create a new customer sale"}
+    </p>
+  </div>
+
+  {/* =====================================================
+      SALE FORM
+  ===================================================== */}
+
+  <div className="bg-white rounded-2xl shadow p-6">
+
+    {/* ===================================================
+        SALE HEADER
+    =================================================== */}
+
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+
+      {/* DATE */}
+
+      <div>
+        <label className="block font-semibold mb-2">
+          Sale Date
+        </label>
+
+        <input
+          type="text"
+          inputMode="numeric"
+          value={saleDateDisplay}
+          onChange={(e) => {
+            const formatted = formatTypingDate(e.target.value);
+            setSaleDateDisplay(formatted);
+
+            const parsed = parseDateInput(formatted);
+            if (parsed) {
+              setSaleDate(parsed);
+            }
+          }}
+          onBlur={() => {
+            const parsed = parseDateInput(saleDateDisplay);
+
+            if (parsed) {
+              setSaleDate(parsed);
+              setSaleDateDisplay(formatDateInput(parsed));
+            } else {
+              setSaleDateDisplay(formatDateInput(saleDate));
+            }
+          }}
+          placeholder="DD/MM/YYYY"
+          maxLength={10}
+          className="w-full border rounded-xl px-4 py-3"
+        />
+
+        <p className="text-sm text-gray-500 mt-1">
+          Enter date as DD/MM/YYYY
+        </p>
+      </div>
+
+      {/* CUSTOMER + ROUTE SEARCH */}
+
+      <CustomerRouteSearch
+        customers={customers}
+        value={customerId}
+        onChange={setCustomerId}
+        disabled={loading || loadingData}
+        label="Customer / Route"
+      />
+
+      {customerId && (
+        <div className="md:col-span-4">
+          <button
+            type="button"
+            disabled={loading || loadingData}
+            onClick={punchTodaysSale}
+            className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
+          >
+            ⚡ Punch Today's Sale
+          </button>
+
+          <p className="mt-2 text-sm text-gray-500">
+            Loads the customer's last sale for today's entry. Check quantities before saving.
+          </p>
+        </div>
+      )}
+
+      {/* PAYMENT */}
+
+      <div>
+        <label className="block font-semibold mb-2">
+          Payment Method
+        </label>
+
+        <select
+          value={
+            paymentMethod
+          }
+          onChange={(e) =>
+            setPaymentMethod(
+              e.target.value
+            )
+          }
+          className="w-full border rounded-xl px-4 py-3"
+        >
+          <option value="Cash">
+            Cash
+          </option>
+
+          <option value="UPI">
+            UPI
+          </option>
+
+          <option value="Bank">
+            Bank
+          </option>
+
+          <option value="Credit">
+            Credit
+          </option>
+
+          <option value="Advance">
+            Advance
+          </option>
+
+          <option value="Split">
+            Split (Cash + UPI)
+          </option>
+        </select>
+      </div>
+
+      {/* PAID */}
+
+      {paymentMethod === "Split" ? (
+        <>
+          <div>
+            <label className="block font-semibold mb-2">Cash Amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={cashAmount}
+              onChange={(e) => setCashAmount(e.target.value)}
+              className="w-full border rounded-xl px-4 py-3"
+              placeholder="0"
+            />
+          </div>
+
+          <div>
+            <label className="block font-semibold mb-2">UPI Amount</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={upiAmount}
+              onChange={(e) => setUpiAmount(e.target.value)}
+              className="w-full border rounded-xl px-4 py-3"
+              placeholder="0"
+            />
+            <p className="text-sm text-gray-500 mt-1">Paid = Cash + UPI</p>
+          </div>
+        </>
+      ) : (
+        <div>
+          <label className="block font-semibold mb-2">
+            Amount Paid
+          </label>
+
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={paidAmount}
+            onChange={(e) => setPaidAmount(e.target.value)}
+            className="w-full border rounded-xl px-4 py-3"
+            placeholder="0"
+          />
+        </div>
+      )}
+
+    </div>
+
+    {/* ===================================================
+        ADD PRODUCTS
+    =================================================== */}
+
+    <div className="border-t mt-7 pt-7">
+
+      <h2 className="text-2xl font-bold text-gray-800">
+        Add Products
+      </h2>
+
+      <p className="text-gray-500 mt-1 mb-5">
+        Select a brand and add multiple products.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+
+        {/* BRAND */}
+
+        <div>
+          <label className="block font-semibold mb-2">
+            Brand
+          </label>
+
+          <select
+            value={brandId}
+            onChange={(e) => {
+              setBrandId(
+                e.target.value
+              );
+
+              setProductId("");
+
+              setSellingRate("");
+            }}
+            className="w-full border rounded-xl px-4 py-3"
+          >
+            <option value="">
+              Select Brand
+            </option>
+
+            {brands.map(
+              (brand) => (
+                <option
+                  key={
+                    brand.id
+                  }
+                  value={
+                    brand.id
+                  }
+                >
+                  {
+                    brand.brand_name
+                  }
+                </option>
+              )
+            )}
+          </select>
+        </div>
+
+        {/* SEARCH */}
+
+        <div>
+          <label className="block font-semibold mb-2">
+            Product Search
+          </label>
+
+          <input
+            type="text"
+            value={
+              productSearch
+            }
+            onChange={(e) =>
+              setProductSearch(
+                e.target.value
+              )
+            }
+            placeholder="Search product..."
+            className="w-full border rounded-xl px-4 py-3"
+          />
+        </div>
+
+        {/* PRODUCT */}
+
+        <div>
+          <label className="block font-semibold mb-2">
+            Product
+          </label>
+
+          <select
+            value={productId}
+            onChange={(e) =>
+              handleProductChange(
+                e.target.value
+              )
+            }
+            className="w-full border rounded-xl px-4 py-3"
+          >
+            <option value="">
+              Select Product
+            </option>
+
+            {brandProducts.map(
+              (product) => (
+                <option
+                  key={
+                    product.id
+                  }
+                  value={
+                    product.id
+                  }
+                >
+                  {
+                    product.product_name
+                  }
+                  {" - "}
+                  {
+                    getPackDisplay(
+                      product.pack_size
+                    )
+                  }
+                </option>
+              )
+            )}
+          </select>
+        </div>
+
+        {/* QUANTITY */}
+
+        <div>
+          <label className="block font-semibold mb-2">
+            Quantity
+          </label>
+
+          <input
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={quantity}
+            onChange={(e) =>
+              setQuantity(
+                e.target.value
+              )
+            }
+            className="w-full border rounded-xl px-4 py-3"
+          />
+
+          {selectedProduct && (
+            <div className="mt-2 rounded-lg bg-gray-100 px-3 py-2">
+
+              <p className="text-xs text-gray-500">
+                Available Stock
+              </p>
+
+              <p
+                className={`text-lg font-bold ${
+                  Number(
+                    selectedProduct.stock_qty ||
+                      0
+                  ) > 0
+                    ? "text-green-600"
+                    : "text-red-600"
+                }`}
+              >
+                {Number(
+                  selectedProduct.stock_qty ||
+                    0
+                )}
+
+                {" "}
+
+                Litre
+              </p>
+
+            </div>
+          )}
+        </div>
+
+        {/* SELLING RATE */}
+
+        <div>
+          <label className="block font-semibold mb-2">
+            Selling Rate
+          </label>
+
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={
+              sellingRate
+            }
+            onChange={(e) =>
+              setSellingRate(
+                e.target.value
+              )
+            }
+            className="w-full border rounded-xl px-4 py-3"
+          />
+
+          <p className="text-sm text-gray-500 mt-1">
+            Customer rate applied automatically.
+          </p>
+        </div>
+
+      </div>
+
+      {/* =================================================
+          SELECTED PRODUCT INFORMATION
+      ================================================= */}
+
+      {selectedProduct && (
+        <div className="mt-5 bg-blue-50 border border-blue-200 rounded-xl p-4">
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+
+            {/* BRAND */}
+
+            <div>
+              <span className="text-gray-500 text-sm">
+                Brand
+              </span>
+
+              <p className="font-bold text-blue-700">
+                {
+                  selectedBrand?.brand_name ||
+                  "No Brand"
+                }
+              </p>
+            </div>
+
+            {/* PRODUCT */}
+
+            <div>
+              <span className="text-gray-500 text-sm">
+                Product
+              </span>
+
+              <p className="font-bold">
+                {
+                  selectedProduct.product_name
+                }
+              </p>
+            </div>
+
+            {/* PACK */}
+
+            <div>
+              <span className="text-gray-500 text-sm">
+                Pack Size
+              </span>
+
+              <p className="font-bold">
+                {
+                  getPackDisplay(
+                    selectedProduct.pack_size
+                  )
+                }
+              </p>
+            </div>
+
+            {/* RATE */}
+
+            <div>
+              <span className="text-gray-500 text-sm">
+                Selling Rate
+              </span>
+
+              <p className="font-bold">
+                ₹
+                {Number(
+                  selectedProduct.selling_rate ||
+                    0
+                ).toFixed(2)}
+              </p>
+            </div>
+
+            {/* STOCK */}
+
+            <div>
+              <span className="text-gray-500 text-sm">
+                Current Stock
+              </span>
+
+              <p className="font-bold text-green-600">
+                {Number(
+                  selectedProduct.stock_qty ||
+                    0
+                )}{" "}
+                Litre
+              </p>
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
+      {/* =================================================
+          PRODUCT BUTTONS
+      ================================================= */}
+
+      <div className="flex flex-wrap gap-3 mt-5">
+
+        <button
+          type="button"
+          onClick={
+            addOrUpdateSaleItem
+          }
+          className="bg-blue-600 hover:bg-blue-700 text-white px-7 py-3 rounded-xl font-bold"
+        >
+          {editingItemIndex !==
+          null
+            ? "Update Product"
+            : "+ Add Product"}
+        </button>
+
+        <button
+          type="button"
+          onClick={
+            cancelProductEdit
+          }
+          className="bg-gray-500 hover:bg-gray-600 text-white px-7 py-3 rounded-xl font-bold"
+        >
+          {editingItemIndex !==
+          null
+            ? "Cancel Edit"
+            : "Clear Product"}
+        </button>
+
+      </div>
+
+    </div>
+
+    {/* ===================================================
+        SALE ITEMS
+    =================================================== */}
+
+    <div className="mt-8 overflow-x-auto">
+
+      <table className="w-full border-collapse">
+
+        <thead>
+
+          <tr className="bg-blue-600 text-white">
+
+            <th className="p-3 text-left">
+              Brand
+            </th>
+
+            <th className="p-3 text-left">
+              Product
+            </th>
+
+            <th className="p-3 text-center">
+              Pack
+            </th>
+
+            <th className="p-3 text-center">
+              Qty
+            </th>
+
+            <th className="p-3 text-right">
+              Rate
+            </th>
+
+            <th className="p-3 text-right">
+              Amount
+            </th>
+
+            <th className="p-3 text-center">
+              Action
+            </th>
+
+          </tr>
+
+        </thead>
+
+        <tbody>
+
+          {saleItems.length ===
+          0 ? (
+            <tr>
+              <td
+                colSpan={7}
+                className="p-8 text-center text-gray-500"
+              >
+                No products added.
+              </td>
+            </tr>
+          ) : (
+            saleItems.map(
+              (
+                item,
+                index
+              ) => (
+                <tr
+                  key={`${item.product_id}-${index}`}
+                  className="border-b"
+                >
+
+                  <td className="p-3 font-semibold text-blue-700">
+                    {
+                      item.brand_name
+                    }
+                  </td>
+
+                  <td className="p-3">
+                    {
+                      item.product_name
+                    }
+                  </td>
+
+                  <td className="p-3 text-center">
+                    {
+                      getPackDisplay(
+                        item.pack_size
+                      )
+                    }
+                  </td>
+
+                  <td className="p-3 text-center font-bold">
+                    {
+                      item.quantity
+                    }
+                  </td>
+
+                  <td className="p-3 text-right">
+                    ₹
+                    {item.rate.toFixed(
+                      2
+                    )}
+                  </td>
+
+                  <td className="p-3 text-right font-bold">
+                    ₹
+                    {item.amount.toFixed(
+                      2
+                    )}
+                  </td>
+
+                  <td className="p-3">
+
+                    <div className="flex justify-center gap-2">
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          editSaleItem(
+                            index
+                          )
+                        }
+                        className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg font-semibold"
+                      >
+                        Edit
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeSaleItem(
+                            index
+                          )
+                        }
+                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold"
+                      >
+                        Remove
+                      </button>
+
+                    </div>
+
+                  </td>
+
+                </tr>
+              )
+            )
+          )}
+
+        </tbody>
+
+      </table>
+
+    </div>
+
+    {/* ===================================================
+        TOTALS
+    =================================================== */}
+
+    <div className="border-t mt-8 pt-6">
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+
+        {/* TOTAL */}
+
+        <div className="bg-blue-50 rounded-xl p-5">
+
+          <p className="text-gray-600">
+            Total Sale
+          </p>
+
+          <p className="text-3xl font-bold text-blue-700">
+            ₹
+            {totalSale.toFixed(
+              2
+            )}
+          </p>
+
+        </div>
+
+        {/* PAID */}
+
+        <div className="bg-green-50 rounded-xl p-5">
+
+          <p className="text-gray-600">
+            Paid
+          </p>
+
+          <p className="text-3xl font-bold text-green-600">
+            ₹
+            {paid.toFixed(
+              2
+            )}
+          </p>
+
+        </div>
+
+        {/* BALANCE */}
+
+        <div className="bg-red-50 rounded-xl p-5">
+
+          <p className="text-gray-600">
+            Balance
+          </p>
+
+          <p className="text-3xl font-bold text-red-600">
+            ₹
+            {balance.toFixed(
+              2
+            )}
+          </p>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    {/* ===================================================
+        UPI QR + WHATSAPP
+    =================================================== */}
+    <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div className="rounded-2xl border border-purple-200 bg-purple-50 p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xl font-bold text-purple-800">UPI QR</h3>
+            <p className="text-sm text-purple-700 mt-1">Scan to pay the current balance.</p>
+          </div>
+          <span className="font-bold text-purple-800">₹ {balance.toFixed(2)}</span>
+        </div>
+
+        <div className="mt-4 flex flex-col sm:flex-row gap-4 items-center">
+          <div className="bg-white p-3 rounded-xl border">
+            {getUpiPaymentUrl() ? (
+              <QRCodeSVG value={getUpiPaymentUrl()} size={180} includeMargin />
+            ) : (
+              <div className="w-[180px] h-[180px] flex items-center justify-center text-center text-sm text-gray-500 p-4">
+                Enter the business UPI ID below to generate the QR.
+              </div>
+            )}
+          </div>
+
+          <div className="w-full">
+            <label className="block font-semibold mb-2">Business UPI ID</label>
+            <input
+              type="text"
+              value={businessUpiId}
+              onChange={(e) => saveBusinessUpiId(e.target.value)}
+              placeholder="example@upi"
+              className="w-full border rounded-xl px-4 py-3 bg-white"
+            />
+            <p className="text-xs text-gray-500 mt-2">Saved on this device for future bills.</p>
+            {balance <= 0 && (
+              <p className="text-sm font-semibold text-green-700 mt-2">No balance due.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-green-200 bg-green-50 p-5">
+        <h3 className="text-xl font-bold text-green-800">WhatsApp Bill</h3>
+        <p className="text-sm text-green-700 mt-1">Open WhatsApp with the customer bill already prepared.</p>
+
+        <div className="mt-4 rounded-xl bg-white border p-4">
+          <p className="font-semibold">Customer</p>
+          <p className="text-gray-700">{selectedCustomer?.customer_name || "Select customer"}</p>
+          <p className="text-sm text-gray-500 mt-1">
+            Mobile: {selectedCustomer?.mobile || "Not available"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={openWhatsAppBill}
+          disabled={!selectedCustomer || saleItems.length === 0}
+          className="w-full mt-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-6 py-3 rounded-xl font-bold"
+        >
+          📲 WhatsApp Bill
+        </button>
+      </div>
+    </div>
+
+    {/* ===================================================
+        SAVE BUTTONS
+    =================================================== */}
+
+    <div className="flex flex-wrap gap-3 mt-7">
+
+      <button
+        type="button"
+        disabled={loading}
+        onClick={saveSale}
+        className={`px-8 py-3 rounded-xl text-white font-bold ${
+          loading
+            ? "bg-gray-400"
+            : "bg-green-600 hover:bg-green-700"
+        }`}
+      >
+        {loading
+          ? "Saving..."
+          : editingSaleId
+          ? "Update Sale"
+          : "Save Sale"}
+      </button>
+
+      <button
+        type="button"
+        disabled={loading}
+        onClick={
+          clearSaleForm
+        }
+        className="bg-gray-500 hover:bg-gray-600 text-white px-8 py-3 rounded-xl font-bold"
+      >
+        {editingSaleId
+          ? "Cancel Edit"
+          : "Clear"}
+      </button>
+
+    </div>
+
+  </div>
+
+  {/* =====================================================
+      RECENT SALES
+  ===================================================== */}
+
+  <div className="bg-white rounded-2xl shadow p-6">
+
+    <div className="flex items-center justify-between mb-5">
+
+      <div>
+        <h2 className="text-2xl font-bold text-blue-700">
+          Recent Sales
+        </h2>
+
+        <p className="text-gray-500">
+          Verify and correct previous sales.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={
+          loadRecentSales
+        }
+        className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-semibold"
+      >
+        Refresh
+      </button>
+
+    </div>
+
+    <div className="overflow-x-auto">
+
+      <table className="w-full border-collapse">
+
+        <thead>
+
+          <tr className="bg-blue-600 text-white">
+
+            <th className="p-3 text-left">
+              Date
+            </th>
+
+            <th className="p-3 text-left">
+              Customer
+            </th>
+
+            <th className="p-3 text-left">
+              Payment
+            </th>
+
+            <th className="p-3 text-right">
+              Total
+            </th>
+
+            <th className="p-3 text-right">
+              Paid
+            </th>
+
+            <th className="p-3 text-right">
+              Balance
+            </th>
+
+            <th className="p-3 text-center">
+              Action
+            </th>
+
+          </tr>
+
+        </thead>
+
+        <tbody>
+
+          {recentSales.length ===
+          0 ? (
+            <tr>
+              <td
+                colSpan={7}
+                className="p-8 text-center text-gray-500"
+              >
+                No recent sales found.
+              </td>
+            </tr>
+          ) : (
+            recentSales.map(
+              (sale) => (
+                <tr
+                  key={
+                    sale.id
+                  }
+                  className="border-b hover:bg-gray-50"
+                >
+
+                  <td className="p-3">
+                    {
+                      formatDisplayDate(sale.sale_date)
+                    }
+                  </td>
+
+                  <td className="p-3 font-semibold">
+                    {
+                      sale.customer_name
+                    }
+                  </td>
+
+                  <td className="p-3">
+                    {
+                      sale.payment_method
+                    }
+                  </td>
+
+                  <td className="p-3 text-right font-bold">
+                    ₹
+                    {sale.total_amount.toFixed(
+                      2
+                    )}
+                  </td>
+
+                  <td className="p-3 text-right text-green-600 font-semibold">
+                    ₹
+                    {sale.paid_amount.toFixed(
+                      2
+                    )}
+                  </td>
+
+                  <td className="p-3 text-right text-red-600 font-semibold">
+                    ₹
+                    {sale.balance_amount.toFixed(
+                      2
+                    )}
+                  </td>
+
+                  <td className="p-3">
+
+                    <div className="flex justify-center gap-2 flex-wrap">
+
+                      <button
+                        type="button"
+                        disabled={
+                          loading || loadingBill
+                        }
+                        onClick={() =>
+                          viewSavedBill(
+                            sale
+                          )
+                        }
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        🧾 Bill
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={
+                          loading
+                        }
+                        onClick={() =>
+                          editSavedSale(
+                            sale.id
+                          )
+                        }
+                        className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        Edit
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={
+                          loading
+                        }
+                        onClick={() =>
+                          deleteSavedSale(
+                            sale.id
+                          )
+                        }
+                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+
+                    </div>
+
+                  </td>
+
+                </tr>
+              )
+            )
+          )}
+
+        </tbody>
+
+      </table>
+
+    </div>
+
+  </div>
+
+  {/* ===================================================
+      SAVED BILL PREVIEW
+  =================================================== */}
+  {viewingBill && (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl">
+        <div className="p-5 border-b flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-bold text-blue-700">MANVI MILK AGENCIES</h2>
+            <p className="text-gray-500">Sales Bill</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setViewingBill(null)}
+            className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-semibold"
+          >
+            ✕ Close
+          </button>
+        </div>
+
+        <div className="p-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+            <div className="rounded-xl bg-gray-50 p-4">
+              <p className="text-sm text-gray-500">Customer</p>
+              <p className="font-bold text-lg">{viewingBill.customer_name}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 p-4">
+              <p className="text-sm text-gray-500">Bill Date</p>
+              <p className="font-bold text-lg">{formatDisplayDate(viewingBill.sale_date)}</p>
+            </div>
+          </div>
+
+          {loadingBill ? (
+            <div className="py-10 text-center text-gray-500 font-semibold">Loading bill...</div>
+          ) : (
+            <>
+              <div className="overflow-x-auto border rounded-xl">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-blue-600 text-white">
+                      <th className="p-3 text-left">Product</th>
+                      <th className="p-3 text-right">Qty</th>
+                      <th className="p-3 text-right">Rate</th>
+                      <th className="p-3 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viewingBillItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-6 text-center text-gray-500">No bill items found.</td>
+                      </tr>
+                    ) : (
+                      viewingBillItems.map((item, index) => (
+                        <tr key={item.id || `${item.product_id}-${index}`} className="border-b">
+                          <td className="p-3">
+                            <div className="font-semibold">{item.product_name}</div>
+                            {item.pack_size && (
+                              <div className="text-xs text-gray-500">{getPackDisplay(item.pack_size)}</div>
+                            )}
+                          </td>
+                          <td className="p-3 text-right">{item.quantity}</td>
+                          <td className="p-3 text-right">₹{item.rate.toFixed(2)}</td>
+                          <td className="p-3 text-right font-semibold">₹{item.amount.toFixed(2)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-5 ml-auto max-w-sm space-y-2">
+                <div className="flex justify-between text-lg">
+                  <span>Total</span>
+                  <strong>₹{viewingBill.total_amount.toFixed(2)}</strong>
+                </div>
+                <div className="flex justify-between text-lg text-green-700">
+                  <span>Paid</span>
+                  <strong>₹{viewingBill.paid_amount.toFixed(2)}</strong>
+                </div>
+                <div className="flex justify-between text-xl text-red-600 border-t pt-2">
+                  <span>Balance</span>
+                  <strong>₹{viewingBill.balance_amount.toFixed(2)}</strong>
+                </div>
+                <div className="flex justify-between text-sm text-gray-600">
+                  <span>Payment</span>
+                  <strong>{viewingBill.payment_method}</strong>
+                </div>
+                {viewingBill.payment_method === "Split" && (
+                  <>
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>Cash</span>
+                      <strong>₹{(viewingBill.cash_amount || 0).toFixed(2)}</strong>
+                    </div>
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>UPI</span>
+                      <strong>₹{(viewingBill.upi_amount || 0).toFixed(2)}</strong>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {viewingBill.balance_amount > 0 && businessUpiId.trim() && (
+                <div className="mt-6 rounded-2xl border border-purple-200 bg-purple-50 p-5 flex flex-col sm:flex-row items-center gap-5">
+                  <div className="bg-white p-3 rounded-xl border">
+                    <QRCodeSVG
+                      value={(() => {
+                        const params = new URLSearchParams({
+                          pa: businessUpiId.trim(),
+                          pn: "MANVI MILK AGENCIES",
+                          am: viewingBill.balance_amount.toFixed(2),
+                          cu: "INR",
+                        });
+                        return `upi://pay?${params.toString()}`;
+                      })()}
+                      size={150}
+                      includeMargin
+                    />
+                  </div>
+                  <div>
+                    <p className="font-bold text-purple-800">UPI Payment QR</p>
+                    <p className="text-sm text-purple-700">Scan to pay balance ₹{viewingBill.balance_amount.toFixed(2)}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={sendSavedBillOnWhatsApp}
+                  className="bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-xl font-bold"
+                >
+                  📲 WhatsApp Bill
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingBill(null)}
+                  className="bg-gray-500 hover:bg-gray-600 text-white px-5 py-3 rounded-xl font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )}
+
+</div>
+
+);
+}
