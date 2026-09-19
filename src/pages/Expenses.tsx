@@ -7,13 +7,15 @@ type ExpenseRow = {
   category: string | null;
   amount: number | string | null;
   remarks: string | null;
+  employee_id?: string | null;
 };
 
 type EmployeeRow = {
   id: string;
   name: string | null;
+  mobile?: string | null;
   email: string | null;
-  role: string | null;
+  uses_erp?: boolean | null;
   active: boolean | null;
 };
 
@@ -364,10 +366,9 @@ export default function Expenses() {
 
     try {
       const { data, error } = await supabase
-        .from("users")
-        .select("id, name, email, role, active")
+        .from("employees")
+        .select("id, name, mobile, email, uses_erp, active")
         .eq("active", true)
-        .eq("role", "Employee")
         .order("name", { ascending: true });
 
       if (error) {
@@ -495,6 +496,7 @@ export default function Expenses() {
           category,
           amount: numericAmount,
           remarks: remarksText,
+          employee_id: employeeId,
         });
 
       if (error) {
@@ -660,7 +662,8 @@ export default function Expenses() {
             expense_date,
             category,
             amount,
-            remarks
+            remarks,
+            employee_id
           `
         )
         .order(
@@ -755,13 +758,9 @@ export default function Expenses() {
       expense.remarks || ""
     );
 
-    requestAnimationFrame(() => {
-      document
-        .getElementById("expense-form")
-        ?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
     });
   }
 
@@ -825,7 +824,6 @@ export default function Expenses() {
 
       if (editingId) {
         const {
-          data: updatedRows,
           error,
         } = await supabase
           .from("expenses")
@@ -833,17 +831,10 @@ export default function Expenses() {
           .eq(
             "id",
             editingId
-          )
-          .select("id");
+          );
 
         if (error) {
           throw error;
-        }
-
-        if (!updatedRows || updatedRows.length === 0) {
-          throw new Error(
-            "Expense could not be updated. Please check the Expenses UPDATE permission in Supabase."
-          );
         }
 
         alert(
@@ -1585,10 +1576,7 @@ export default function Expenses() {
       )}
 
       {/* FORM */}
-      <div
-        id="expense-form"
-        className="mb-6 rounded-2xl bg-white p-6 shadow-lg"
-      >
+      <div className="mb-6 rounded-2xl bg-white p-6 shadow-lg">
         <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-800">
