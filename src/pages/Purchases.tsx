@@ -2626,6 +2626,192 @@ export default function Purchases() {
       </div>
 
       {/* ==================================================
+          PRODUCT SELECTOR
+      ================================================== */}
+
+      {selectedBrandId && (
+
+        <div
+          className="
+            mb-6
+            rounded-2xl
+            bg-white
+            p-6
+            shadow-lg
+          "
+        >
+
+          <div
+            className="
+              mb-4
+              flex
+              flex-col
+              gap-2
+              md:flex-row
+              md:items-center
+              md:justify-between
+            "
+          >
+
+            <div>
+              <h2
+                className="
+                  text-xl
+                  font-bold
+                  text-slate-800
+                "
+              >
+                2. Select Product
+              </h2>
+
+              <p
+                className="
+                  mt-1
+                  text-sm
+                  text-slate-500
+                "
+              >
+                Select a product to enter quantity and purchase rate.
+              </p>
+            </div>
+
+            <div
+              className="
+                rounded-lg
+                bg-slate-100
+                px-4
+                py-2
+                text-sm
+                font-bold
+                text-slate-700
+              "
+            >
+              {brandProducts.length} Products
+            </div>
+
+          </div>
+
+          {brandProducts.length === 0 ? (
+
+            <div
+              className="
+                rounded-xl
+                border-2
+                border-dashed
+                border-slate-300
+                p-8
+                text-center
+                text-slate-500
+              "
+            >
+              No products found for this brand.
+            </div>
+
+          ) : (
+
+            <div
+              className="
+                grid
+                gap-3
+                sm:grid-cols-2
+                lg:grid-cols-3
+                xl:grid-cols-4
+              "
+            >
+
+              {brandProducts.map((product) => {
+
+                const isSelected =
+                  String(selectedProductId) ===
+                  String(product.id);
+
+                const alreadyAdded =
+                  purchaseRows.some(
+                    (row) =>
+                      String(row.product_id) ===
+                      String(product.id)
+                  );
+
+                return (
+
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() =>
+                      handleProductChange(product.id)
+                    }
+                    className={`
+                      rounded-xl
+                      border-2
+                      p-4
+                      text-left
+                      transition
+                      ${
+                        isSelected
+                          ? "border-blue-600 bg-blue-50 shadow-md"
+                          : "border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50"
+                      }
+                    `}
+                  >
+
+                    <div
+                      className="
+                        flex
+                        items-start
+                        justify-between
+                        gap-2
+                      "
+                    >
+
+                      <div>
+                        <p className="font-bold text-slate-800">
+                          {product.product_name}
+                        </p>
+
+                        <p className="mt-1 text-sm text-slate-500">
+                          {Number(product.size || 1)} {product.unit || "Litre"}
+                        </p>
+                      </div>
+
+                      {alreadyAdded && (
+                        <span
+                          className="
+                            rounded-full
+                            bg-green-100
+                            px-2
+                            py-1
+                            text-xs
+                            font-bold
+                            text-green-700
+                          "
+                        >
+                          Added
+                        </span>
+                      )}
+
+                    </div>
+
+                    <div className="mt-3 flex justify-between text-sm">
+                      <span className="text-slate-500">Purchase Rate</span>
+                      <span className="font-bold text-blue-700">
+                        ₹ {Number(product.purchase_rate || 0).toFixed(2)}
+                      </span>
+                    </div>
+
+                  </button>
+
+                );
+              })}
+
+            </div>
+
+          )}
+
+        </div>
+
+      )}
+
+      {/* ==================================================
           QUANTITY + RATE
       ================================================== */}
 
