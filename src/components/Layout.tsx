@@ -22,6 +22,7 @@ import {
   FiCalendar,
   FiTag,
   FiUserCheck,
+  FiSettings,
 } from "react-icons/fi";
 
 import Header from "./Header";
@@ -147,6 +148,12 @@ const menu = [
     path: "/user-management",
     icon: <FiUserCheck />,
     ownerOnly: true,
+  },
+
+  {
+    name: "Settings",
+    path: "/settings",
+    icon: <FiSettings />,
   },
 ];
 
