@@ -3574,6 +3574,145 @@ export default function Purchases() {
       </div>
 
       {/* ==================================================
+          SAVE PURCHASE
+      ================================================== */}
+
+      <div
+        className="
+          mb-10
+          rounded-2xl
+          bg-white
+          p-6
+          shadow-lg
+        "
+      >
+
+        <div
+          className="
+            flex
+            flex-col
+            gap-3
+            md:flex-row
+            md:items-center
+            md:justify-between
+          "
+        >
+
+          <div>
+
+            <p
+              className="
+                text-sm
+                text-slate-500
+              "
+            >
+              Products in this
+              purchase
+            </p>
+
+            <p
+              className="
+                text-2xl
+                font-bold
+                text-slate-800
+              "
+            >
+              {
+                purchaseRows.length
+              }
+            </p>
+
+          </div>
+
+          <div
+            className="
+              flex
+              flex-col
+              gap-3
+              sm:flex-row
+              sm:flex-wrap
+            "
+          >
+
+            <button
+              type="button"
+              onClick={
+                copyYesterdayPurchase
+              }
+              disabled={
+                saving || loading
+              }
+              className="
+                rounded-lg
+                bg-blue-600
+                px-6
+                py-3
+                font-bold
+                text-white
+                shadow
+                hover:bg-blue-700
+                disabled:opacity-50
+              "
+            >
+              ↩ Copy Yesterday's Purchase
+            </button>
+
+            <button
+              type="button"
+              onClick={
+                clearPurchase
+              }
+              disabled={
+                saving || loading
+              }
+              className="
+                rounded-lg
+                bg-slate-500
+                px-6
+                py-3
+                font-bold
+                text-white
+                hover:bg-slate-600
+                disabled:opacity-50
+              "
+            >
+              Clear Purchase
+            </button>
+
+            <button
+              type="button"
+              onClick={
+                savePurchase
+              }
+              disabled={
+                saving ||
+                purchaseRows.length ===
+                  0
+              }
+              className="
+                rounded-lg
+                bg-green-600
+                px-8
+                py-3
+                font-bold
+                text-white
+                shadow-lg
+                hover:bg-green-700
+                disabled:opacity-50
+              "
+            >
+              {saving
+                ? "Saving Purchase..."
+                : "✓ Punch / Save Purchase"}
+            </button>
+
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* ==================================================
           STOCK SECTION
       ================================================== */}
 
@@ -3771,144 +3910,6 @@ export default function Purchases() {
       </div>
 
 
-      {/* ==================================================
-          SAVE PURCHASE
-      ================================================== */}
-
-      <div
-        className="
-          mb-10
-          rounded-2xl
-          bg-white
-          p-6
-          shadow-lg
-        "
-      >
-
-        <div
-          className="
-            flex
-            flex-col
-            gap-3
-            md:flex-row
-            md:items-center
-            md:justify-between
-          "
-        >
-
-          <div>
-
-            <p
-              className="
-                text-sm
-                text-slate-500
-              "
-            >
-              Products in this
-              purchase
-            </p>
-
-            <p
-              className="
-                text-2xl
-                font-bold
-                text-slate-800
-              "
-            >
-              {
-                purchaseRows.length
-              }
-            </p>
-
-          </div>
-
-          <div
-            className="
-              flex
-              flex-col
-              gap-3
-              sm:flex-row
-              sm:flex-wrap
-            "
-          >
-
-            <button
-              type="button"
-              onClick={
-                copyYesterdayPurchase
-              }
-              disabled={
-                saving || loading
-              }
-              className="
-                rounded-lg
-                bg-blue-600
-                px-6
-                py-3
-                font-bold
-                text-white
-                shadow
-                hover:bg-blue-700
-                disabled:opacity-50
-              "
-            >
-              ↩ Copy Yesterday's Purchase
-            </button>
-
-            <button
-              type="button"
-              onClick={
-                clearPurchase
-              }
-              disabled={
-                saving || loading
-              }
-              className="
-                rounded-lg
-                bg-slate-500
-                px-6
-                py-3
-                font-bold
-                text-white
-                hover:bg-slate-600
-                disabled:opacity-50
-              "
-            >
-              Clear Purchase
-            </button>
-
-            <button
-              type="button"
-              onClick={
-                savePurchase
-              }
-              disabled={
-                saving ||
-                purchaseRows.length ===
-                  0
-              }
-              className="
-                rounded-lg
-                bg-green-600
-                px-8
-                py-3
-                font-bold
-                text-white
-                shadow-lg
-                hover:bg-green-700
-                disabled:opacity-50
-              "
-            >
-              {saving
-                ? "Saving Purchase..."
-                : "✓ Punch / Save Purchase"}
-            </button>
-
-          </div>
-
-        </div>
-
-      </div>
 
       {/* ==================================================
           RECENT PURCHASES
