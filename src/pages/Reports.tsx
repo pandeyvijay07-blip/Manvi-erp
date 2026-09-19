@@ -8,9 +8,6 @@ type Sale = {
   total_amount: number | string | null;
   paid_amount: number | string | null;
   balance_amount: number | string | null;
-  payment_method?: string | null;
-  cash_amount?: number | string | null;
-  upi_amount?: number | string | null;
 };
 
 type Purchase = {
@@ -24,9 +21,6 @@ type Collection = {
   customer_id: string | null;
   collection_date: string | null;
   amount: number | string | null;
-  payment_method?: string | null;
-  cash_amount?: number | string | null;
-  upi_amount?: number | string | null;
 };
 
 type Expense = {
@@ -51,6 +45,11 @@ type Customer = {
   customer_name: string;
 };
 
+type Product = {
+  id: string;
+  purchase_rate: number | string | null;
+};
+
 type CustomerProfitRow = {
   customerId: string;
   customerName: string;
@@ -62,195 +61,79 @@ type CustomerProfitRow = {
   outstanding: number;
 };
 
-function formatDateInput(date: Date) {
+function getLocalISODate(date = new Date()) {
   const year = date.getFullYear();
-  const month = String(
-    date.getMonth() + 1
-  ).padStart(2, "0");
-  const day = String(
-    date.getDate()
-  ).padStart(2, "0");
-
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-function formatDateDisplay(
-  value: string | null
-) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleDateString(
-    "en-IN",
-    {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    }
-  );
+function formatDateDDMMYYYY(iso: string | null | undefined) {
+  if (!iso) return "-";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
 }
 
-function formatDDMMYYYYInput(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 8);
+function parseDDMMYYYY(value: string): string | null {
+  const text = value.trim();
+  if (!text) return null;
 
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) {
-    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  }
+  const match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
 
-  return `${digits.slice(0, 2)}/${digits.slice(
-    2,
-    4
-  )}/${digits.slice(4, 8)}`;
-}
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
 
-function parseDDMMYYYY(value: string) {
-  const digits = value.replace(/\D/g, "");
-
-  if (!/^\d{8}$/.test(digits)) {
-    return null;
-  }
-
-  const day = Number(digits.slice(0, 2));
-  const month = Number(digits.slice(2, 4));
-  const year = Number(digits.slice(4, 8));
-
+  const date = new Date(year, month - 1, day);
   if (
-    year < 2000 ||
-    year > 2100 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
   ) {
     return null;
   }
 
-  const test = new Date(
-    year,
-    month - 1,
-    day
-  );
-
-  if (
-    test.getFullYear() !== year ||
-    test.getMonth() !== month - 1 ||
-    test.getDate() !== day
-  ) {
-    return null;
-  }
-
-  return `${year}-${String(month).padStart(
-    2,
-    "0"
-  )}-${String(day).padStart(2, "0")}`;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function formatISOToDDMMYYYY(value: string) {
-  const parts = value.slice(0, 10).split("-");
-
-  if (
-    parts.length === 3 &&
-    /^\d{4}$/.test(parts[0])
-  ) {
-    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+function dateKey(value: string | null): string | null {
+  if (!value) return null;
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
+    return text.slice(0, 10);
   }
 
-  return "";
+  const parsed = parseDDMMYYYY(text);
+  return parsed;
 }
 
-
-function isDateInRange(
-  value: string | null,
-  fromDate: string,
-  toDate: string
-) {
-  if (!value) return false;
-
-  /*
-   * Handles both:
-   * 2026-08-10
-   * 2026-08-10T10:30:00
-   */
-  const datePart = value.substring(0, 10);
-
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(
-      datePart
-    )
-  ) {
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-      return false;
-    }
-
-    const year =
-      date.getFullYear();
-
-    const month = String(
-      date.getMonth() + 1
-    ).padStart(2, "0");
-
-    const day = String(
-      date.getDate()
-    ).padStart(2, "0");
-
-    const dateOnly = `${year}-${month}-${day}`;
-
-    return (
-      dateOnly >= fromDate &&
-      dateOnly <= toDate
-    );
-  }
-
-  return (
-    datePart >= fromDate &&
-    datePart <= toDate
-  );
+function isDateInRange(value: string | null, fromDate: string, toDate: string) {
+  const key = dateKey(value);
+  if (!key) return false;
+  return key >= fromDate && key <= toDate;
 }
 
 export default function Reports() {
   const today = new Date();
+  const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-  const firstDayOfMonth = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    1
+  const [fromDate, setFromDate] = useState(
+    getLocalISODate(firstDayOfMonth)
   );
 
-  const [fromDate, setFromDate] =
-    useState(
-      formatDateInput(
-        firstDayOfMonth
-      )
-    );
+  const [toDate, setToDate] = useState(
+    getLocalISODate(today)
+  );
 
-  const [toDate, setToDate] =
-    useState(
-      formatDateInput(today)
-    );
+  const [fromDateInput, setFromDateInput] = useState(
+    formatDateDDMMYYYY(getLocalISODate(firstDayOfMonth))
+  );
 
-  const [fromDateDisplay, setFromDateDisplay] =
-    useState(
-      formatDateInput(firstDayOfMonth)
-        .split("-")
-        .reverse()
-        .join("/")
-    );
-
-  const [toDateDisplay, setToDateDisplay] =
-    useState(
-      formatDateInput(today)
-        .split("-")
-        .reverse()
-        .join("/")
-    );
+  const [toDateInput, setToDateInput] = useState(
+    formatDateDDMMYYYY(getLocalISODate(today))
+  );
 
   const [sales, setSales] =
     useState<Sale[]>([]);
@@ -270,6 +153,9 @@ export default function Reports() {
   const [customers, setCustomers] =
     useState<Customer[]>([]);
 
+  const [products, setProducts] =
+    useState<Product[]>([]);
+
   const [loading, setLoading] =
     useState(false);
 
@@ -280,28 +166,23 @@ export default function Reports() {
   // LOAD REPORTS
   // ==========================================
 
-  async function loadReports() {
-    const normalizedFrom =
-      parseDDMMYYYY(fromDateDisplay);
-    const normalizedTo =
-      parseDDMMYYYY(toDateDisplay);
+  async function loadReports(overrideFromDate?: string, overrideToDate?: string) {
+    const startDate = overrideFromDate ?? fromDate;
+    const endDate = overrideToDate ?? toDate;
 
-    if (!normalizedFrom || !normalizedTo) {
+    if (!startDate || !endDate) {
       alert(
-        "Please enter valid dates in DD/MM/YYYY format.\nExample: 09/09/2026"
+        "Please select From Date and To Date."
       );
       return;
     }
 
-    if (normalizedFrom > normalizedTo) {
+    if (startDate > endDate) {
       alert(
         "From Date cannot be after To Date."
       );
       return;
     }
-
-    setFromDate(normalizedFrom);
-    setToDate(normalizedTo);
 
     setLoading(true);
 
@@ -317,6 +198,7 @@ export default function Reports() {
         expenseResult,
         saleItemResult,
         customerResult,
+        productResult,
       ] = await Promise.all([
         supabase
           .from("sales")
@@ -326,10 +208,7 @@ export default function Reports() {
             sale_date,
             total_amount,
             paid_amount,
-            balance_amount,
-            payment_method,
-            cash_amount,
-            upi_amount
+            balance_amount
           `)
           .order("sale_date", {
             ascending: false,
@@ -352,10 +231,7 @@ export default function Reports() {
             id,
             customer_id,
             collection_date,
-            amount,
-            payment_method,
-            cash_amount,
-            upi_amount
+            amount
           `)
           .order("collection_date", {
             ascending: false,
@@ -394,6 +270,13 @@ export default function Reports() {
           .order("customer_name", {
             ascending: true,
           }),
+
+        supabase
+          .from("products")
+          .select(`
+            id,
+            purchase_rate
+          `),
       ]);
 
       // ========================================
@@ -406,7 +289,8 @@ export default function Reports() {
         collectionResult.error ||
         expenseResult.error ||
         saleItemResult.error ||
-        customerResult.error;
+        customerResult.error ||
+        productResult.error;
 
       if (firstError) {
         throw firstError;
@@ -440,6 +324,10 @@ export default function Reports() {
         (customerResult.data ||
           []) as Customer[];
 
+      const allProducts =
+        (productResult.data ||
+          []) as Product[];
+
       // ========================================
       // FILTER DATE RANGE
       // ========================================
@@ -448,8 +336,8 @@ export default function Reports() {
         allSales.filter((row) =>
           isDateInRange(
             row.sale_date,
-            fromDate,
-            toDate
+            startDate,
+            endDate
           )
         );
 
@@ -457,8 +345,8 @@ export default function Reports() {
         allPurchases.filter((row) =>
           isDateInRange(
             row.purchase_date,
-            fromDate,
-            toDate
+            startDate,
+            endDate
           )
         );
 
@@ -466,8 +354,8 @@ export default function Reports() {
         allCollections.filter((row) =>
           isDateInRange(
             row.collection_date,
-            fromDate,
-            toDate
+            startDate,
+            endDate
           )
         );
 
@@ -475,8 +363,8 @@ export default function Reports() {
         allExpenses.filter((row) =>
           isDateInRange(
             row.expense_date,
-            fromDate,
-            toDate
+            startDate,
+            endDate
           )
         );
 
@@ -524,6 +412,8 @@ export default function Reports() {
       setCustomers(
         allCustomers
       );
+
+      setProducts(allProducts);
 
       setLoaded(true);
     } catch (error) {
@@ -606,51 +496,6 @@ export default function Reports() {
       [collections]
     );
 
-  const cashSalesReceived = useMemo(() =>
-    sales.reduce((sum, row) => {
-      const method = String(row.payment_method || "").trim().toLowerCase();
-      const paid = Number(row.paid_amount || 0);
-      const total = Number(row.total_amount || 0);
-      const stored = Number(row.cash_amount || 0);
-      const fallback = paid > 0 ? paid : total;
-      return sum + (stored > 0 ? stored : method === "cash" ? fallback : 0);
-    }, 0), [sales]);
-
-  const upiSalesReceived = useMemo(() =>
-    sales.reduce((sum, row) => {
-      const method = String(row.payment_method || "").trim().toLowerCase();
-      const paid = Number(row.paid_amount || 0);
-      const total = Number(row.total_amount || 0);
-      const stored = Number(row.upi_amount || 0);
-      const fallback = paid > 0 ? paid : total;
-      return sum + (stored > 0 ? stored : method === "upi" ? fallback : 0);
-    }, 0), [sales]);
-
-  const creditSalesOutstanding = useMemo(() =>
-    sales.reduce((sum, row) => {
-      const method = String(row.payment_method || "").trim().toLowerCase();
-      return method === "credit" ? sum + Number(row.balance_amount || 0) : sum;
-    }, 0), [sales]);
-
-  const cashCollections = useMemo(() =>
-    collections.reduce((sum, row) => {
-      const method = String(row.payment_method || "").trim().toLowerCase();
-      const total = Number(row.amount || 0);
-      const stored = Number(row.cash_amount || 0);
-      return sum + (stored > 0 ? stored : method === "cash" ? total : 0);
-    }, 0), [collections]);
-
-  const upiCollections = useMemo(() =>
-    collections.reduce((sum, row) => {
-      const method = String(row.payment_method || "").trim().toLowerCase();
-      const total = Number(row.amount || 0);
-      const stored = Number(row.upi_amount || 0);
-      return sum + (stored > 0 ? stored : method === "upi" ? total : 0);
-    }, 0), [collections]);
-
-  const nonCashCollections = useMemo(() =>
-    Math.max(0, totalCollections - cashCollections), [totalCollections, cashCollections]);
-
   // ==========================================
   // TOTAL EXPENSES
   // ==========================================
@@ -704,6 +549,35 @@ export default function Reports() {
     );
 
   // ==========================================
+  // PRODUCT COST MAP / FALLBACK
+  // ==========================================
+
+  const productCostMap = useMemo(
+    () =>
+      new Map(
+        products.map((product) => [
+          String(product.id),
+          Number(product.purchase_rate) || 0,
+        ])
+      ),
+    [products]
+  );
+
+  function getEffectiveCostRate(item: SaleItem) {
+    const savedCost = Number(item.cost_rate);
+
+    // Prefer the historical cost saved on the sale item.
+    if (Number.isFinite(savedCost) && savedCost > 0) {
+      return savedCost;
+    }
+
+    // Legacy sale items may have cost_rate = 0/null.
+    // Fall back to the product's current purchase rate so
+    // profit is not falsely shown as 100% margin.
+    return productCostMap.get(String(item.product_id)) || 0;
+  }
+
+  // ==========================================
   // COST OF GOODS SOLD
   // ==========================================
 
@@ -718,9 +592,7 @@ export default function Reports() {
               );
 
             const costRate =
-              Number(
-                item.cost_rate || 0
-              );
+              getEffectiveCostRate(item);
 
             return (
               sum +
@@ -730,8 +602,19 @@ export default function Reports() {
           },
           0
         ),
-      [saleItems]
+      [saleItems, productCostMap]
     );
+
+  const missingCostItems = useMemo(
+    () =>
+      saleItems.filter((item) => {
+        const savedCost = Number(item.cost_rate);
+        const productCost =
+          productCostMap.get(String(item.product_id)) || 0;
+        return (!Number.isFinite(savedCost) || savedCost <= 0) && productCost <= 0;
+      }).length,
+    [saleItems, productCostMap]
+  );
 
   // ==========================================
   // GROSS PROFIT
@@ -903,9 +786,7 @@ export default function Reports() {
             );
 
           const costRate =
-            Number(
-              item.cost_rate || 0
-            );
+            getEffectiveCostRate(item);
 
           map.get(
             key
@@ -984,6 +865,7 @@ export default function Reports() {
       saleItems,
       collections,
       customerMap,
+      productCostMap,
     ]);
 
   // ==========================================
@@ -1030,23 +912,15 @@ export default function Reports() {
   // ==========================================
 
   function loadToday() {
-    const todayDate =
-      formatDateInput(
-        new Date()
-      );
+    const todayDate = getLocalISODate();
+    const display = formatDateDDMMYYYY(todayDate);
 
     setFromDate(todayDate);
     setToDate(todayDate);
-    setFromDateDisplay(
-      formatISOToDDMMYYYY(todayDate)
-    );
-    setToDateDisplay(
-      formatISOToDDMMYYYY(todayDate)
-    );
+    setFromDateInput(display);
+    setToDateInput(display);
 
-    setTimeout(() => {
-      loadReports();
-    }, 50);
+    void loadReports(todayDate, todayDate);
   }
 
   // ==========================================
@@ -1054,31 +928,56 @@ export default function Reports() {
   // ==========================================
 
   function loadThisMonth() {
-    const now =
-      new Date();
-
-    const first =
-      new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        1
-      );
-
-    const firstDate = formatDateInput(first);
-    const nowDate = formatDateInput(now);
-
-    setFromDate(firstDate);
-    setToDate(nowDate);
-    setFromDateDisplay(
-      formatISOToDDMMYYYY(firstDate)
+    const now = new Date();
+    const first = getLocalISODate(
+      new Date(now.getFullYear(), now.getMonth(), 1)
     );
-    setToDateDisplay(
-      formatISOToDDMMYYYY(nowDate)
-    );
+    const last = getLocalISODate(now);
 
-    setTimeout(() => {
-      loadReports();
-    }, 50);
+    setFromDate(first);
+    setToDate(last);
+    setFromDateInput(formatDateDDMMYYYY(first));
+    setToDateInput(formatDateDDMMYYYY(last));
+
+    void loadReports(first, last);
+  }
+
+  function handleFromDateInput(value: string) {
+    const formatted = value.replace(/[^0-9]/g, "").slice(0, 8);
+    let display = formatted;
+    if (formatted.length > 4) {
+      display = `${formatted.slice(0,2)}/${formatted.slice(2,4)}/${formatted.slice(4)}`;
+    } else if (formatted.length > 2) {
+      display = `${formatted.slice(0,2)}/${formatted.slice(2)}`;
+    }
+    setFromDateInput(display);
+    const parsed = parseDDMMYYYY(display);
+    if (parsed) setFromDate(parsed);
+  }
+
+  function handleToDateInput(value: string) {
+    const formatted = value.replace(/[^0-9]/g, "").slice(0, 8);
+    let display = formatted;
+    if (formatted.length > 4) {
+      display = `${formatted.slice(0,2)}/${formatted.slice(2,4)}/${formatted.slice(4)}`;
+    } else if (formatted.length > 2) {
+      display = `${formatted.slice(0,2)}/${formatted.slice(2)}`;
+    }
+    setToDateInput(display);
+    const parsed = parseDDMMYYYY(display);
+    if (parsed) setToDate(parsed);
+  }
+
+  function applyFromCalendar(value: string) {
+    if (!value) return;
+    setFromDate(value);
+    setFromDateInput(formatDateDDMMYYYY(value));
+  }
+
+  function applyToCalendar(value: string) {
+    if (!value) return;
+    setToDate(value);
+    setToDateInput(formatDateDDMMYYYY(value));
   }
 
   return (
@@ -1111,9 +1010,9 @@ export default function Reports() {
           </div>
 
           <button
-            onClick={
-              loadReports
-            }
+            onClick={() => {
+              void loadReports();
+            }}
             disabled={loading}
             className="rounded-xl bg-white px-5 py-3 font-bold text-blue-700 shadow hover:bg-blue-50 disabled:opacity-60"
           >
@@ -1144,29 +1043,27 @@ export default function Reports() {
               From Date
             </label>
 
-            <input
-              type="text"
-              inputMode="numeric"
-              value={fromDateDisplay}
-              onChange={(e) => {
-                const display =
-                  formatDDMMYYYYInput(
-                    e.target.value
-                  );
-
-                setFromDateDisplay(display);
-
-                const normalized =
-                  parseDDMMYYYY(display);
-
-                if (normalized) {
-                  setFromDate(normalized);
-                }
-              }}
-              placeholder="DD/MM/YYYY"
-              maxLength={10}
-              className="w-full rounded-lg border border-slate-300 p-3"
-            />
+            <div className="relative flex items-center">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={fromDateInput}
+                onChange={(e) => handleFromDateInput(e.target.value)}
+                placeholder="DD/MM/YYYY"
+                maxLength={10}
+                className="w-full rounded-lg border border-slate-300 p-3 pr-12"
+              />
+              <label className="absolute right-3 cursor-pointer text-slate-500 hover:text-blue-600" title="Choose date">
+                <span className="text-xl">📅</span>
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => applyFromCalendar(e.target.value)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  aria-label="Choose From Date"
+                />
+              </label>
+            </div>
 
           </div>
 
@@ -1176,41 +1073,45 @@ export default function Reports() {
               To Date
             </label>
 
-            <input
-              type="text"
-              inputMode="numeric"
-              value={toDateDisplay}
-              onChange={(e) => {
-                const display =
-                  formatDDMMYYYYInput(
-                    e.target.value
-                  );
-
-                setToDateDisplay(display);
-
-                const normalized =
-                  parseDDMMYYYY(display);
-
-                if (normalized) {
-                  setToDate(normalized);
-                }
-              }}
-              placeholder="DD/MM/YYYY"
-              maxLength={10}
-              className="w-full rounded-lg border border-slate-300 p-3"
-            />
+            <div className="relative flex items-center">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={toDateInput}
+                onChange={(e) => handleToDateInput(e.target.value)}
+                placeholder="DD/MM/YYYY"
+                maxLength={10}
+                className="w-full rounded-lg border border-slate-300 p-3 pr-12"
+              />
+              <label className="absolute right-3 cursor-pointer text-slate-500 hover:text-blue-600" title="Choose date">
+                <span className="text-xl">📅</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => applyToCalendar(e.target.value)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  aria-label="Choose To Date"
+                />
+              </label>
+            </div>
 
           </div>
 
           <div className="flex items-end">
 
             <button
-              onClick={
-                loadReports
-              }
-              disabled={
-                loading
-              }
+              onClick={() => {
+                const parsedFrom = parseDDMMYYYY(fromDateInput);
+                const parsedTo = parseDDMMYYYY(toDateInput);
+                if (!parsedFrom || !parsedTo) {
+                  alert("Please enter valid dates in DD/MM/YYYY format.");
+                  return;
+                }
+                setFromDate(parsedFrom);
+                setToDate(parsedTo);
+                void loadReports(parsedFrom, parsedTo);
+              }}
+              disabled={loading}
               className="w-full rounded-lg bg-blue-600 px-5 py-3 font-bold text-white hover:bg-blue-700 disabled:opacity-60"
             >
               {loading
@@ -1363,6 +1264,13 @@ export default function Reports() {
 
         </div>
 
+        {missingCostItems > 0 && (
+          <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-red-800 shadow-lg">
+            <p className="font-bold">Cost data missing for {missingCostItems} sold item(s).</p>
+            <p className="mt-1 text-sm">Profit for those items cannot be exact until a purchase cost is available.</p>
+          </div>
+        )}
+
         <div className="rounded-xl bg-yellow-500 p-6 text-white shadow-lg">
 
           <h2 className="text-lg font-semibold">
@@ -1377,7 +1285,7 @@ export default function Reports() {
           </p>
 
           <p className="mt-2 text-sm text-yellow-100">
-            Current balance on sales included in this report period
+            Pending sales balance
           </p>
 
         </div>
@@ -1535,35 +1443,6 @@ export default function Reports() {
             )}
           </p>
 
-        </div>
-
-      </div>
-
-      {/* ======================================
-          PAYMENT BREAKDOWN
-      ======================================= */}
-
-      <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-
-        <div className="rounded-xl bg-emerald-50 p-5 shadow">
-          <p className="text-slate-500">Cash Sales Received</p>
-          <p className="mt-2 text-2xl font-bold text-emerald-700">₹ {cashSalesReceived.toFixed(2)}</p>
-        </div>
-
-        <div className="rounded-xl bg-blue-50 p-5 shadow">
-          <p className="text-slate-500">UPI Sales Received</p>
-          <p className="mt-2 text-2xl font-bold text-blue-700">₹ {upiSalesReceived.toFixed(2)}</p>
-        </div>
-
-        <div className="rounded-xl bg-amber-50 p-5 shadow">
-          <p className="text-slate-500">Credit Outstanding</p>
-          <p className="mt-2 text-2xl font-bold text-amber-700">₹ {creditSalesOutstanding.toFixed(2)}</p>
-        </div>
-
-        <div className="rounded-xl bg-teal-50 p-5 shadow">
-          <p className="text-slate-500">Cash Collections</p>
-          <p className="mt-2 text-2xl font-bold text-teal-700">₹ {cashCollections.toFixed(2)}</p>
-          <p className="mt-1 text-xs text-slate-500">UPI Collections: ₹ {upiCollections.toFixed(2)}</p>
         </div>
 
       </div>
@@ -1799,9 +1678,8 @@ export default function Reports() {
           <strong>
             Profit calculation:
           </strong>{" "}
-          Sales − saved product cost (`cost_rate`).
-          <br />
-          <strong>Outstanding:</strong> current `balance_amount` of sales in the selected period.
+          Sales − saved product
+          cost (`cost_rate`).
 
         </div>
 
@@ -1893,7 +1771,7 @@ export default function Reports() {
                     >
 
                       <td className="p-3">
-                        {formatDateDisplay(
+                        {formatDateDDMMYYYY(
                           sale.sale_date
                         )}
                       </td>
@@ -2023,7 +1901,7 @@ export default function Reports() {
                     >
 
                       <td className="p-3">
-                        {formatDateDisplay(
+                        {formatDateDDMMYYYY(
                           purchase.purchase_date
                         )}
                       </td>
@@ -2133,7 +2011,7 @@ export default function Reports() {
                     >
 
                       <td className="p-3">
-                        {formatDateDisplay(
+                        {formatDateDDMMYYYY(
                           collection.collection_date
                         )}
                       </td>
@@ -2247,7 +2125,7 @@ export default function Reports() {
                     >
 
                       <td className="p-3">
-                        {formatDateDisplay(
+                        {formatDateDDMMYYYY(
                           expense.expense_date
                         )}
                       </td>
@@ -2293,7 +2171,7 @@ export default function Reports() {
           Report loaded for{" "}
 
           <strong>
-            {formatDateDisplay(
+            {formatDateDDMMYYYY(
               fromDate
             )}
           </strong>
@@ -2301,7 +2179,7 @@ export default function Reports() {
           {" "}to{" "}
 
           <strong>
-            {formatDateDisplay(
+            {formatDateDDMMYYYY(
               toDate
             )}
           </strong>
