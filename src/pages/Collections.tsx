@@ -8,11 +8,9 @@ type Customer = {
   route: string;
 };
 
-type QuickCollectionRow = {
-  amount: string;
+type QuickRouteRow = {
   cashAmount: string;
   upiAmount: string;
-  paymentMethod: "Cash" | "UPI" | "Split";
   saving: boolean;
 };
 
@@ -32,7 +30,6 @@ type RecentCollection = {
   cash_amount: number;
   upi_amount: number;
   remarks: string;
-  source: "Collection" | "Sale";
 };
 
 type Allocation = {
@@ -157,18 +154,12 @@ export default function Collections() {
 
   const [customerId, setCustomerId] = useState("");
 
-  // Route-wise quick collection entry
   const [selectedRoute, setSelectedRoute] = useState("");
-  const [quickCollectionRows, setQuickCollectionRows] =
-    useState<Record<string, QuickCollectionRow>>({});
-  const [quickBalances, setQuickBalances] =
-    useState<Record<string, number>>({});
-  const [quickBalanceLoading, setQuickBalanceLoading] =
-    useState(false);
+  const [quickRouteRows, setQuickRouteRows] = useState<Record<string, QuickRouteRow>>({});
+  const [quickRouteBalances, setQuickRouteBalances] = useState<Record<string, number>>({});
+  const [quickRouteLoading, setQuickRouteLoading] = useState(false);
 
   const [balance, setBalance] = useState(0);
-
-  const [outstandingSales, setOutstandingSales] = useState<OutstandingSale[]>([]);
 
   const [amount, setAmount] = useState("");
 
@@ -237,9 +228,7 @@ export default function Collections() {
               customer.opening_balance
             ) || 0,
           route:
-            String(
-              customer.route || ""
-            ).trim(),
+            String(customer.route || "").trim(),
         }))
       );
     } catch (error: any) {
@@ -258,68 +247,33 @@ export default function Collections() {
 
   async function loadRecentCollections() {
     try {
-      /*
-       * Recent Collections shows:
-       * 1. Payments entered in Collections
-       * 2. Payments received directly during Sales Punch
-       *
-       * Sale payments are DISPLAYED here only.
-       * They are not inserted into collections, so balances
-       * are never reduced twice.
-       */
+      const { data, error } = await supabase
+        .from("collections")
+        .select(
+          `
+          id,
+          collection_date,
+          customer_id,
+          amount,
+          payment_method,
+          cash_amount,
+          upi_amount,
+          remarks
+          `
+        )
+        .order("collection_date", {
+          ascending: false,
+        })
+        .limit(30);
 
-      const [
-        { data: collectionRows, error: collectionError },
-        { data: saleRows, error: saleError },
-      ] = await Promise.all([
-        supabase
-          .from("collections")
-          .select(
-            `
-            id,
-            collection_date,
-            customer_id,
-            amount,
-            payment_method,
-            cash_amount,
-            upi_amount,
-            remarks
-            `
-          )
-          .order("collection_date", {
-            ascending: false,
-          })
-          .limit(30),
-
-        supabase
-          .from("sales")
-          .select(
-            `
-            id,
-            sale_date,
-            customer_id,
-            paid_amount,
-            payment_method,
-            cash_amount,
-            upi_amount
-            `
-          )
-          .gt("paid_amount", 0)
-          .order("sale_date", {
-            ascending: false,
-          })
-          .limit(30),
-      ]);
-
-      if (collectionError) {
-        throw collectionError;
+      if (error) {
+        throw error;
       }
 
-      if (saleError) {
-        throw saleError;
-      }
-
-      const customerMap = new Map<string, string>();
+      const customerMap = new Map<
+        string,
+        string
+      >();
 
       customers.forEach((customer) => {
         customerMap.set(
@@ -328,75 +282,29 @@ export default function Collections() {
         );
       });
 
-      const collectionItems: RecentCollection[] =
-        (collectionRows || []).map((row: any) => ({
+      setRecentCollections(
+        (data || []).map((row: any) => ({
           id: row.id,
-          collection_date: row.collection_date,
-          customer_id: row.customer_id,
+          collection_date:
+            row.collection_date,
+          customer_id:
+            row.customer_id,
           customer_name:
-            customerMap.get(row.customer_id) || "Unknown",
-          amount: Number(row.amount) || 0,
-          payment_method: row.payment_method || "Cash",
-          cash_amount: Number(row.cash_amount) || 0,
-          upi_amount: Number(row.upi_amount) || 0,
-          remarks: row.remarks || "",
-          source: "Collection",
-        }));
-
-      const saleItems: RecentCollection[] =
-        (saleRows || []).map((row: any) => {
-          const method = String(
-            row.payment_method || "Cash"
-          ).trim();
-
-          const paid = Number(row.paid_amount) || 0;
-
-          const cash =
-            Number(row.cash_amount) ||
-            (method.toLowerCase() === "cash" ? paid : 0);
-
-          const upi =
-            Number(row.upi_amount) ||
-            (method.toLowerCase() === "upi" ? paid : 0);
-
-          return {
-            id: `sale-${row.id}`,
-            collection_date: row.sale_date,
-            customer_id: row.customer_id,
-            customer_name:
-              customerMap.get(row.customer_id) || "Unknown",
-            amount: paid,
-            payment_method: method || "Cash",
-            cash_amount: cash,
-            upi_amount: upi,
-            remarks: "Sale Payment",
-            source: "Sale",
-          };
-        });
-
-      const combined = [
-        ...collectionItems,
-        ...saleItems,
-      ]
-        .sort((a, b) => {
-          const dateCompare =
-            String(b.collection_date).localeCompare(
-              String(a.collection_date)
-            );
-
-          if (dateCompare !== 0) {
-            return dateCompare;
-          }
-
-          if (a.source !== b.source) {
-            return a.source === "Collection" ? -1 : 1;
-          }
-
-          return 0;
-        })
-        .slice(0, 50);
-
-      setRecentCollections(combined);
+            customerMap.get(
+              row.customer_id
+            ) || "Unknown",
+          amount:
+            Number(row.amount) || 0,
+          payment_method:
+            row.payment_method || "Cash",
+          cash_amount:
+            Number(row.cash_amount) || 0,
+          upi_amount:
+            Number(row.upi_amount) || 0,
+          remarks:
+            row.remarks || "",
+        }))
+      );
     } catch (error: any) {
       console.error(
         "Recent collection error:",
@@ -434,7 +342,6 @@ export default function Collections() {
   async function loadBalance(id: string) {
     if (!id) {
       setBalance(0);
-      setOutstandingSales([]);
       return;
     }
 
@@ -460,21 +367,16 @@ export default function Collections() {
         throw error;
       }
 
-      const outstandingRows = (data || []).map(
-        (sale: any) => ({
-          id: sale.id,
-          sale_date: sale.sale_date,
-          balance_amount:
-            Number(sale.balance_amount) || 0,
-        })
-      ) as OutstandingSale[];
-
-      setOutstandingSales(outstandingRows);
-
       const salesOutstanding =
-        outstandingRows.reduce(
-          (total: number, sale: OutstandingSale) =>
-            total + sale.balance_amount,
+        (data || []).reduce(
+          (
+            total: number,
+            sale: any
+          ) =>
+            total +
+            (Number(
+              sale.balance_amount
+            ) || 0),
           0
         );
 
@@ -493,488 +395,8 @@ export default function Collections() {
   }
 
   /* =====================================================
-     ROUTE-WISE QUICK COLLECTION
-     ===================================================== */
-
-  const routeNames = useMemo(() => {
-    return Array.from(
-      new Set(
-        customers
-          .map((customer) =>
-            String(customer.route || "").trim()
-          )
-          .filter(Boolean)
-      )
-    ).sort((a, b) =>
-      a.localeCompare(b)
-    );
-  }, [customers]);
-
-  const routeCustomers = useMemo(() => {
-    if (!selectedRoute) {
-      return [];
-    }
-
-    return customers
-      .filter(
-        (customer) =>
-          String(customer.route || "").trim() ===
-          selectedRoute
-      )
-      .sort((a, b) =>
-        a.customer_name.localeCompare(
-          b.customer_name
-        )
-      );
-  }, [customers, selectedRoute]);
-
-  async function initializeQuickRoute(route: string) {
-    setSelectedRoute(route);
-
-    if (!route) {
-      setQuickCollectionRows({});
-      setQuickBalances({});
-      return;
-    }
-
-    const routeCustomersForBalance =
-      customers.filter(
-        (customer) =>
-          String(customer.route || "").trim() === route
-      );
-
-    const rows: Record<string, QuickCollectionRow> = {};
-
-    routeCustomersForBalance.forEach(
-      (customer) => {
-        rows[customer.id] = {
-          amount: "",
-          cashAmount: "",
-          upiAmount: "",
-          paymentMethod: "Cash",
-          saving: false,
-        };
-      }
-    );
-
-    setQuickCollectionRows(rows);
-    setQuickBalanceLoading(true);
-
-    try {
-      const balances: Record<string, number> = {};
-
-      await Promise.all(
-        routeCustomersForBalance.map(
-          async (customer) => {
-            const { data, error } =
-              await supabase
-                .from("sales")
-                .select("balance_amount")
-                .eq(
-                  "customer_id",
-                  customer.id
-                )
-                .gt(
-                  "balance_amount",
-                  0
-                );
-
-            if (error) {
-              throw error;
-            }
-
-            const salesOutstanding =
-              (data || []).reduce(
-                (
-                  total: number,
-                  sale: any
-                ) =>
-                  total +
-                  (Number(
-                    sale.balance_amount
-                  ) || 0),
-                0
-              );
-
-            balances[customer.id] =
-              (Number(
-                customer.opening_balance
-              ) || 0) +
-              salesOutstanding;
-          }
-        )
-      );
-
-      setQuickBalances(balances);
-    } catch (error: any) {
-      console.error(
-        "LOAD ROUTE BALANCES ERROR:",
-        error
-      );
-
-      alert(
-        "Unable to load route outstanding balances.\n\n" +
-          (error?.message ||
-            "Unknown error")
-      );
-
-      setQuickBalances({});
-    } finally {
-      setQuickBalanceLoading(false);
-    }
-  }
-
-  function updateQuickCollectionRow(
-    customerIdValue: string,
-    changes: Partial<QuickCollectionRow>
-  ) {
-    setQuickCollectionRows((previous) => ({
-      ...previous,
-      [customerIdValue]: {
-        amount:
-          previous[customerIdValue]?.amount || "",
-        cashAmount:
-          previous[customerIdValue]?.cashAmount || "",
-        upiAmount:
-          previous[customerIdValue]?.upiAmount || "",
-        paymentMethod:
-          previous[customerIdValue]?.paymentMethod ||
-          "Cash",
-        saving:
-          previous[customerIdValue]?.saving || false,
-        ...changes,
-      },
-    }));
-  }
-
-  async function saveQuickRouteCollection(
-    customer: Customer
-  ) {
-    const row =
-      quickCollectionRows[customer.id];
-
-    const quickCash =
-      row?.paymentMethod === "Cash"
-        ? Number(row.amount || 0)
-        : row?.paymentMethod === "Split"
-        ? Number(row.cashAmount || 0)
-        : 0;
-
-    const quickUpi =
-      row?.paymentMethod === "UPI"
-        ? Number(row.amount || 0)
-        : row?.paymentMethod === "Split"
-        ? Number(row.upiAmount || 0)
-        : 0;
-
-    const quickAmount =
-      quickCash + quickUpi;
-
-    if (
-      !Number.isFinite(quickCash) ||
-      !Number.isFinite(quickUpi) ||
-      quickCash < 0 ||
-      quickUpi < 0 ||
-      quickAmount <= 0
-    ) {
-      alert(
-        `Enter collection amount for ${customer.customer_name}.`
-      );
-      return;
-    }
-
-    try {
-      updateQuickCollectionRow(
-        customer.id,
-        { saving: true }
-      );
-
-      // Load the latest balance so quick entry cannot
-      // accidentally collect more than the current outstanding.
-      const openingBalance =
-        Number(customer.opening_balance || 0);
-
-      const { data: sales, error: salesError } =
-        await supabase
-          .from("sales")
-          .select(
-            "id, sale_date, balance_amount"
-          )
-          .eq(
-            "customer_id",
-            customer.id
-          )
-          .gt(
-            "balance_amount",
-            0
-          )
-          .order(
-            "sale_date",
-            { ascending: true }
-          )
-          .order(
-            "created_at",
-            { ascending: true }
-          );
-
-      if (salesError) {
-        throw salesError;
-      }
-
-      const outstanding =
-        (sales || []).map((sale: any) => ({
-          id: sale.id,
-          sale_date: sale.sale_date,
-          balance_amount:
-            Number(sale.balance_amount) || 0,
-        })) as OutstandingSale[];
-
-      const salesOutstanding =
-        outstanding.reduce(
-          (sum, sale) =>
-            sum + sale.balance_amount,
-          0
-        );
-
-      const currentBalance =
-        openingBalance +
-        salesOutstanding;
-
-      if (
-        quickAmount >
-        currentBalance
-      ) {
-        throw new Error(
-          `Collection cannot exceed outstanding balance of ₹${currentBalance.toFixed(
-            2
-          )}.`
-        );
-      }
-
-      const {
-        allocations,
-        remaining,
-      } =
-        calculateAllocations(
-          outstanding,
-          quickAmount
-        );
-
-      const { data: collection, error } =
-        await supabase
-          .from("collections")
-          .insert({
-            customer_id:
-              customer.id,
-            collection_date:
-              getTodayLocalDate(),
-            amount:
-              quickAmount,
-            payment_method:
-              row.paymentMethod,
-            cash_amount:
-              quickCash,
-            upi_amount:
-              quickUpi,
-            remarks:
-              `Route: ${selectedRoute}`,
-          })
-          .select()
-          .single();
-
-      if (error) {
-        throw error;
-      }
-
-      if (!collection) {
-        throw new Error(
-          "Collection was not created."
-        );
-      }
-
-      for (const allocation of allocations) {
-        const sale =
-          outstanding.find(
-            (item) =>
-              item.id ===
-              allocation.sale_id
-          );
-
-        if (!sale) {
-          continue;
-        }
-
-        const newBalance =
-          Math.max(
-            0,
-            sale.balance_amount -
-              allocation.amount
-          );
-
-        const { error: updateError } =
-          await supabase
-            .from("sales")
-            .update({
-              balance_amount:
-                newBalance,
-            })
-            .eq(
-              "id",
-              allocation.sale_id
-            );
-
-        if (updateError) {
-          throw updateError;
-        }
-
-        const {
-          error: allocationError,
-        } = await supabase
-          .from(
-            "collection_allocations"
-          )
-          .insert({
-            collection_id:
-              collection.id,
-            sale_id:
-              allocation.sale_id,
-            amount:
-              allocation.amount,
-          });
-
-        if (allocationError) {
-          throw allocationError;
-        }
-      }
-
-      if (remaining > 0) {
-        const openingPayment =
-          Math.min(
-            remaining,
-            openingBalance
-          );
-
-        if (openingPayment > 0) {
-          const {
-            error: openingError,
-          } = await supabase
-            .from("customers")
-            .update({
-              opening_balance:
-                openingBalance -
-                openingPayment,
-            })
-            .eq(
-              "id",
-              customer.id
-            );
-
-          if (openingError) {
-            throw openingError;
-          }
-        }
-      }
-
-      updateQuickCollectionRow(
-        customer.id,
-        {
-          amount: "",
-          cashAmount: "",
-          upiAmount: "",
-          saving: false,
-        }
-      );
-
-      await loadCustomers();
-      await loadRecentCollections();
-
-      // Refresh the route outstanding values while keeping
-      // the route and all customers open.
-      await initializeQuickRoute(
-        selectedRoute
-      );
-
-      // Keep route open after saving so the next customer
-      // can be entered immediately.
-      alert(
-        `${customer.customer_name}: ₹${quickAmount.toFixed(
-          2
-        )} ${row.paymentMethod} saved.`
-      );
-    } catch (error: any) {
-      console.error(
-        "QUICK ROUTE COLLECTION ERROR:",
-        error
-      );
-
-      updateQuickCollectionRow(
-        customer.id,
-        { saving: false }
-      );
-
-      alert(
-        `Unable to save collection for ${customer.customer_name}.\\n\\n${
-          error?.message ||
-          "Unknown error"
-        }`
-      );
-    }
-  }
-
-  /* =====================================================
-     ROUTE QUICK TOTALS
-  ===================================================== */
-
-  const routeQuickTotals = useMemo(() => {
-    if (!selectedRoute) {
-      return {
-        total: 0,
-        cash: 0,
-        upi: 0,
-        customersEntered: 0,
-      };
-    }
-
-    let total = 0;
-    let cash = 0;
-    let upi = 0;
-    let customersEntered = 0;
-
-    routeCustomers.forEach((customer) => {
-      const row = quickCollectionRows[customer.id];
-      const enteredAmount = Number(row?.amount || 0);
-
-      if (Number.isFinite(enteredAmount) && enteredAmount > 0) {
-        total += enteredAmount;
-        customersEntered += 1;
-
-        if (row?.paymentMethod === "UPI") {
-          upi += enteredAmount;
-        } else if (row?.paymentMethod === "Split") {
-          cash += Number(row.cashAmount || 0);
-          upi += Number(row.upiAmount || 0);
-        } else {
-          cash += enteredAmount;
-        }
-      }
-    });
-
-    return {
-      total,
-      cash,
-      upi,
-      customersEntered,
-    };
-  }, [
-    selectedRoute,
-    routeCustomers,
-    quickCollectionRows,
-  ]);
-
-  /* =====================================================
      PAYMENT METHOD CHANGE
   ===================================================== */
-
 
   function handlePaymentMethodChange(
     value: string
@@ -2224,6 +1646,93 @@ export default function Collections() {
   }
 
   /* =====================================================
+     ROUTE-WISE QUICK COLLECTION
+  ===================================================== */
+
+  const quickRouteNames = useMemo(() =>
+    Array.from(new Set(customers.map((c) => c.route).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [customers]
+  );
+
+  const quickRouteCustomers = useMemo(() =>
+    selectedRoute
+      ? customers.filter((c) => c.route === selectedRoute).sort((a, b) => a.customer_name.localeCompare(b.customer_name))
+      : [],
+    [customers, selectedRoute]
+  );
+
+  const quickRouteTotals = useMemo(() => {
+    let cash = 0; let upi = 0; let customersEntered = 0;
+    quickRouteCustomers.forEach((c) => {
+      const row = quickRouteRows[c.id];
+      const cv = Number(row?.cashAmount || 0);
+      const uv = Number(row?.upiAmount || 0);
+      cash += Number.isFinite(cv) ? cv : 0;
+      upi += Number.isFinite(uv) ? uv : 0;
+      if (cv + uv > 0) customersEntered++;
+    });
+    return { cash, upi, total: cash + upi, customersEntered };
+  }, [quickRouteCustomers, quickRouteRows]);
+
+  async function selectQuickRoute(route: string) {
+    setSelectedRoute(route);
+    if (!route) { setQuickRouteRows({}); setQuickRouteBalances({}); return; }
+    const routeCustomers = customers.filter((c) => c.route === route);
+    const rows: Record<string, QuickRouteRow> = {};
+    routeCustomers.forEach((c) => { rows[c.id] = { cashAmount: "", upiAmount: "", saving: false }; });
+    setQuickRouteRows(rows);
+    setQuickRouteLoading(true);
+    try {
+      const balances: Record<string, number> = {};
+      await Promise.all(routeCustomers.map(async (c) => {
+        const { data, error } = await supabase.from("sales").select("balance_amount").eq("customer_id", c.id).gt("balance_amount", 0);
+        if (error) throw error;
+        balances[c.id] = (Number(c.opening_balance) || 0) + (data || []).reduce((s: number, sale: any) => s + (Number(sale.balance_amount) || 0), 0);
+      }));
+      setQuickRouteBalances(balances);
+    } catch (e) { console.error(e); setQuickRouteBalances({}); }
+    finally { setQuickRouteLoading(false); }
+  }
+
+  function updateQuickRouteRow(id: string, field: "cashAmount" | "upiAmount", value: string) {
+    setQuickRouteRows((prev) => ({ ...prev, [id]: { cashAmount: prev[id]?.cashAmount || "", upiAmount: prev[id]?.upiAmount || "", saving: prev[id]?.saving || false, [field]: value } }));
+  }
+
+  async function saveQuickRouteCollection(customer: Customer) {
+    const row = quickRouteRows[customer.id] || { cashAmount: "", upiAmount: "", saving: false };
+    const cash = Number(row.cashAmount || 0); const upi = Number(row.upiAmount || 0); const total = cash + upi;
+    if (!Number.isFinite(cash) || !Number.isFinite(upi) || cash < 0 || upi < 0 || total <= 0) { alert(`Enter Cash and/or UPI for ${customer.customer_name}.`); return; }
+    const outstanding = Number(quickRouteBalances[customer.id] || 0);
+    if (total > outstanding) { alert(`${customer.customer_name}: collection ₹${total.toFixed(2)} cannot exceed outstanding ₹${outstanding.toFixed(2)}.`); return; }
+    try {
+      setQuickRouteRows((prev) => ({ ...prev, [customer.id]: { ...row, saving: true } }));
+      const sales = await getOutstandingSales(customer.id);
+      const { allocations, remaining } = calculateAllocations(sales, total);
+      const { data: collection, error } = await supabase.from("collections").insert({ customer_id: customer.id, collection_date: getTodayLocalDate(), amount: total, payment_method: cash > 0 && upi > 0 ? "Split" : cash > 0 ? "Cash" : "UPI", cash_amount: cash, upi_amount: upi, remarks: `Route: ${selectedRoute}` }).select().single();
+      if (error) throw error; if (!collection) throw new Error("Collection was not created.");
+      for (const a of allocations) {
+        const { data: sale, error: se } = await supabase.from("sales").select("id, balance_amount").eq("id", a.sale_id).single();
+        if (se) throw se; if (!sale) continue;
+        const { error: ue } = await supabase.from("sales").update({ balance_amount: Math.max(0, (Number(sale.balance_amount) || 0) - a.amount) }).eq("id", a.sale_id);
+        if (ue) throw ue;
+        const { error: ae } = await supabase.from("collection_allocations").insert({ collection_id: collection.id, sale_id: a.sale_id, amount: a.amount });
+        if (ae) throw ae;
+      }
+      if (remaining > 0) {
+        const ob = Number(customer.opening_balance) || 0; const used = Math.min(remaining, ob);
+        if (used > 0) { const { error: oe } = await supabase.from("customers").update({ opening_balance: ob - used }).eq("id", customer.id); if (oe) throw oe; }
+      }
+      await loadCustomers(); await loadRecentCollections();
+      setQuickRouteRows((prev) => ({ ...prev, [customer.id]: { cashAmount: "", upiAmount: "", saving: false } }));
+      await selectQuickRoute(selectedRoute);
+    } catch (error: any) {
+      console.error("Quick route collection error:", error);
+      setQuickRouteRows((prev) => ({ ...prev, [customer.id]: { ...row, saving: false } }));
+      alert(`Unable to save collection for ${customer.customer_name}.\n\n${error?.message || "Unknown error"}`);
+    }
+  }
+
+  /* =====================================================
      UI
      ===================================================== */
 
@@ -2247,356 +1756,61 @@ export default function Collections() {
       </div>
 
       {/* =================================================
-          ROUTE-WISE ONE-CLICK COLLECTION
+          ROUTE-WISE QUICK COLLECTION
       ================================================= */}
 
       <div className="bg-white rounded-2xl shadow p-4 md:p-6">
-
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div>
-            <h2 className="text-xl md:text-2xl font-bold text-blue-700">
-              Route-wise Quick Collection
-            </h2>
-
-            <p className="text-sm text-gray-500 mt-1">
-              Select a route once. All customers in that route open together.
-              Enter amount and choose Cash or UPI without opening each customer.
-            </p>
+            <h2 className="text-2xl md:text-3xl font-bold text-blue-700">Route-wise Quick Collection</h2>
+            <p className="text-gray-600 mt-1">Select a route once. All customers in that route open together. Enter Cash, UPI, or both without opening each customer.</p>
           </div>
-
           <div className="w-full md:w-80">
-            <label className="block font-semibold mb-2">
-              Select Route
-            </label>
-
-            <select
-              value={selectedRoute}
-              onChange={(e) =>
-                initializeQuickRoute(
-                  e.target.value
-                )
-              }
-              className="w-full border-2 border-blue-200 rounded-xl px-4 py-3 text-lg font-semibold bg-white"
-            >
-              <option value="">
-                Select Route
-              </option>
-
-              {routeNames.map((route) => (
-                <option
-                  key={route}
-                  value={route}
-                >
-                  {route}
-                </option>
-              ))}
+            <label className="block font-bold mb-2">Select Route</label>
+            <select value={selectedRoute} onChange={(e) => void selectQuickRoute(e.target.value)} className="w-full border-2 border-blue-200 rounded-xl px-4 py-3 text-lg font-semibold">
+              <option value="">Select Route</option>
+              {quickRouteNames.map((route) => <option key={route} value={route}>{route}</option>)}
             </select>
           </div>
-
         </div>
 
-        {selectedRoute && (
-          <div className="mt-5">
-
-            <div className="mb-3 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 flex items-center justify-between">
-              <div>
-                <p className="text-sm text-blue-600">
-                  Selected Route
-                </p>
-                <p className="font-bold text-blue-800 text-lg">
-                  {selectedRoute}
-                </p>
-              </div>
-
-              <div className="text-right">
-                <p className="text-sm text-gray-500">
-                  Customers
-                </p>
-                <p className="font-bold text-blue-700 text-lg">
-                  {routeCustomers.length}
-                </p>
-              </div>
-            </div>
-
-            {routeCustomers.length === 0 ? (
-              <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-5 text-center text-yellow-800">
-                No customers are assigned to this route.
-              </div>
-            ) : (
-              <>
-                {/* LIVE ROUTE COLLECTION TOTAL */}
-                <div className="mb-4 rounded-2xl border-2 border-blue-200 bg-blue-50 p-4 md:p-5">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-
-                    <div className="rounded-xl bg-white border border-blue-100 p-4">
-                      <p className="text-xs font-semibold text-gray-500 uppercase">
-                        Route Collection Total
-                      </p>
-                      <p className="mt-1 text-2xl md:text-3xl font-extrabold text-blue-700">
-                        ₹{routeQuickTotals.total.toFixed(2)}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-white border border-green-100 p-4">
-                      <p className="text-xs font-semibold text-gray-500 uppercase">
-                        Cash
-                      </p>
-                      <p className="mt-1 text-2xl font-extrabold text-green-700">
-                        ₹{routeQuickTotals.cash.toFixed(2)}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-white border border-indigo-100 p-4">
-                      <p className="text-xs font-semibold text-gray-500 uppercase">
-                        UPI
-                      </p>
-                      <p className="mt-1 text-2xl font-extrabold text-indigo-700">
-                        ₹{routeQuickTotals.upi.toFixed(2)}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-white border border-slate-100 p-4">
-                      <p className="text-xs font-semibold text-gray-500 uppercase">
-                        Customers Entered
-                      </p>
-                      <p className="mt-1 text-2xl font-extrabold text-slate-700">
-                        {routeQuickTotals.customersEntered}
-                        {" / "}
-                        {routeCustomers.length}
-                      </p>
-                    </div>
-
-                  </div>
-
-                  <div className="mt-3 text-sm font-semibold text-blue-700">
-                    Total updates automatically as you enter each customer's collection amount.
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-
-                {routeCustomers.map((customer) => {
-                  const row =
-                    quickCollectionRows[
-                      customer.id
-                    ] || {
-                      amount: "",
-                      cashAmount: "",
-                      upiAmount: "",
-                      paymentMethod: "Cash" as const,
-                      saving: false,
-                    };
-
-                  return (
-                    <div
-                      key={customer.id}
-                      className="rounded-xl border bg-white p-3 shadow-sm"
-                    >
-
-                      <div className="grid grid-cols-1 md:grid-cols-[1.5fr_1fr_150px_150px_auto] gap-3 items-center">
-
-                        <div>
-                          <p className="font-bold text-slate-800">
-                            {customer.customer_name}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {customer.route || "No Route"}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-xs text-gray-500">
-                            Outstanding
-                          </p>
-                          <p className="font-bold text-red-600">
-                            ₹
-                            {quickBalanceLoading
-                              ? "..."
-                              : (
-                                  Number(
-                                    quickBalances[
-                                      customer.id
-                                    ] ?? 0
-                                  )
-                                ).toFixed(2)}
-                          </p>
-                        </div>
-
-                        <div>
-                          {row.paymentMethod === "Split" ? (
-                            <div className="grid grid-cols-2 gap-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                inputMode="decimal"
-                                value={row.cashAmount}
-                                onChange={(e) =>
-                                  updateQuickCollectionRow(
-                                    customer.id,
-                                    { cashAmount: e.target.value }
-                                  )
-                                }
-                                placeholder="Cash"
-                                className="w-full border-2 border-green-200 rounded-xl px-3 py-3 font-bold"
-                              />
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                inputMode="decimal"
-                                value={row.upiAmount}
-                                onChange={(e) =>
-                                  updateQuickCollectionRow(
-                                    customer.id,
-                                    { upiAmount: e.target.value }
-                                  )
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    void saveQuickRouteCollection(customer);
-                                  }
-                                }}
-                                placeholder="UPI"
-                                className="w-full border-2 border-indigo-200 rounded-xl px-3 py-3 font-bold"
-                              />
-                            </div>
-                          ) : (
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              inputMode="decimal"
-                              value={row.amount}
-                              onChange={(e) =>
-                                updateQuickCollectionRow(
-                                  customer.id,
-                                  { amount: e.target.value }
-                                )
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  void saveQuickRouteCollection(customer);
-                                }
-                              }}
-                              placeholder={
-                                row.paymentMethod === "UPI"
-                                  ? "UPI Amount"
-                                  : "Cash Amount"
-                              }
-                              className="w-full border-2 border-green-200 rounded-xl px-3 py-3 font-bold text-lg"
-                            />
-                          )}
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-1">
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateQuickCollectionRow(
-                                customer.id,
-                                {
-                                  paymentMethod:
-                                    "Cash",
-                                }
-                              )
-                            }
-                            className={`rounded-lg px-2 py-3 text-sm font-bold ${
-                              row.paymentMethod ===
-                              "Cash"
-                                ? "bg-green-600 text-white"
-                                : "bg-green-50 text-green-700 border border-green-200"
-                            }`}
-                          >
-                            CASH
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateQuickCollectionRow(
-                                customer.id,
-                                {
-                                  paymentMethod:
-                                    "UPI",
-                                }
-                              )
-                            }
-                            className={`rounded-lg px-2 py-3 text-xs font-bold ${
-                              row.paymentMethod ===
-                              "UPI"
-                                ? "bg-indigo-600 text-white"
-                                : "bg-indigo-50 text-indigo-700 border border-indigo-200"
-                            }`}
-                          >
-                            UPI
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateQuickCollectionRow(
-                                customer.id,
-                                {
-                                  paymentMethod:
-                                    "Split",
-                                }
-                              )
-                            }
-                            className={`rounded-lg px-2 py-3 text-xs font-bold ${
-                              row.paymentMethod ===
-                              "Split"
-                                ? "bg-purple-600 text-white"
-                                : "bg-purple-50 text-purple-700 border border-purple-200"
-                            }`}
-                          >
-                            SPLIT
-                          </button>
-
-                        </div>
-
-                        <button
-                          type="button"
-                          disabled={
-                            row.saving ||
-                            (
-                              row.paymentMethod === "Split"
-                                ? (
-                                    Number(row.cashAmount || 0) +
-                                    Number(row.upiAmount || 0) <= 0
-                                  )
-                                : !Number(row.amount || 0)
-                            )
-                          }
-                          onClick={() =>
-                            void saveQuickRouteCollection(
-                              customer
-                            )
-                          }
-                          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white px-5 py-3 rounded-xl font-bold whitespace-nowrap"
-                        >
-                          {row.saving
-                            ? "Saving..."
-                            : "Save"}
-                        </button>
-
-                      </div>
-
-                    </div>
-                  );
-                })}
-
-                </div>
-              </>
-            )}
-
+        {selectedRoute && <>
+          <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 px-4 py-4 flex items-center justify-between">
+            <div><p className="text-sm text-blue-600">Selected Route</p><p className="text-2xl font-bold text-blue-800">{selectedRoute}</p></div>
+            <div className="text-right"><p className="text-sm text-gray-500">Customers</p><p className="text-2xl font-bold text-blue-700">{quickRouteCustomers.length}</p></div>
           </div>
-        )}
 
+          <div className="mt-4 rounded-2xl border-2 border-blue-200 bg-blue-50 p-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="rounded-xl bg-white border border-blue-100 p-4"><p className="text-xs font-bold text-gray-500 uppercase">Route Collection Total</p><p className="text-3xl font-extrabold text-blue-700 mt-1">₹{quickRouteTotals.total.toFixed(2)}</p></div>
+              <div className="rounded-xl bg-white border border-green-100 p-4"><p className="text-xs font-bold text-gray-500 uppercase">Cash Total</p><p className="text-3xl font-extrabold text-green-700 mt-1">₹{quickRouteTotals.cash.toFixed(2)}</p></div>
+              <div className="rounded-xl bg-white border border-indigo-100 p-4"><p className="text-xs font-bold text-gray-500 uppercase">UPI Total</p><p className="text-3xl font-extrabold text-indigo-700 mt-1">₹{quickRouteTotals.upi.toFixed(2)}</p></div>
+              <div className="rounded-xl bg-white border border-slate-100 p-4"><p className="text-xs font-bold text-gray-500 uppercase">Customers Entered</p><p className="text-3xl font-extrabold text-slate-700 mt-1">{quickRouteTotals.customersEntered} / {quickRouteCustomers.length}</p></div>
+            </div>
+            <p className="mt-3 text-sm font-bold text-blue-700">Totals update automatically as you enter each customer&apos;s collection amount.</p>
+          </div>
+
+          <div className="mt-4 overflow-x-auto rounded-xl border">
+            <div className="min-w-[1100px]">
+              <div className="grid grid-cols-[45px_1.55fr_1fr_1fr_1fr_1fr_120px] gap-3 bg-blue-50 border-b border-blue-200 px-4 py-3 font-bold text-blue-800">
+                <div>#</div><div>Customer Name<div className="text-xs font-normal text-gray-500">Area</div></div><div>Outstanding<div className="text-xs font-normal">₹</div></div><div>Cash (₹)</div><div>UPI (₹)</div><div>Total (₹)</div><div>Actions</div>
+              </div>
+              {quickRouteCustomers.map((customer, index) => {
+                const row = quickRouteRows[customer.id] || { cashAmount: "", upiAmount: "", saving: false };
+                const cash = Number(row.cashAmount || 0); const upi = Number(row.upiAmount || 0); const total = (Number.isFinite(cash) ? cash : 0) + (Number.isFinite(upi) ? upi : 0);
+                return <div key={customer.id} className="grid grid-cols-[45px_1.55fr_1fr_1fr_1fr_1fr_120px] gap-3 items-center px-4 py-3 border-b hover:bg-gray-50">
+                  <div className="font-bold text-gray-700">{index + 1}</div>
+                  <div><p className="font-bold text-lg text-gray-900">{customer.customer_name}</p><p className="text-sm text-gray-500">{customer.route || "-"}</p></div>
+                  <div className="font-bold text-red-600">₹{quickRouteLoading ? "..." : Number(quickRouteBalances[customer.id] || 0).toFixed(2)}</div>
+                  <input type="number" min="0" step="0.01" inputMode="decimal" value={row.cashAmount} onChange={(e) => updateQuickRouteRow(customer.id, "cashAmount", e.target.value)} placeholder="Cash" className="w-full border-2 border-green-200 rounded-xl px-3 py-3 font-semibold" />
+                  <input type="number" min="0" step="0.01" inputMode="decimal" value={row.upiAmount} onChange={(e) => updateQuickRouteRow(customer.id, "upiAmount", e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveQuickRouteCollection(customer); } }} placeholder="UPI" className="w-full border-2 border-indigo-200 rounded-xl px-3 py-3 font-semibold" />
+                  <div className="rounded-xl bg-gray-100 border px-3 py-3 font-semibold text-gray-700 text-center">₹{total.toFixed(2)}</div>
+                  <button type="button" disabled={row.saving || total <= 0} onClick={() => void saveQuickRouteCollection(customer)} className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-xl px-4 py-3 font-bold">{row.saving ? "Saving..." : "Save"}</button>
+                </div>;
+              })}
+            </div>
+          </div>
+        </>}
       </div>
 
       {/* =================================================
@@ -2696,49 +1910,27 @@ export default function Collections() {
             </div>
           </div>
 
-          {/* OUTSTANDING SALES */}
+          {/* AMOUNT */}
 
-          {customerId && outstandingSales.length > 0 && (
-            <div className="md:col-span-3 mt-1 rounded-xl border border-red-200 bg-red-50 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <h3 className="font-bold text-red-700">
-                    Outstanding Sales
-                  </h3>
-                  <p className="text-sm text-red-600">
-                    Unpaid sale balances for this customer
-                  </p>
-                </div>
-                <div className="font-bold text-red-700">
-                  {outstandingSales.length} sale
-                  {outstandingSales.length === 1 ? "" : "s"}
-                </div>
-              </div>
+          <div>
+            <label className="block font-semibold mb-2">
+              Collection Amount
+            </label>
 
-              <div className="overflow-x-auto bg-white rounded-lg border border-red-100">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-red-100 text-red-800">
-                      <th className="text-left px-3 py-2">Date</th>
-                      <th className="text-right px-3 py-2">Outstanding</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {outstandingSales.map((sale) => (
-                      <tr key={sale.id} className="border-t border-red-100">
-                        <td className="px-3 py-2">
-                          {formatDateDDMMYYYY(sale.sale_date)}
-                        </td>
-                        <td className="px-3 py-2 text-right font-semibold text-red-700">
-                          ₹{sale.balance_amount.toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={amount}
+              onChange={(e) =>
+                setAmount(
+                  e.target.value
+                )
+              }
+              className="w-full border rounded-xl px-4 py-3"
+              placeholder="Enter amount"
+            />
+          </div>
 
           {/* PAYMENT */}
 
@@ -3051,41 +2243,41 @@ export default function Collections() {
                       </td>
 
                       <td className="p-3">
-                        {collection.source === "Sale" ? (
-                          <span className="inline-block bg-blue-100 text-blue-700 px-3 py-2 rounded-lg font-semibold">
-                            Sale Payment
-                          </span>
-                        ) : (
-                          <div className="flex justify-center gap-2">
 
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() =>
-                                editCollection(
-                                  collection.id
-                                )
-                              }
-                              className="bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
-                            >
-                              Edit
-                            </button>
+                        <div className="flex justify-center gap-2">
 
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() =>
-                                deleteCollection(
-                                  collection.id
-                                )
-                              }
-                              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
-                            >
-                              Delete
-                            </button>
+                          <button
+                            type="button"
+                            disabled={
+                              loading
+                            }
+                            onClick={() =>
+                              editCollection(
+                                collection.id
+                              )
+                            }
+                            className="bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                          >
+                            Edit
+                          </button>
 
-                          </div>
-                        )}
+                          <button
+                            type="button"
+                            disabled={
+                              loading
+                            }
+                            onClick={() =>
+                              deleteCollection(
+                                collection.id
+                              )
+                            }
+                            className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                          >
+                            Delete
+                          </button>
+
+                        </div>
+
                       </td>
 
                     </tr>
