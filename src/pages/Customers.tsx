@@ -10,6 +10,8 @@ type Customer = {
   route: string;
   opening_balance: number;
   outstanding: number;
+  whatsapp_opt_in: boolean;
+  whatsapp_opt_in_at: string | null;
 };
 
 type SaleBalance = {
@@ -30,65 +32,72 @@ export default function Customers() {
   const [area, setArea] = useState("");
   const [route, setRoute] = useState("");
   const [openingBalance, setOpeningBalance] = useState("0");
+  const [whatsappOptIn, setWhatsappOptIn] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
   useEffect(() => {
-    loadCustomers();
+    void loadCustomers();
   }, []);
+
+  // =========================================================
+  // LOAD CUSTOMERS
+  // =========================================================
 
   async function loadCustomers() {
     setLoading(true);
 
     try {
-      // -----------------------------------------
-      // LOAD CUSTOMERS
-      // -----------------------------------------
-
-      const { data: customerData, error: customerError } =
-        await supabase
-          .from("customers")
-          .select(
-            `
-              id,
-              customer_name,
-              mobile,
-              address,
-              area,
-              route,
-              opening_balance
-            `
-          )
-          .order("customer_name", {
-            ascending: true,
-          });
+      const {
+        data: customerData,
+        error: customerError,
+      } = await supabase
+        .from("customers")
+        .select(
+          `
+            id,
+            customer_name,
+            mobile,
+            address,
+            area,
+            route,
+            opening_balance,
+            whatsapp_opt_in,
+            whatsapp_opt_in_at
+          `,
+        )
+        .order("customer_name", {
+          ascending: true,
+        });
 
       if (customerError) {
         throw customerError;
       }
 
-      // -----------------------------------------
+      // -------------------------------------------------------
       // LOAD UNPAID SALES
-      // -----------------------------------------
+      // -------------------------------------------------------
 
-      const { data: salesData, error: salesError } =
-        await supabase
-          .from("sales")
-          .select(
-            `
-              customer_id,
-              balance_amount
-            `
-          )
-          .gt("balance_amount", 0);
+      const {
+        data: salesData,
+        error: salesError,
+      } = await supabase
+        .from("sales")
+        .select(
+          `
+            customer_id,
+            balance_amount
+          `,
+        )
+        .gt("balance_amount", 0);
 
       if (salesError) {
         throw salesError;
       }
 
-      // -----------------------------------------
-      // CALCULATE SALES OUTSTANDING
-      // -----------------------------------------
+      // -------------------------------------------------------
+      // CALCULATE OUTSTANDING
+      // -------------------------------------------------------
 
       const outstandingMap: Record<string, number> = {};
 
@@ -101,12 +110,12 @@ export default function Customers() {
           outstandingMap[sale.customer_id] =
             (outstandingMap[sale.customer_id] || 0) +
             Number(sale.balance_amount || 0);
-        }
+        },
       );
 
-      // -----------------------------------------
-      // COMBINE OPENING BALANCE + SALES BALANCE
-      // -----------------------------------------
+      // -------------------------------------------------------
+      // FINAL CUSTOMER LIST
+      // -------------------------------------------------------
 
       const finalCustomers: Customer[] = (
         customerData || []
@@ -119,17 +128,33 @@ export default function Customers() {
 
         return {
           id: customer.id,
+
           customer_name:
             customer.customer_name || "",
-          mobile: customer.mobile || "",
-          address: customer.address || "",
-          area: customer.area || "",
-          route: customer.route || "",
-          opening_balance: opening,
 
-          // TOTAL OUTSTANDING
+          mobile:
+            customer.mobile || "",
+
+          address:
+            customer.address || "",
+
+          area:
+            customer.area || "",
+
+          route:
+            customer.route || "",
+
+          opening_balance:
+            opening,
+
           outstanding:
             opening + salesOutstanding,
+
+          whatsapp_opt_in:
+            Boolean(customer.whatsapp_opt_in),
+
+          whatsapp_opt_in_at:
+            customer.whatsapp_opt_in_at || null,
         };
       });
 
@@ -137,7 +162,7 @@ export default function Customers() {
     } catch (error) {
       console.error(
         "CUSTOMER LOADING ERROR:",
-        error
+        error,
       );
 
       const message =
@@ -151,9 +176,9 @@ export default function Customers() {
     }
   }
 
-  // -----------------------------------------
+  // =========================================================
   // SAVE CUSTOMER
-  // -----------------------------------------
+  // =========================================================
 
   async function saveCustomer() {
     if (!customerName.trim()) {
@@ -163,9 +188,22 @@ export default function Customers() {
 
     const opening = Number(openingBalance);
 
-    if (Number.isNaN(opening) || opening < 0) {
+    if (
+      Number.isNaN(opening) ||
+      opening < 0
+    ) {
       alert(
-        "Opening balance must be a valid amount."
+        "Opening balance must be a valid amount.",
+      );
+      return;
+    }
+
+    if (
+      whatsappOptIn &&
+      !mobile.trim()
+    ) {
+      alert(
+        "Enter customer mobile number before enabling WhatsApp messages.",
       );
       return;
     }
@@ -175,21 +213,44 @@ export default function Customers() {
     try {
       const cleanRoute = route.trim();
 
-      // ---------------------------------------
+      const whatsappOptInAt =
+        whatsappOptIn
+          ? new Date().toISOString()
+          : null;
+
+      // -------------------------------------------------------
       // UPDATE EXISTING CUSTOMER
-      // ---------------------------------------
+      // -------------------------------------------------------
 
       if (editingId) {
-        const { error } = await supabase
+        const {
+          error,
+        } = await supabase
           .from("customers")
           .update({
             customer_name:
               customerName.trim(),
-            mobile: mobile.trim(),
-            address: address.trim(),
-            area: area.trim(),
-            route: cleanRoute || null,
-            opening_balance: opening,
+
+            mobile:
+              mobile.trim(),
+
+            address:
+              address.trim(),
+
+            area:
+              area.trim(),
+
+            route:
+              cleanRoute || null,
+
+            opening_balance:
+              opening,
+
+            whatsapp_opt_in:
+              whatsappOptIn,
+
+            whatsapp_opt_in_at:
+              whatsappOptInAt,
           })
           .eq("id", editingId);
 
@@ -198,23 +259,41 @@ export default function Customers() {
         }
 
         alert(
-          "Customer updated successfully."
+          "Customer updated successfully.",
         );
       } else {
-        // -------------------------------------
+        // -----------------------------------------------------
         // ADD NEW CUSTOMER
-        // -------------------------------------
+        // -----------------------------------------------------
 
-        const { error } = await supabase
+        const {
+          error,
+        } = await supabase
           .from("customers")
           .insert({
             customer_name:
               customerName.trim(),
-            mobile: mobile.trim(),
-            address: address.trim(),
-            area: area.trim(),
-            route: cleanRoute || null,
-            opening_balance: opening,
+
+            mobile:
+              mobile.trim(),
+
+            address:
+              address.trim(),
+
+            area:
+              area.trim(),
+
+            route:
+              cleanRoute || null,
+
+            opening_balance:
+              opening,
+
+            whatsapp_opt_in:
+              whatsappOptIn,
+
+            whatsapp_opt_in_at:
+              whatsappOptInAt,
           });
 
         if (error) {
@@ -222,7 +301,7 @@ export default function Customers() {
         }
 
         alert(
-          "Customer added successfully."
+          "Customer added successfully.",
         );
       }
 
@@ -232,7 +311,7 @@ export default function Customers() {
     } catch (error) {
       console.error(
         "SAVE CUSTOMER ERROR:",
-        error
+        error,
       );
 
       const message =
@@ -246,39 +325,43 @@ export default function Customers() {
     }
   }
 
-  // -----------------------------------------
+  // =========================================================
   // EDIT CUSTOMER
-  // -----------------------------------------
+  // =========================================================
 
   function editCustomer(
-    customer: Customer
+    customer: Customer,
   ) {
     setEditingId(customer.id);
 
     setCustomerName(
-      customer.customer_name || ""
+      customer.customer_name || "",
     );
 
     setMobile(
-      customer.mobile || ""
+      customer.mobile || "",
     );
 
     setAddress(
-      customer.address || ""
+      customer.address || "",
     );
 
     setArea(
-      customer.area || ""
+      customer.area || "",
     );
 
     setRoute(
-      customer.route || ""
+      customer.route || "",
     );
 
     setOpeningBalance(
       String(
-        customer.opening_balance || 0
-      )
+        customer.opening_balance || 0,
+      ),
+    );
+
+    setWhatsappOptIn(
+      Boolean(customer.whatsapp_opt_in),
     );
 
     window.scrollTo({
@@ -287,16 +370,16 @@ export default function Customers() {
     });
   }
 
-  // -----------------------------------------
+  // =========================================================
   // DELETE CUSTOMER
-  // -----------------------------------------
+  // =========================================================
 
   async function deleteCustomer(
-    id: string
+    id: string,
   ) {
     const confirmed =
       window.confirm(
-        "Are you sure you want to delete this customer?"
+        "Are you sure you want to delete this customer?",
       );
 
     if (!confirmed) {
@@ -306,7 +389,9 @@ export default function Customers() {
     setLoading(true);
 
     try {
-      const { error } = await supabase
+      const {
+        error,
+      } = await supabase
         .from("customers")
         .delete()
         .eq("id", id);
@@ -316,14 +401,14 @@ export default function Customers() {
       }
 
       alert(
-        "Customer deleted successfully."
+        "Customer deleted successfully.",
       );
 
       await loadCustomers();
     } catch (error) {
       console.error(
         "DELETE CUSTOMER ERROR:",
-        error
+        error,
       );
 
       const message =
@@ -337,9 +422,9 @@ export default function Customers() {
     }
   }
 
-  // -----------------------------------------
+  // =========================================================
   // CLEAR FORM
-  // -----------------------------------------
+  // =========================================================
 
   function clearForm() {
     setEditingId(null);
@@ -350,32 +435,37 @@ export default function Customers() {
     setArea("");
     setRoute("");
     setOpeningBalance("0");
+    setWhatsappOptIn(false);
   }
 
-  // -----------------------------------------
+  // =========================================================
   // ROUTES
-  // -----------------------------------------
+  // =========================================================
 
   const availableRoutes = useMemo(() => {
     return Array.from(
       new Set(
         customers
           .map((customer) =>
-            (customer.route || "").trim()
+            (customer.route || "").trim(),
           )
-          .filter(Boolean)
-      )
+          .filter(Boolean),
+      ),
     ).sort((a, b) =>
-      a.localeCompare(b, undefined, {
-        numeric: true,
-        sensitivity: "base",
-      })
+      a.localeCompare(
+        b,
+        undefined,
+        {
+          numeric: true,
+          sensitivity: "base",
+        },
+      ),
     );
   }, [customers]);
 
-  // -----------------------------------------
+  // =========================================================
   // SEARCH
-  // -----------------------------------------
+  // =========================================================
 
   const filteredCustomers =
     customers.filter((customer) => {
@@ -406,12 +496,15 @@ export default function Customers() {
           .toLowerCase()
           .includes(searchText);
 
-      return matchesRoute && matchesSearch;
+      return (
+        matchesRoute &&
+        matchesSearch
+      );
     });
 
-  // -----------------------------------------
+  // =========================================================
   // TOTALS
-  // -----------------------------------------
+  // =========================================================
 
   const totalCustomers =
     customers.length;
@@ -420,8 +513,10 @@ export default function Customers() {
     customers.reduce(
       (sum, customer) =>
         sum +
-        Number(customer.outstanding || 0),
-      0
+        Number(
+          customer.outstanding || 0,
+        ),
+      0,
     );
 
   const totalOpeningBalance =
@@ -429,14 +524,20 @@ export default function Customers() {
       (sum, customer) =>
         sum +
         Number(
-          customer.opening_balance || 0
+          customer.opening_balance || 0,
         ),
-      0
+      0,
     );
 
-  // -----------------------------------------
+  const whatsappCustomers =
+    customers.filter(
+      (customer) =>
+        customer.whatsapp_opt_in,
+    ).length;
+
+  // =========================================================
   // UI
-  // -----------------------------------------
+  // =========================================================
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -450,15 +551,16 @@ export default function Customers() {
         </h1>
 
         <p className="text-gray-600 mt-1">
-          Manage customers, routes and
-          outstanding balances.
+          Manage customers, routes,
+          balances and WhatsApp
+          notifications.
         </p>
 
       </div>
 
       {/* SUMMARY CARDS */}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
 
         <div className="bg-white rounded-xl shadow p-5 border">
 
@@ -498,6 +600,18 @@ export default function Customers() {
 
         </div>
 
+        <div className="bg-white rounded-xl shadow p-5 border">
+
+          <p className="text-gray-500">
+            WhatsApp Enabled
+          </p>
+
+          <p className="text-3xl font-bold text-green-600 mt-2">
+            {whatsappCustomers}
+          </p>
+
+        </div>
+
       </div>
 
       {/* ADD / EDIT CUSTOMER */}
@@ -514,7 +628,7 @@ export default function Customers() {
 
         <div className="grid md:grid-cols-2 gap-4">
 
-          {/* NAME */}
+          {/* CUSTOMER NAME */}
 
           <div>
 
@@ -528,7 +642,7 @@ export default function Customers() {
               value={customerName}
               onChange={(e) =>
                 setCustomerName(
-                  e.target.value
+                  e.target.value,
                 )
               }
             />
@@ -544,15 +658,72 @@ export default function Customers() {
             </label>
 
             <input
+              type="tel"
               className="w-full border rounded-lg p-3"
-              placeholder="Mobile"
+              placeholder="10 digit mobile number"
               value={mobile}
               onChange={(e) =>
                 setMobile(
-                  e.target.value
+                  e.target.value,
                 )
               }
             />
+
+          </div>
+
+          {/* WHATSAPP OPT-IN */}
+
+          <div className="md:col-span-2">
+
+            <div className="border rounded-xl p-4 bg-green-50">
+
+              <div className="flex items-start gap-3">
+
+                <input
+                  id="customer-whatsapp-opt-in"
+                  type="checkbox"
+                  checked={whatsappOptIn}
+                  onChange={(e) =>
+                    setWhatsappOptIn(
+                      e.target.checked,
+                    )
+                  }
+                  className="mt-1 h-5 w-5"
+                />
+
+                <div>
+
+                  <label
+                    htmlFor="customer-whatsapp-opt-in"
+                    className="font-semibold text-green-800 cursor-pointer"
+                  >
+                    Customer has opted in
+                    to receive WhatsApp
+                    messages
+                  </label>
+
+                  <p className="text-sm text-green-700 mt-1">
+                    When enabled, MANVI ERP
+                    can automatically send
+                    eligible sale and
+                    collection messages
+                    to this customer's
+                    WhatsApp number.
+                  </p>
+
+                  {!mobile.trim() && (
+                    <p className="text-sm text-red-600 mt-2 font-medium">
+                      Enter the customer's
+                      mobile number before
+                      enabling WhatsApp.
+                    </p>
+                  )}
+
+                </div>
+
+              </div>
+
+            </div>
 
           </div>
 
@@ -570,7 +741,7 @@ export default function Customers() {
               value={area}
               onChange={(e) =>
                 setArea(
-                  e.target.value
+                  e.target.value,
                 )
               }
             />
@@ -593,25 +764,27 @@ export default function Customers() {
               value={route}
               onChange={(e) =>
                 setRoute(
-                  e.target.value
+                  e.target.value,
                 )
               }
             />
 
             <datalist id="customer-routes">
+
               {availableRoutes.map(
                 (routeName) => (
                   <option
                     key={routeName}
                     value={routeName}
                   />
-                )
+                ),
               )}
+
             </datalist>
 
             <p className="text-sm text-gray-500 mt-1">
-              Example: Route 1, Route 2,
-              North, South
+              Example: Route 1,
+              Route 2, North, South
             </p>
 
           </div>
@@ -633,14 +806,14 @@ export default function Customers() {
               value={openingBalance}
               onChange={(e) =>
                 setOpeningBalance(
-                  e.target.value
+                  e.target.value,
                 )
               }
             />
 
             <p className="text-sm text-gray-500 mt-1">
-              Existing amount payable by
-              the customer.
+              Existing amount payable
+              by the customer.
             </p>
 
           </div>
@@ -660,7 +833,7 @@ export default function Customers() {
               value={address}
               onChange={(e) =>
                 setAddress(
-                  e.target.value
+                  e.target.value,
                 )
               }
             />
@@ -674,7 +847,9 @@ export default function Customers() {
         <div className="flex gap-3 mt-5">
 
           <button
-            onClick={saveCustomer}
+            onClick={() => {
+              void saveCustomer();
+            }}
             disabled={loading}
             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-semibold"
           >
@@ -717,7 +892,7 @@ export default function Customers() {
               value={search}
               onChange={(e) =>
                 setSearch(
-                  e.target.value
+                  e.target.value,
                 )
               }
               className="w-full border rounded-lg p-3"
@@ -738,21 +913,23 @@ export default function Customers() {
               value={routeSearch}
               onChange={(e) =>
                 setRouteSearch(
-                  e.target.value
+                  e.target.value,
                 )
               }
               className="w-full border rounded-lg p-3"
             />
 
             <datalist id="search-routes">
+
               {availableRoutes.map(
                 (routeName) => (
                   <option
                     key={routeName}
                     value={routeName}
                   />
-                )
+                ),
               )}
+
             </datalist>
 
           </div>
@@ -762,14 +939,19 @@ export default function Customers() {
         {(search.trim() ||
           routeSearch.trim()) && (
           <div className="mt-3 text-sm text-gray-600">
+
             Showing{" "}
+
             <span className="font-semibold">
               {filteredCustomers.length}
             </span>{" "}
+
             matching customer
-            {filteredCustomers.length === 1
+            {filteredCustomers.length ===
+            1
               ? ""
               : "s"}
+
           </div>
         )}
 
@@ -801,6 +983,10 @@ export default function Customers() {
                 Area
               </th>
 
+              <th className="p-3 text-center">
+                WhatsApp
+              </th>
+
               <th className="p-3 text-right">
                 Opening Balance
               </th>
@@ -823,7 +1009,7 @@ export default function Customers() {
               <tr>
 
                 <td
-                  colSpan={7}
+                  colSpan={8}
                   className="p-6 text-center"
                 >
                   Loading customers...
@@ -857,17 +1043,32 @@ export default function Customers() {
                       {customer.area || "-"}
                     </td>
 
+                    <td className="p-3 text-center">
+
+                      {customer.whatsapp_opt_in ? (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                          Enabled
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
+                          Off
+                        </span>
+                      )}
+
+                    </td>
+
                     <td className="p-3 text-right">
                       ₹{" "}
                       {Number(
                         customer.opening_balance ||
-                          0
+                          0,
                       ).toFixed(2)}
                     </td>
 
                     <td
                       className={`p-3 text-right font-bold ${
-                        customer.outstanding > 0
+                        customer.outstanding >
+                        0
                           ? "text-red-600"
                           : "text-green-600"
                       }`}
@@ -875,7 +1076,7 @@ export default function Customers() {
                       ₹{" "}
                       {Number(
                         customer.outstanding ||
-                          0
+                          0,
                       ).toFixed(2)}
                     </td>
 
@@ -886,7 +1087,7 @@ export default function Customers() {
                         <button
                           onClick={() =>
                             editCustomer(
-                              customer
+                              customer,
                             )
                           }
                           className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-1 rounded"
@@ -895,11 +1096,11 @@ export default function Customers() {
                         </button>
 
                         <button
-                          onClick={() =>
-                            deleteCustomer(
-                              customer.id
-                            )
-                          }
+                          onClick={() => {
+                            void deleteCustomer(
+                              customer.id,
+                            );
+                          }}
                           className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded"
                         >
                           Delete
@@ -910,8 +1111,7 @@ export default function Customers() {
                     </td>
 
                   </tr>
-
-                )
+                ),
               )}
 
             {!loading &&
@@ -921,7 +1121,7 @@ export default function Customers() {
                 <tr>
 
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="p-6 text-center text-gray-500"
                   >
                     No customers found.
