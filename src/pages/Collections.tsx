@@ -1628,24 +1628,6 @@ export default function Collections() {
     ]);
 
   /* =====================================================
-     LOADING
-     ===================================================== */
-
-  if (loadingData) {
-    return (
-      <div className="p-8">
-        <h1 className="text-3xl font-bold text-blue-700">
-          Collections
-        </h1>
-
-        <p className="mt-3 text-gray-600">
-          Loading collections...
-        </p>
-      </div>
-    );
-  }
-
-  /* =====================================================
      ROUTE-WISE QUICK COLLECTION
   ===================================================== */
 
@@ -1730,6 +1712,25 @@ export default function Collections() {
       setQuickRouteRows((prev) => ({ ...prev, [customer.id]: { ...row, saving: false } }));
       alert(`Unable to save collection for ${customer.customer_name}.\n\n${error?.message || "Unknown error"}`);
     }
+  }
+
+
+  /* =====================================================
+     LOADING
+     ===================================================== */
+
+  if (loadingData) {
+    return (
+      <div className="p-8">
+        <h1 className="text-3xl font-bold text-blue-700">
+          Collections
+        </h1>
+
+        <p className="mt-3 text-gray-600">
+          Loading collections...
+        </p>
+      </div>
+    );
   }
 
   /* =====================================================
