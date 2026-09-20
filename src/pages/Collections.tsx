@@ -10,7 +10,9 @@ type Customer = {
 
 type QuickCollectionRow = {
   amount: string;
-  paymentMethod: "Cash" | "UPI";
+  cashAmount: string;
+  upiAmount: string;
+  paymentMethod: "Cash" | "UPI" | "Split";
   saving: boolean;
 };
 
@@ -547,6 +549,8 @@ export default function Collections() {
       (customer) => {
         rows[customer.id] = {
           amount: "",
+          cashAmount: "",
+          upiAmount: "",
           paymentMethod: "Cash",
           saving: false,
         };
@@ -629,6 +633,10 @@ export default function Collections() {
       [customerIdValue]: {
         amount:
           previous[customerIdValue]?.amount || "",
+        cashAmount:
+          previous[customerIdValue]?.cashAmount || "",
+        upiAmount:
+          previous[customerIdValue]?.upiAmount || "",
         paymentMethod:
           previous[customerIdValue]?.paymentMethod ||
           "Cash",
@@ -645,11 +653,28 @@ export default function Collections() {
     const row =
       quickCollectionRows[customer.id];
 
+    const quickCash =
+      row?.paymentMethod === "Cash"
+        ? Number(row.amount || 0)
+        : row?.paymentMethod === "Split"
+        ? Number(row.cashAmount || 0)
+        : 0;
+
+    const quickUpi =
+      row?.paymentMethod === "UPI"
+        ? Number(row.amount || 0)
+        : row?.paymentMethod === "Split"
+        ? Number(row.upiAmount || 0)
+        : 0;
+
     const quickAmount =
-      Number(row?.amount || 0);
+      quickCash + quickUpi;
 
     if (
-      !Number.isFinite(quickAmount) ||
+      !Number.isFinite(quickCash) ||
+      !Number.isFinite(quickUpi) ||
+      quickCash < 0 ||
+      quickUpi < 0 ||
       quickAmount <= 0
     ) {
       alert(
@@ -735,16 +760,6 @@ export default function Collections() {
           quickAmount
         );
 
-      const cash =
-        row.paymentMethod === "Cash"
-          ? quickAmount
-          : 0;
-
-      const upi =
-        row.paymentMethod === "UPI"
-          ? quickAmount
-          : 0;
-
       const { data: collection, error } =
         await supabase
           .from("collections")
@@ -758,9 +773,9 @@ export default function Collections() {
             payment_method:
               row.paymentMethod,
             cash_amount:
-              cash,
+              quickCash,
             upi_amount:
-              upi,
+              quickUpi,
             remarks:
               `Route: ${selectedRoute}`,
           })
@@ -864,6 +879,8 @@ export default function Collections() {
         customer.id,
         {
           amount: "",
+          cashAmount: "",
+          upiAmount: "",
           saving: false,
         }
       );
@@ -933,6 +950,9 @@ export default function Collections() {
 
         if (row?.paymentMethod === "UPI") {
           upi += enteredAmount;
+        } else if (row?.paymentMethod === "Split") {
+          cash += Number(row.cashAmount || 0);
+          upi += Number(row.upiAmount || 0);
         } else {
           cash += enteredAmount;
         }
@@ -2362,6 +2382,8 @@ export default function Collections() {
                       customer.id
                     ] || {
                       amount: "",
+                      cashAmount: "",
+                      upiAmount: "",
                       paymentMethod: "Cash" as const,
                       saving: false,
                     };
@@ -2402,37 +2424,75 @@ export default function Collections() {
                         </div>
 
                         <div>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            inputMode="decimal"
-                            value={row.amount}
-                            onChange={(e) =>
-                              updateQuickCollectionRow(
-                                customer.id,
-                                {
-                                  amount:
-                                    e.target.value,
+                          {row.paymentMethod === "Split" ? (
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                inputMode="decimal"
+                                value={row.cashAmount}
+                                onChange={(e) =>
+                                  updateQuickCollectionRow(
+                                    customer.id,
+                                    { cashAmount: e.target.value }
+                                  )
                                 }
-                              )
-                            }
-                            onKeyDown={(e) => {
-                              if (
-                                e.key === "Enter"
-                              ) {
-                                e.preventDefault();
-                                void saveQuickRouteCollection(
-                                  customer
-                                );
+                                placeholder="Cash"
+                                className="w-full border-2 border-green-200 rounded-xl px-3 py-3 font-bold"
+                              />
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                inputMode="decimal"
+                                value={row.upiAmount}
+                                onChange={(e) =>
+                                  updateQuickCollectionRow(
+                                    customer.id,
+                                    { upiAmount: e.target.value }
+                                  )
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    void saveQuickRouteCollection(customer);
+                                  }
+                                }}
+                                placeholder="UPI"
+                                className="w-full border-2 border-indigo-200 rounded-xl px-3 py-3 font-bold"
+                              />
+                            </div>
+                          ) : (
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              inputMode="decimal"
+                              value={row.amount}
+                              onChange={(e) =>
+                                updateQuickCollectionRow(
+                                  customer.id,
+                                  { amount: e.target.value }
+                                )
                               }
-                            }}
-                            placeholder="Amount"
-                            className="w-full border-2 border-green-200 rounded-xl px-3 py-3 font-bold text-lg"
-                          />
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  void saveQuickRouteCollection(customer);
+                                }
+                              }}
+                              placeholder={
+                                row.paymentMethod === "UPI"
+                                  ? "UPI Amount"
+                                  : "Cash Amount"
+                              }
+                              className="w-full border-2 border-green-200 rounded-xl px-3 py-3 font-bold text-lg"
+                            />
+                          )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-1">
+                        <div className="grid grid-cols-3 gap-1">
 
                           <button
                             type="button"
@@ -2466,14 +2526,35 @@ export default function Collections() {
                                 }
                               )
                             }
-                            className={`rounded-lg px-2 py-3 text-sm font-bold ${
+                            className={`rounded-lg px-2 py-3 text-xs font-bold ${
                               row.paymentMethod ===
                               "UPI"
-                                ? "bg-blue-600 text-white"
-                                : "bg-blue-50 text-blue-700 border border-blue-200"
+                                ? "bg-indigo-600 text-white"
+                                : "bg-indigo-50 text-indigo-700 border border-indigo-200"
                             }`}
                           >
                             UPI
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateQuickCollectionRow(
+                                customer.id,
+                                {
+                                  paymentMethod:
+                                    "Split",
+                                }
+                              )
+                            }
+                            className={`rounded-lg px-2 py-3 text-xs font-bold ${
+                              row.paymentMethod ===
+                              "Split"
+                                ? "bg-purple-600 text-white"
+                                : "bg-purple-50 text-purple-700 border border-purple-200"
+                            }`}
+                          >
+                            SPLIT
                           </button>
 
                         </div>
@@ -2482,8 +2563,13 @@ export default function Collections() {
                           type="button"
                           disabled={
                             row.saving ||
-                            !Number(
-                              row.amount || 0
+                            (
+                              row.paymentMethod === "Split"
+                                ? (
+                                    Number(row.cashAmount || 0) +
+                                    Number(row.upiAmount || 0) <= 0
+                                  )
+                                : !Number(row.amount || 0)
                             )
                           }
                           onClick={() =>
