@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { sendAutomaticWhatsApp } from "../lib/whatsapp";
 
 type Customer = {
   id: string;
   customer_name: string;
+  mobile: string | null;
   opening_balance: number;
   route: string;
 };
@@ -208,6 +210,7 @@ export default function Collections() {
           `
           id,
           customer_name,
+          mobile,
           opening_balance,
           route
           `
@@ -223,6 +226,8 @@ export default function Collections() {
           id: customer.id,
           customer_name:
             customer.customer_name || "",
+          mobile:
+            customer.mobile || null,
           opening_balance:
             Number(
               customer.opening_balance
@@ -793,6 +798,39 @@ export default function Collections() {
           if (openingError) {
             throw openingError;
           }
+        }
+      }
+
+      // Automatic WhatsApp is non-blocking. The collection remains saved even if messaging fails.
+      const savedCustomer = customers.find((item) => item.id === customerId);
+      if (savedCustomer?.mobile) {
+        const whatsappMessage = [
+          "*MANVI MILK AGENCIES*",
+          "*COLLECTION RECEIPT*",
+          "────────────────────────",
+          `Customer: ${savedCustomer.customer_name}`,
+          `Date: ${formatDateDDMMYYYY(normalizedDate)}`,
+          "────────────────────────",
+          `COLLECTED: ₹${collectionAmount.toFixed(2)}`,
+          `Cash: ₹${cashPaid.toFixed(2)}`,
+          `UPI: ₹${upiPaid.toFixed(2)}`,
+          `Payment: ${paymentMethod}`,
+          `Remaining Balance: ₹${Math.max(0, balance - collectionAmount).toFixed(2)}`,
+          "────────────────────────",
+          "Thank you for your payment.",
+        ].join("\n");
+
+        const whatsappResult = await sendAutomaticWhatsApp({
+          customerId: savedCustomer.id,
+          customerName: savedCustomer.customer_name,
+          customerMobile: savedCustomer.mobile,
+          message: whatsappMessage,
+          messageType: "collection",
+          referenceId: collection.id,
+        });
+
+        if (!whatsappResult.sent && !whatsappResult.skipped) {
+          console.warn("Collection saved, but automatic WhatsApp failed:", whatsappResult.reason);
         }
       }
 
@@ -1704,6 +1742,38 @@ export default function Collections() {
         const ob = Number(customer.opening_balance) || 0; const used = Math.min(remaining, ob);
         if (used > 0) { const { error: oe } = await supabase.from("customers").update({ opening_balance: ob - used }).eq("id", customer.id); if (oe) throw oe; }
       }
+      // Automatic WhatsApp is non-blocking. Route collection stays saved if messaging fails.
+      if (customer.mobile) {
+        const whatsappMessage = [
+          "*MANVI MILK AGENCIES*",
+          "*COLLECTION RECEIPT*",
+          "────────────────────────",
+          `Customer: ${customer.customer_name}`,
+          `Date: ${formatDateDDMMYYYY(getTodayLocalDate())}`,
+          "────────────────────────",
+          `COLLECTED: ₹${total.toFixed(2)}`,
+          `Cash: ₹${cash.toFixed(2)}`,
+          `UPI: ₹${upi.toFixed(2)}`,
+          `Payment: ${cash > 0 && upi > 0 ? "Split" : cash > 0 ? "Cash" : "UPI"}`,
+          `Remaining Balance: ₹${Math.max(0, outstanding - total).toFixed(2)}`,
+          "────────────────────────",
+          "Thank you for your payment.",
+        ].join("\n");
+
+        const whatsappResult = await sendAutomaticWhatsApp({
+          customerId: customer.id,
+          customerName: customer.customer_name,
+          customerMobile: customer.mobile,
+          message: whatsappMessage,
+          messageType: "collection",
+          referenceId: collection.id,
+        });
+
+        if (!whatsappResult.sent && !whatsappResult.skipped) {
+          console.warn("Route collection saved, but automatic WhatsApp failed:", whatsappResult.reason);
+        }
+      }
+
       await loadCustomers(); await loadRecentCollections();
       setQuickRouteRows((prev) => ({ ...prev, [customer.id]: { cashAmount: "", upiAmount: "", saving: false } }));
       await selectQuickRoute(selectedRoute);
