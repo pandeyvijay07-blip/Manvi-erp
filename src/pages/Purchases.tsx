@@ -15,6 +15,11 @@ type Brand = {
   brand_name: string;
 };
 
+type Supplier = {
+  id: string;
+  supplier_name: string;
+};
+
 type Product = {
   id: string;
   brand_id: string | null;
@@ -46,20 +51,6 @@ type SavedPurchase = {
   payment_method: string | null;
   paid_amount: number | string | null;
   balance_amount: number | string | null;
-};
-
-type StockFlowRow = {
-  product_id: string;
-  brand_id: string | null;
-  product_name: string;
-  size: number;
-  unit: string;
-  yesterdayClosing: number;
-  todayOpening: number;
-  purchases: number;
-  sales: number;
-  todayClosing: number;
-  nextDayOpening: number;
 };
 
 // ======================================================
@@ -210,6 +201,12 @@ export default function Purchases() {
     useState<Brand[]>([]);
 
   const [
+    suppliers,
+    setSuppliers,
+  ] =
+    useState<Supplier[]>([]);
+
+  const [
     products,
     setProducts,
   ] =
@@ -264,6 +261,12 @@ export default function Purchases() {
     setPaidAmount,
   ] =
     useState("0");
+
+  const [
+    editingPurchaseId,
+    setEditingPurchaseId,
+  ] =
+    useState<string | null>(null);
 
   // ====================================================
   // PRODUCT ENTRY
@@ -328,42 +331,38 @@ export default function Purchases() {
     useState(false);
 
   // ====================================================
-  // DATE-WISE STOCK FLOW
+  // AUTOMATIC PURCHASE BILL NUMBER
   // ====================================================
 
-  const [
-    stockDate,
-    setStockDate,
-  ] =
-    useState(
-      todayInput()
-    );
+  async function generateNextPurchaseBillNo() {
+    try {
+      const { data, error } = await supabase
+        .from("purchases")
+        .select("invoice_no")
+        .not("invoice_no", "is", null)
+        .limit(5000);
 
-  const [
-    stockDateDisplay,
-    setStockDateDisplay,
-  ] =
-    useState(
-      formatDate(todayInput())
-    );
+      if (error) throw error;
 
-  const [
-    stockFlowRows,
-    setStockFlowRows,
-  ] =
-    useState<StockFlowRow[]>([]);
+      let maxNumber = 0;
 
-  const [
-    stockFlowLoading,
-    setStockFlowLoading,
-  ] =
-    useState(false);
+      for (const row of data || []) {
+        const value = String(row.invoice_no || "").trim();
+        const match = value.match(/^PUR-(\d+)$/i);
+        if (match) {
+          const number = Number(match[1]);
+          if (Number.isFinite(number)) {
+            maxNumber = Math.max(maxNumber, number);
+          }
+        }
+      }
 
-  const [
-    stockFlowError,
-    setStockFlowError,
-  ] =
-    useState("");
+      setInvoiceNo(`PUR-${String(maxNumber + 1).padStart(5, "0")}`);
+    } catch (error: any) {
+      console.error("GENERATE PURCHASE BILL NUMBER ERROR:", error);
+      setInvoiceNo(`PUR-${Date.now()}`);
+    }
+  }
 
   // ====================================================
   // INITIAL LOAD
@@ -373,23 +372,15 @@ export default function Purchases() {
 
     loadBrands();
 
+    loadSuppliers();
+
     loadProducts();
 
     loadPurchaseHistory();
 
+    generateNextPurchaseBillNo();
+
   }, []);
-
-
-  useEffect(() => {
-
-    if (products.length > 0) {
-      void loadStockFlow(stockDate);
-    }
-
-  }, [
-    products,
-    stockDate,
-  ]);
 
   // ====================================================
   // LOAD BRANDS
@@ -440,6 +431,29 @@ export default function Purchases() {
         )
       );
 
+    }
+  }
+
+  // ====================================================
+  // LOAD SUPPLIERS
+  // ====================================================
+
+  async function loadSuppliers() {
+    try {
+      const { data, error } = await supabase
+        .from("suppliers")
+        .select("id, supplier_name")
+        .order("supplier_name");
+
+      if (error) throw error;
+
+      setSuppliers((data || []) as Supplier[]);
+    } catch (error: any) {
+      console.error("LOAD SUPPLIERS ERROR:", error);
+      alert(
+        "Unable to load suppliers:\n\n" +
+          (error?.message || "Unknown error")
+      );
     }
   }
 
@@ -576,292 +590,6 @@ export default function Purchases() {
       );
 
     }
-  }
-
-  // ====================================================
-  // DATE-WISE STOCK FLOW
-  // ====================================================
-
-  async function loadStockFlow(
-    selectedDate: string
-  ) {
-
-    if (!selectedDate) {
-      return;
-    }
-
-    const today = todayInput();
-
-    if (selectedDate > today) {
-      setStockFlowRows([]);
-      setStockFlowError(
-        "Future date is not available. Please select today or an earlier date."
-      );
-      return;
-    }
-
-    setStockFlowLoading(true);
-    setStockFlowError("");
-
-    try {
-
-      // --------------------------------------------------
-      // LOAD PURCHASE HEADERS FROM SELECTED DATE TO TODAY
-      // --------------------------------------------------
-
-      const {
-        data: purchaseHeaders,
-        error: purchaseHeaderError,
-      } = await supabase
-        .from("purchases")
-        .select("id, purchase_date")
-        .gte("purchase_date", selectedDate)
-        .lte("purchase_date", today);
-
-      if (purchaseHeaderError) {
-        throw purchaseHeaderError;
-      }
-
-      // --------------------------------------------------
-      // LOAD SALES HEADERS FROM SELECTED DATE TO TODAY
-      // --------------------------------------------------
-
-      const {
-        data: saleHeaders,
-        error: saleHeaderError,
-      } = await supabase
-        .from("sales")
-        .select("id, sale_date")
-        .gte("sale_date", selectedDate)
-        .lte("sale_date", today);
-
-      if (saleHeaderError) {
-        throw saleHeaderError;
-      }
-
-      const purchaseIds =
-        (purchaseHeaders || []).map(
-          (row: any) => row.id
-        );
-
-      const saleIds =
-        (saleHeaders || []).map(
-          (row: any) => row.id
-        );
-
-      // --------------------------------------------------
-      // LOAD PURCHASE ITEMS
-      // --------------------------------------------------
-
-      let purchaseItems: any[] = [];
-
-      if (purchaseIds.length > 0) {
-
-        const {
-          data,
-          error,
-        } = await supabase
-          .from("purchase_items")
-          .select("purchase_id, product_id, quantity")
-          .in("purchase_id", purchaseIds);
-
-        if (error) {
-          throw error;
-        }
-
-        purchaseItems = data || [];
-      }
-
-      // --------------------------------------------------
-      // LOAD SALE ITEMS
-      // --------------------------------------------------
-
-      let saleItems: any[] = [];
-
-      if (saleIds.length > 0) {
-
-        const {
-          data,
-          error,
-        } = await supabase
-          .from("sale_items")
-          .select("sale_id, product_id, quantity")
-          .in("sale_id", saleIds);
-
-        if (error) {
-          throw error;
-        }
-
-        saleItems = data || [];
-      }
-
-      const purchaseDateMap = new Map<string, string>();
-      (purchaseHeaders || []).forEach((row: any) => {
-        purchaseDateMap.set(
-          String(row.id),
-          String(row.purchase_date || "").slice(0, 10)
-        );
-      });
-
-      const saleDateMap = new Map<string, string>();
-      (saleHeaders || []).forEach((row: any) => {
-        saleDateMap.set(
-          String(row.id),
-          String(row.sale_date || "").slice(0, 10)
-        );
-      });
-
-      const purchaseTodayMap = new Map<string, number>();
-      const purchaseAfterMap = new Map<string, number>();
-
-      purchaseItems.forEach((item: any) => {
-        const productId = String(item.product_id);
-        const transactionDate =
-          purchaseDateMap.get(String(item.purchase_id)) || "";
-        const quantity = Number(item.quantity || 0);
-
-        if (!Number.isFinite(quantity)) {
-          return;
-        }
-
-        if (transactionDate === selectedDate) {
-          purchaseTodayMap.set(
-            productId,
-            (purchaseTodayMap.get(productId) || 0) + quantity
-          );
-        } else if (transactionDate > selectedDate) {
-          purchaseAfterMap.set(
-            productId,
-            (purchaseAfterMap.get(productId) || 0) + quantity
-          );
-        }
-      });
-
-      const salesTodayMap = new Map<string, number>();
-      const salesAfterMap = new Map<string, number>();
-
-      saleItems.forEach((item: any) => {
-        const productId = String(item.product_id);
-        const transactionDate =
-          saleDateMap.get(String(item.sale_id)) || "";
-        const quantity = Number(item.quantity || 0);
-
-        if (!Number.isFinite(quantity)) {
-          return;
-        }
-
-        if (transactionDate === selectedDate) {
-          salesTodayMap.set(
-            productId,
-            (salesTodayMap.get(productId) || 0) + quantity
-          );
-        } else if (transactionDate > selectedDate) {
-          salesAfterMap.set(
-            productId,
-            (salesAfterMap.get(productId) || 0) + quantity
-          );
-        }
-      });
-
-      // --------------------------------------------------
-      // RECONSTRUCT THE SELECTED DAY
-      //
-      // Current Stock
-      // - Purchases after selected date
-      // + Sales after selected date
-      // = Selected Date Closing
-      // --------------------------------------------------
-
-      const rows: StockFlowRow[] = products.map(
-        (product) => {
-          const productId = String(product.id);
-
-          const currentStock = Number(
-            product.stock_qty || 0
-          );
-
-          const purchasesAfter =
-            purchaseAfterMap.get(productId) || 0;
-
-          const salesAfter =
-            salesAfterMap.get(productId) || 0;
-
-          const purchasesToday =
-            purchaseTodayMap.get(productId) || 0;
-
-          const salesToday =
-            salesTodayMap.get(productId) || 0;
-
-          const todayClosing =
-            currentStock -
-            purchasesAfter +
-            salesAfter;
-
-          const todayOpening =
-            todayClosing -
-            purchasesToday +
-            salesToday;
-
-          return {
-            product_id: product.id,
-            brand_id: product.brand_id,
-            product_name: product.product_name,
-            size: Number(product.size || 1),
-            unit: product.unit || "Litre",
-            yesterdayClosing: todayOpening,
-            todayOpening,
-            purchases: purchasesToday,
-            sales: salesToday,
-            todayClosing,
-            nextDayOpening: todayClosing,
-          };
-        }
-      );
-
-      setStockFlowRows(rows);
-
-    } catch (error: any) {
-
-      console.error(
-        "DATE-WISE STOCK FLOW ERROR:",
-        error
-      );
-
-      setStockFlowRows([]);
-      setStockFlowError(
-        error?.message ||
-        "Unable to load date-wise stock."
-      );
-
-    } finally {
-
-      setStockFlowLoading(false);
-
-    }
-  }
-
-  function handleStockDateChange(value: string) {
-
-    const formatted =
-      formatDateDDMMYYYYInput(value);
-
-    setStockDateDisplay(formatted);
-
-    const normalized =
-      parseDateDDMMYYYY(formatted);
-
-    if (normalized) {
-      setStockDate(normalized);
-    }
-  }
-
-  function resetStockDateToToday() {
-
-    const today = todayInput();
-
-    setStockDate(today);
-    setStockDateDisplay(formatDate(today));
-
   }
 
   // ====================================================
@@ -1336,7 +1064,7 @@ export default function Purchases() {
       setPurchaseDate(today);
       setPurchaseDateDisplay(formatDate(today));
       setSupplierName(previousPurchase.supplier_name || "");
-      setInvoiceNo("");
+      await generateNextPurchaseBillNo();
       setPaymentMethod("Credit");
       setPaidAmount("0");
       setSelectedBrandId("");
@@ -1368,6 +1096,8 @@ export default function Purchases() {
 
   function clearPurchase() {
 
+    setEditingPurchaseId(null);
+
     const today = todayInput();
 
     setPurchaseDate(
@@ -1381,6 +1111,8 @@ export default function Purchases() {
     setInvoiceNo(
       ""
     );
+
+    void generateNextPurchaseBillNo();
 
     setSupplierName(
       ""
@@ -1552,10 +1284,332 @@ export default function Purchases() {
   }
 
   // ====================================================
+  // EDIT PURCHASE
+  // ====================================================
+
+  async function editPurchase(purchaseId: string) {
+    setLoading(true);
+
+    try {
+      const { data: purchase, error: purchaseError } = await supabase
+        .from("purchases")
+        .select(`
+          id,
+          purchase_date,
+          invoice_no,
+          supplier_name,
+          total_amount,
+          payment_method,
+          paid_amount,
+          balance_amount
+        `)
+        .eq("id", purchaseId)
+        .single();
+
+      if (purchaseError) throw purchaseError;
+
+      const { data: items, error: itemsError } = await supabase
+        .from("purchase_items")
+        .select("product_id, quantity, rate, amount")
+        .eq("purchase_id", purchaseId);
+
+      if (itemsError) throw itemsError;
+
+      const rows: PurchaseRow[] = (items || [])
+        .map((item: any) => {
+          const product = products.find(
+            (p) => String(p.id) === String(item.product_id)
+          );
+
+          if (!product) return null;
+
+          return {
+            product_id: product.id,
+            product_name: product.product_name,
+            size: Number(product.size || 1),
+            unit: product.unit || "Litre",
+            quantity: Number(item.quantity || 0),
+            rate: Number(item.rate || 0),
+            amount: Number(item.amount || 0),
+            brand_id: product.brand_id,
+          };
+        })
+        .filter((row): row is PurchaseRow => !!row);
+
+      setEditingPurchaseId(purchase.id);
+      const date = String(purchase.purchase_date || "").slice(0, 10);
+      setPurchaseDate(date || todayInput());
+      setPurchaseDateDisplay(formatDate(date || todayInput()));
+      setInvoiceNo(purchase.invoice_no || "");
+      setSupplierName(purchase.supplier_name || "");
+      setPaymentMethod(purchase.payment_method || "Credit");
+      setPaidAmount(String(Number(purchase.paid_amount || 0)));
+      setPurchaseRows(rows);
+      setSelectedBrandId("");
+      setSelectedProductId("");
+      setQuantity("");
+      setRate("");
+
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      alert("Purchase loaded for editing. Make changes and press Update Purchase.");
+    } catch (error: any) {
+      console.error("EDIT PURCHASE ERROR:", error);
+      alert(
+        "Unable to edit purchase:\n\n" +
+          (error?.message || "Unknown error")
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ====================================================
+  // DELETE PURCHASE
+  // ====================================================
+
+  async function deletePurchase(purchaseId: string) {
+    const confirmed = window.confirm(
+      "Delete this purchase?\n\nThe purchase items will be removed and the stock added by this purchase will be restored."
+    );
+
+    if (!confirmed) return;
+
+    setLoading(true);
+
+    try {
+      const { data: items, error: itemsError } = await supabase
+        .from("purchase_items")
+        .select("product_id, quantity")
+        .eq("purchase_id", purchaseId);
+
+      if (itemsError) throw itemsError;
+
+      const restoreMap = new Map<string, number>();
+      (items || []).forEach((item: any) => {
+        const current = restoreMap.get(String(item.product_id)) || 0;
+        restoreMap.set(
+          String(item.product_id),
+          current + Number(item.quantity || 0)
+        );
+      });
+
+      for (const [productId, quantityToRestore] of restoreMap) {
+        const { data: product, error: productError } = await supabase
+          .from("products")
+          .select("id, stock_qty")
+          .eq("id", productId)
+          .single();
+
+        if (productError) throw productError;
+
+        const currentStock = Number(product?.stock_qty || 0);
+        const newStock = Math.max(0, currentStock - quantityToRestore);
+
+        const { error: stockError } = await supabase
+          .from("products")
+          .update({ stock_qty: newStock })
+          .eq("id", productId);
+
+        if (stockError) throw stockError;
+      }
+
+      const { error: deleteItemsError } = await supabase
+        .from("purchase_items")
+        .delete()
+        .eq("purchase_id", purchaseId);
+
+      if (deleteItemsError) throw deleteItemsError;
+
+      const { error: deletePurchaseError } = await supabase
+        .from("purchases")
+        .delete()
+        .eq("id", purchaseId);
+
+      if (deletePurchaseError) throw deletePurchaseError;
+
+      if (editingPurchaseId === purchaseId) {
+        clearPurchase();
+      }
+
+      await loadProducts();
+      await loadPurchaseHistory();
+
+      alert("Purchase deleted successfully.");
+    } catch (error: any) {
+      console.error("DELETE PURCHASE ERROR:", error);
+      alert(
+        "Unable to delete purchase:\n\n" +
+          (error?.message || "Unknown error")
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ====================================================
+  // UPDATE PURCHASE
+  // ====================================================
+
+  async function updatePurchase() {
+    if (!editingPurchaseId) {
+      return;
+    }
+
+    const normalizedPurchaseDate = parseDateDDMMYYYY(purchaseDateDisplay);
+    if (!normalizedPurchaseDate) {
+      alert("Please enter a valid purchase date in DD/MM/YYYY format.");
+      return;
+    }
+
+    const cleanInvoice = invoiceNo.trim();
+    if (!cleanInvoice) {
+      alert("Please enter Purchase Bill / Invoice No.");
+      return;
+    }
+
+    if (!supplierName.trim()) {
+      alert("Please select a supplier.");
+      return;
+    }
+
+    if (purchaseRows.length === 0) {
+      alert("Please add at least one product.");
+      return;
+    }
+
+    const finalPaid = Number(paidAmount);
+    if (!Number.isFinite(finalPaid) || finalPaid < 0 || finalPaid > totalPurchaseAmount) {
+      alert("Please enter a valid paid amount.");
+      return;
+    }
+
+    if (paymentMethod === "Credit" && finalPaid !== 0) {
+      alert("For Credit purchase, Paid Amount should be 0.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const { data: oldItems, error: oldItemsError } = await supabase
+        .from("purchase_items")
+        .select("product_id, quantity")
+        .eq("purchase_id", editingPurchaseId);
+
+      if (oldItemsError) throw oldItemsError;
+
+      const oldMap = new Map<string, number>();
+      (oldItems || []).forEach((item: any) => {
+        const key = String(item.product_id);
+        oldMap.set(key, (oldMap.get(key) || 0) + Number(item.quantity || 0));
+      });
+
+      // Restore the old purchase quantities first.
+      for (const [productId, oldQty] of oldMap) {
+        const { data: product, error: productError } = await supabase
+          .from("products")
+          .select("id, stock_qty")
+          .eq("id", productId)
+          .single();
+
+        if (productError) throw productError;
+
+        const restored = Number(product?.stock_qty || 0) - oldQty;
+        if (restored < 0) {
+          throw new Error(
+            `Cannot update purchase because stock for product ${productId} is already lower than the old purchase quantity.`
+          );
+        }
+
+        const { error: stockError } = await supabase
+          .from("products")
+          .update({ stock_qty: restored })
+          .eq("id", productId);
+
+        if (stockError) throw stockError;
+      }
+
+      const { error: headerError } = await supabase
+        .from("purchases")
+        .update({
+          purchase_date: normalizedPurchaseDate,
+          invoice_no: cleanInvoice,
+          supplier_name: supplierName.trim(),
+          total_amount: totalPurchaseAmount,
+          payment_method: paymentMethod,
+          paid_amount: finalPaid,
+          balance_amount: Math.max(0, totalPurchaseAmount - finalPaid),
+        })
+        .eq("id", editingPurchaseId);
+
+      if (headerError) throw headerError;
+
+      const { error: deleteItemsError } = await supabase
+        .from("purchase_items")
+        .delete()
+        .eq("purchase_id", editingPurchaseId);
+
+      if (deleteItemsError) throw deleteItemsError;
+
+      const { error: insertItemsError } = await supabase
+        .from("purchase_items")
+        .insert(
+          purchaseRows.map((row) => ({
+            purchase_id: editingPurchaseId,
+            product_id: row.product_id,
+            quantity: row.quantity,
+            rate: row.rate,
+            amount: row.amount,
+          }))
+        );
+
+      if (insertItemsError) throw insertItemsError;
+
+      // Apply the new purchase quantities.
+      for (const row of purchaseRows) {
+        const { data: product, error: productError } = await supabase
+          .from("products")
+          .select("id, stock_qty")
+          .eq("id", row.product_id)
+          .single();
+
+        if (productError) throw productError;
+
+        const newStock = Number(product?.stock_qty || 0) + Number(row.quantity || 0);
+
+        const { error: stockError } = await supabase
+          .from("products")
+          .update({ stock_qty: newStock, purchase_rate: row.rate })
+          .eq("id", row.product_id);
+
+        if (stockError) throw stockError;
+      }
+
+      clearPurchase();
+      await loadProducts();
+      await loadPurchaseHistory();
+      alert("Purchase updated successfully.");
+    } catch (error: any) {
+      console.error("UPDATE PURCHASE ERROR:", error);
+      alert(
+        "Unable to update purchase:\n\n" +
+          (error?.message || "Unknown error")
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ====================================================
   // SAVE PURCHASE
   // ====================================================
 
   async function savePurchase() {
+
+    if (editingPurchaseId) {
+      await updatePurchase();
+      return;
+    }
 
     // -----------------------------------------------
     // DATE
@@ -1585,17 +1639,8 @@ export default function Purchases() {
     // -----------------------------------------------
 
     const cleanInvoice =
-      invoiceNo.trim();
-
-    if (!cleanInvoice) {
-
-      alert(
-        "Please enter Purchase Bill / Invoice No."
-      );
-
-      return;
-
-    }
+      invoiceNo.trim() ||
+      `PUR-${Date.now()}`;
 
     // -----------------------------------------------
     // SUPPLIER
@@ -2121,6 +2166,19 @@ export default function Purchases() {
 
           </div>
 
+          {editingPurchaseId && (
+            <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-semibold text-yellow-800">
+              Editing an existing purchase. Change the supplier, products, payment or date, then press <span className="font-bold">Update Purchase</span>.
+              <button
+                type="button"
+                onClick={clearPurchase}
+                className="ml-3 rounded-lg bg-slate-600 px-3 py-1.5 text-white hover:bg-slate-700"
+              >
+                Cancel Edit
+              </button>
+            </div>
+          )}
+
           <div
             className="
               rounded-xl
@@ -2244,8 +2302,7 @@ export default function Purchases() {
                 text-slate-700
               "
             >
-              Purchase Bill /
-              Invoice No.
+              Automatic Purchase Bill No.
             </label>
 
             <input
@@ -2253,23 +2310,31 @@ export default function Purchases() {
               value={
                 invoiceNo
               }
-              onChange={(e) =>
-                setInvoiceNo(
-                  e.target.value
-                )
-              }
-              placeholder="Example: PUR-00125"
+              readOnly
+              placeholder="Generating..."
               className="
                 w-full
                 rounded-lg
                 border-2
                 border-blue-200
+                bg-blue-50
                 p-3
                 font-semibold
+                text-blue-800
                 focus:border-blue-500
                 focus:outline-none
               "
             />
+
+            <p
+              className="
+                mt-1
+                text-xs
+                text-slate-500
+              "
+            >
+              Bill number is generated automatically.
+            </p>
 
           </div>
 
@@ -2289,25 +2354,39 @@ export default function Purchases() {
               Company / Supplier
             </label>
 
-            <input
-              type="text"
-              value={
-                supplierName
-              }
+            <select
+              value={supplierName}
               onChange={(e) =>
-                setSupplierName(
-                  e.target.value
-                )
+                setSupplierName(e.target.value)
               }
-              placeholder="Example: Amul"
               className="
                 w-full
                 rounded-lg
-                border
-                border-slate-300
+                border-2
+                border-blue-200
+                bg-white
                 p-3
+                font-semibold
+                focus:border-blue-500
+                focus:outline-none
               "
-            />
+            >
+              <option value="">
+                Select Supplier
+              </option>
+              {suppliers.map((supplier) => (
+                <option
+                  key={supplier.id}
+                  value={supplier.supplier_name}
+                >
+                  {supplier.supplier_name}
+                </option>
+              ))}
+            </select>
+
+            <p className="mt-1 text-xs text-slate-500">
+              Select the supplier from Supplier Master.
+            </p>
 
           </div>
 
@@ -2626,7 +2705,7 @@ export default function Purchases() {
       </div>
 
       {/* ==================================================
-          PRODUCT SELECTOR
+          PRODUCT SELECTION
       ================================================== */}
 
       {selectedBrandId && (
@@ -2641,70 +2720,65 @@ export default function Purchases() {
           "
         >
 
-          <div
-            className="
-              mb-4
-              flex
-              flex-col
-              gap-2
-              md:flex-row
-              md:items-center
-              md:justify-between
-            "
-          >
+          <div className="mb-5">
 
-            <div>
-              <h2
-                className="
-                  text-xl
-                  font-bold
-                  text-slate-800
-                "
-              >
-                2. Select Product
-              </h2>
-
-              <p
-                className="
-                  mt-1
-                  text-sm
-                  text-slate-500
-                "
-              >
-                Select a product to enter quantity and purchase rate.
-              </p>
-            </div>
-
-            <div
+            <h2
               className="
-                rounded-lg
-                bg-slate-100
-                px-4
-                py-2
-                text-sm
+                text-xl
                 font-bold
-                text-slate-700
+                text-slate-800
               "
             >
-              {brandProducts.length} Products
-            </div>
+              2. Select Product
+            </h2>
+
+            <p
+              className="
+                mt-1
+                text-sm
+                text-slate-500
+              "
+            >
+
+              {
+                getBrandName(
+                  selectedBrandId
+                )
+              }
+
+              {" — "}
+
+              {
+                selectedBrandProductCount
+              }{" "}
+              products available.
+
+            </p>
 
           </div>
 
-          {brandProducts.length === 0 ? (
+          {brandProducts.length ===
+          0 ? (
 
             <div
               className="
                 rounded-xl
-                border-2
-                border-dashed
-                border-slate-300
-                p-8
+                bg-yellow-50
+                p-6
                 text-center
-                text-slate-500
+                text-yellow-800
               "
             >
-              No products found for this brand.
+
+              No products found
+              for this brand.
+
+              <br />
+
+              Please add products
+              in Products section
+              first.
+
             </div>
 
           ) : (
@@ -2719,89 +2793,195 @@ export default function Purchases() {
               "
             >
 
-              {brandProducts.map((product) => {
+              {brandProducts.map(
+                (
+                  product
+                ) => {
 
-                const isSelected =
-                  String(selectedProductId) ===
-                  String(product.id);
+                  const isSelected =
+                    String(
+                      selectedProductId
+                    ) ===
+                    String(
+                      product.id
+                    );
 
-                const alreadyAdded =
-                  purchaseRows.some(
-                    (row) =>
-                      String(row.product_id) ===
-                      String(product.id)
-                  );
+                  const alreadyAdded =
+                    purchaseRows.some(
+                      (
+                        row
+                      ) =>
+                        String(
+                          row.product_id
+                        ) ===
+                        String(
+                          product.id
+                        )
+                    );
 
-                return (
+                  return (
 
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() =>
-                      handleProductChange(product.id)
-                    }
-                    className={`
-                      rounded-xl
-                      border-2
-                      p-4
-                      text-left
-                      transition
-                      ${
-                        isSelected
-                          ? "border-blue-600 bg-blue-50 shadow-md"
-                          : "border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50"
+                    <button
+                      key={
+                        product.id
                       }
-                    `}
-                  >
-
-                    <div
-                      className="
-                        flex
-                        items-start
-                        justify-between
-                        gap-2
-                      "
+                      type="button"
+                      onClick={() =>
+                        handleProductChange(
+                          product.id
+                        )
+                      }
+                      className={`
+                        rounded-xl
+                        border-2
+                        p-4
+                        text-left
+                        transition
+                        ${
+                          isSelected
+                            ? "border-blue-600 bg-blue-50 shadow-md"
+                            : "border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50"
+                        }
+                      `}
                     >
 
-                      <div>
-                        <p className="font-bold text-slate-800">
-                          {product.product_name}
-                        </p>
+                      <div
+                        className="
+                          flex
+                          items-start
+                          justify-between
+                          gap-2
+                        "
+                      >
 
-                        <p className="mt-1 text-sm text-slate-500">
-                          {Number(product.size || 1)} {product.unit || "Litre"}
-                        </p>
+                        <div>
+
+                          <p
+                            className="
+                              font-bold
+                              text-slate-800
+                            "
+                          >
+                            {
+                              product.product_name
+                            }
+                          </p>
+
+                          <p
+                            className="
+                              mt-1
+                              text-sm
+                              text-slate-500
+                            "
+                          >
+
+                            {Number(
+                              product.size ||
+                                1
+                            )}
+
+                            {" "}
+
+                            {
+                              product.unit ||
+                              "Litre"
+                            }
+
+                          </p>
+
+                        </div>
+
+                        {alreadyAdded && (
+
+                          <span
+                            className="
+                              rounded-full
+                              bg-green-100
+                              px-2
+                              py-1
+                              text-xs
+                              font-bold
+                              text-green-700
+                            "
+                          >
+                            Added
+                          </span>
+
+                        )}
+
                       </div>
 
-                      {alreadyAdded && (
+                      <div
+                        className="
+                          mt-3
+                          flex
+                          justify-between
+                          text-sm
+                        "
+                      >
+
                         <span
                           className="
-                            rounded-full
-                            bg-green-100
-                            px-2
-                            py-1
-                            text-xs
+                            text-slate-500
+                          "
+                        >
+                          Purchase
+                        </span>
+
+                        <span
+                          className="
                             font-bold
+                            text-blue-700
+                          "
+                        >
+                          ₹
+                          {Number(
+                            product.purchase_rate ||
+                              0
+                          ).toFixed(
+                            2
+                          )}
+                        </span>
+
+                      </div>
+
+                      <div
+                        className="
+                          mt-1
+                          flex
+                          justify-between
+                          text-sm
+                        "
+                      >
+
+                        <span
+                          className="
+                            text-slate-500
+                          "
+                        >
+                          Stock
+                        </span>
+
+                        <span
+                          className="
+                            font-semibold
                             text-green-700
                           "
                         >
-                          Added
+                          {Number(
+                            product.stock_qty ||
+                              0
+                          )}
                         </span>
-                      )}
 
-                    </div>
+                      </div>
 
-                    <div className="mt-3 flex justify-between text-sm">
-                      <span className="text-slate-500">Purchase Rate</span>
-                      <span className="font-bold text-blue-700">
-                        ₹ {Number(product.purchase_rate || 0).toFixed(2)}
-                      </span>
-                    </div>
+                    </button>
 
-                  </button>
+                  );
 
-                );
-              })}
+                }
+              )}
 
             </div>
 
@@ -3702,8 +3882,12 @@ export default function Purchases() {
               "
             >
               {saving
-                ? "Saving Purchase..."
-                : "✓ Punch / Save Purchase"}
+                ? editingPurchaseId
+                  ? "Updating Purchase..."
+                  : "Saving Purchase..."
+                : editingPurchaseId
+                  ? "✓ Update Purchase"
+                  : "✓ Punch / Save Purchase"}
             </button>
 
           </div>
@@ -3711,205 +3895,6 @@ export default function Purchases() {
         </div>
 
       </div>
-
-      {/* ==================================================
-          STOCK SECTION
-      ================================================== */}
-
-      <div
-        className="
-          mb-6
-          rounded-2xl
-          bg-white
-          p-6
-          shadow-lg
-        "
-      >
-
-        <div
-          className="
-            mb-5
-            flex
-            flex-col
-            gap-4
-            md:flex-row
-            md:items-end
-            md:justify-between
-          "
-        >
-
-          <div>
-            <h2
-              className="
-                text-xl
-                font-bold
-                text-slate-800
-              "
-            >
-              Stock
-            </h2>
-
-            <p
-              className="
-                mt-1
-                text-sm
-                text-slate-500
-              "
-            >
-              Date-wise stock flow: Yesterday Closing → Today Opening → Purchases → Sales → Today Closing → Next Day Opening.
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-
-            <div>
-              <label className="mb-1 block text-xs font-bold text-slate-600">
-                Stock Date
-              </label>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={stockDateDisplay}
-                onChange={(e) =>
-                  handleStockDateChange(e.target.value)
-                }
-                placeholder="DD/MM/YYYY"
-                maxLength={10}
-                className="w-full rounded-lg border-2 border-blue-200 bg-white px-3 py-2 font-semibold focus:border-blue-500 focus:outline-none sm:w-[170px]"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={resetStockDateToToday}
-              className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700"
-            >
-              Today
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void loadStockFlow(stockDate)}
-              disabled={stockFlowLoading}
-              className="rounded-lg bg-green-600 px-4 py-2 font-bold text-white hover:bg-green-700 disabled:opacity-50"
-            >
-              {stockFlowLoading ? "Loading..." : "Refresh Stock"}
-            </button>
-
-          </div>
-
-        </div>
-
-        <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-slate-700">
-          <span className="font-bold">Stock rule:</span>{" "}
-          Yesterday Closing = Today Opening. Today Closing = Today Opening + Purchases − Sales. Next Day Opening = Today Closing.
-        </div>
-
-        {stockFlowError && (
-          <div className="mb-4 rounded-xl bg-red-50 p-4 font-semibold text-red-700">
-            {stockFlowError}
-          </div>
-        )}
-
-        {stockFlowLoading ? (
-
-          <div className="rounded-xl bg-slate-50 p-8 text-center font-semibold text-slate-500">
-            Loading date-wise stock...
-          </div>
-
-        ) : stockFlowRows.length === 0 ? (
-
-          <div className="rounded-xl bg-yellow-50 p-6 text-center text-yellow-800">
-            No products found. Please add products in Products section first.
-          </div>
-
-        ) : (
-
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full min-w-[1250px] text-left text-sm">
-              <thead className="bg-slate-800 text-white">
-                <tr>
-                  <th className="px-3 py-3">Brand</th>
-                  <th className="px-3 py-3">Product</th>
-                  <th className="px-3 py-3">Pack</th>
-                  <th className="px-3 py-3 text-right">Yesterday Closing</th>
-                  <th className="px-3 py-3 text-right">Today Opening</th>
-                  <th className="px-3 py-3 text-right">Purchases</th>
-                  <th className="px-3 py-3 text-right">Sales</th>
-                  <th className="px-3 py-3 text-right">Today Closing</th>
-                  <th className="px-3 py-3 text-right">Next Day Opening</th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {stockFlowRows.map((row) => (
-                  <tr key={row.product_id} className="hover:bg-slate-50">
-                    <td className="px-3 py-3 font-semibold text-slate-700">
-                      {getBrandName(row.brand_id)}
-                    </td>
-                    <td className="px-3 py-3 font-bold text-slate-800">
-                      {row.product_name}
-                    </td>
-                    <td className="px-3 py-3 text-slate-600">
-                      {row.size} {row.unit}
-                    </td>
-                    <td className="px-3 py-3 text-right font-semibold text-slate-700">
-                      {row.yesterdayClosing}
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-blue-700">
-                      {row.todayOpening}
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-green-700">
-                      {row.purchases}
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-orange-700">
-                      {row.sales}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <span className="inline-flex min-w-[70px] justify-center rounded-full bg-green-100 px-3 py-1 font-bold text-green-700">
-                        {row.todayClosing}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-right font-bold text-purple-700">
-                      {row.nextDayOpening}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-
-              <tfoot className="bg-blue-50 font-bold text-slate-800">
-                <tr>
-                  <td colSpan={3} className="px-3 py-4 text-right">
-                    TOTAL
-                  </td>
-                  <td className="px-3 py-4 text-right">
-                    {stockFlowRows.reduce((sum, row) => sum + row.yesterdayClosing, 0)}
-                  </td>
-                  <td className="px-3 py-4 text-right text-blue-700">
-                    {stockFlowRows.reduce((sum, row) => sum + row.todayOpening, 0)}
-                  </td>
-                  <td className="px-3 py-4 text-right text-green-700">
-                    {stockFlowRows.reduce((sum, row) => sum + row.purchases, 0)}
-                  </td>
-                  <td className="px-3 py-4 text-right text-orange-700">
-                    {stockFlowRows.reduce((sum, row) => sum + row.sales, 0)}
-                  </td>
-                  <td className="px-3 py-4 text-right text-green-700">
-                    {stockFlowRows.reduce((sum, row) => sum + row.todayClosing, 0)}
-                  </td>
-                  <td className="px-3 py-4 text-right text-purple-700">
-                    {stockFlowRows.reduce((sum, row) => sum + row.nextDayOpening, 0)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
-        )}
-
-      </div>
-
-
 
       {/* ==================================================
           RECENT PURCHASES
@@ -4069,6 +4054,15 @@ export default function Purchases() {
                     Balance
                   </th>
 
+                  <th
+                    className="
+                      p-3
+                      text-center
+                    "
+                  >
+                    Actions
+                  </th>
+
                 </tr>
 
               </thead>
@@ -4199,6 +4193,33 @@ export default function Purchases() {
                         {money(
                           purchase.balance_amount
                         )}
+                      </td>
+
+                      <td
+                        className="
+                          p-3
+                          text-center
+                        "
+                      >
+                        <div className="flex justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void editPurchase(purchase.id)}
+                            disabled={loading || saving}
+                            className="rounded-lg bg-yellow-500 px-3 py-2 font-semibold text-white hover:bg-yellow-600 disabled:opacity-50"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void deletePurchase(purchase.id)}
+                            disabled={loading || saving}
+                            className="rounded-lg bg-red-600 px-3 py-2 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
 
                     </tr>
