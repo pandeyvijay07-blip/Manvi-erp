@@ -28,6 +28,12 @@ function text(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function supplierKey(value: unknown) {
+  return text(value)
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error && typeof error === "object") {
     const item = error as {
@@ -108,24 +114,52 @@ export default function Suppliers() {
        * A purchase-read problem must NOT hide the entire
        * Supplier Master screen.
        */
-      const {
-        data: purchaseData,
-        error: purchaseError,
-      } = await supabase
-        .from("purchases")
-        .select(
-          `
-            supplier_name,
-            total_amount,
-            paid_amount,
-            balance_amount
-          `
-        );
+      // Supabase can return only a limited number of rows in one request.
+      // Load purchases in pages so older purchase records are not silently
+      // omitted from supplier totals.
+      const purchaseData: PurchaseRow[] = [];
+      const pageSize = 1000;
+      let purchaseOffset = 0;
+      let purchaseLoadError: unknown = null;
 
-      if (purchaseError) {
+      while (true) {
+        const {
+          data: purchasePage,
+          error: purchaseError,
+        } = await supabase
+          .from("purchases")
+          .select(
+            `
+              supplier_name,
+              total_amount,
+              paid_amount,
+              balance_amount
+            `
+          )
+          .range(
+            purchaseOffset,
+            purchaseOffset + pageSize - 1
+          );
+
+        if (purchaseError) {
+          purchaseLoadError = purchaseError;
+          break;
+        }
+
+        const page = (purchasePage || []) as PurchaseRow[];
+        purchaseData.push(...page);
+
+        if (page.length < pageSize) {
+          break;
+        }
+
+        purchaseOffset += pageSize;
+      }
+
+      if (purchaseLoadError) {
         setLoadWarning(
           `Supplier master loaded, but purchase totals could not be loaded: ${getErrorMessage(
-            purchaseError,
+            purchaseLoadError,
             "Unknown purchase query error."
           )}`
         );
@@ -150,8 +184,9 @@ export default function Suppliers() {
             return;
           }
 
-          const key =
-            supplierNameFromPurchase.toLowerCase();
+          const key = supplierKey(
+            supplierNameFromPurchase
+          );
 
           const current =
             purchaseMap.get(key) || {
@@ -168,15 +203,13 @@ export default function Suppliers() {
             purchase.paid_amount || 0
           );
 
-          const savedBalance = Number(
-            purchase.balance_amount
+          // Always derive the supplier balance from the purchase total
+          // and actual paid amount. This prevents stale/duplicated
+          // balance_amount values from inflating supplier outstanding.
+          const balance = Math.max(
+            total - paid,
+            0
           );
-
-          const balance = Number.isFinite(
-            savedBalance
-          )
-            ? Math.max(savedBalance, 0)
-            : Math.max(total - paid, 0);
 
           if (Number.isFinite(total)) {
             current.total += total;
@@ -198,7 +231,7 @@ export default function Suppliers() {
         supplierData || []
       ).map((supplier: any) => {
         const name = text(supplier.supplier_name);
-        const key = name.toLowerCase();
+        const key = supplierKey(name);
 
         const purchaseSummary =
           purchaseMap.get(key) || {
@@ -220,12 +253,11 @@ export default function Suppliers() {
           opening_balance: opening,
           total_purchases: purchaseSummary.total,
           total_paid: purchaseSummary.paid,
-          purchase_outstanding:
-            purchaseSummary.balance,
-          // Supplier outstanding must be based on the transaction totals:
-          // Opening Balance + Purchases - Payments.
-          // This prevents a stale/duplicated balance_amount from inflating
-          // the supplier outstanding.
+          purchase_outstanding: Math.max(
+            purchaseSummary.total -
+              purchaseSummary.paid,
+            0
+          ),
           outstanding: Math.max(
             opening +
               purchaseSummary.total -
@@ -914,8 +946,8 @@ export default function Suppliers() {
 
         <p className="mt-1">
           Outstanding = Opening Balance + Purchases - Payments.
-          For a new supplier with ₹0 opening balance, the first
-          unpaid purchase becomes the supplier outstanding.
+          Supplier names are matched case-insensitively with extra
+          spaces ignored, and all purchase records are loaded.
         </p>
       </div>
     </div>
