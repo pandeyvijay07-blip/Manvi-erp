@@ -10,6 +10,20 @@ type Sale = {
   total_amount: number | string | null;
   paid_amount: number | string | null;
   balance_amount: number | string | null;
+  cash_amount?: number | string | null;
+  upi_amount?: number | string | null;
+};
+
+type DailyClosing = {
+  id?: string;
+  closing_date: string | null;
+  opening_cash: number | string | null;
+  cash_sales: number | string | null;
+  upi_sales: number | string | null;
+  credit_sales: number | string | null;
+  collections: number | string | null;
+  expenses: number | string | null;
+  closing_cash: number | string | null;
 };
 
 type Collection = {
@@ -110,12 +124,14 @@ export default function Dashboard() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [dailyClosings, setDailyClosings] = useState<DailyClosing[]>([]);
+
+  const today = getLocalDateISO();
+  const [selectedDate, setSelectedDate] = useState(today);
 
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-
-  const today = getLocalDateISO();
 
   async function loadDashboard() {
     setLoading(true);
@@ -137,11 +153,12 @@ export default function Dashboard() {
         customersResult,
         purchasesResult,
         suppliersResult,
+        dailyClosingsResult,
       ] = await Promise.all([
         supabase
           .from("sales")
           .select(
-            "id, customer_id, sale_date, payment_method, total_amount, paid_amount, balance_amount"
+            "id, customer_id, sale_date, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount"
           )
           .order("sale_date", { ascending: false }),
 
@@ -190,6 +207,13 @@ export default function Dashboard() {
             "id, supplier_name, opening_balance"
           )
           .order("supplier_name"),
+
+        supabase
+          .from("daily_closings")
+          .select(
+            "id, closing_date, opening_cash, cash_sales, upi_sales, credit_sales, collections, expenses, closing_cash"
+          )
+          .order("closing_date", { ascending: false }),
       ]);
 
       const errors = [
@@ -201,6 +225,7 @@ export default function Dashboard() {
         customersResult.error,
         purchasesResult.error,
         suppliersResult.error,
+        dailyClosingsResult.error,
       ].filter(Boolean);
 
       /*
@@ -255,6 +280,12 @@ export default function Dashboard() {
           : ((suppliersResult.data || []) as Supplier[])
       );
 
+      setDailyClosings(
+        errors.includes(dailyClosingsResult.error)
+          ? []
+          : ((dailyClosingsResult.data || []) as DailyClosing[])
+      );
+
       if (errors.length > 0) {
         const messages = errors
           .map((error: any) => error?.message)
@@ -295,9 +326,9 @@ export default function Dashboard() {
   const todaySales = useMemo(
     () =>
       sales.filter((row) =>
-        isToday(row.sale_date, today)
+        isToday(row.sale_date, selectedDate)
       ),
-    [sales, today]
+    [sales, selectedDate]
   );
 
   const todayCollections = useMemo(
@@ -305,10 +336,10 @@ export default function Dashboard() {
       collections.filter((row) =>
         isToday(
           row.collection_date,
-          today
+          selectedDate
         )
       ),
-    [collections, today]
+    [collections, selectedDate]
   );
 
   const todayExpenses = useMemo(
@@ -316,10 +347,10 @@ export default function Dashboard() {
       expenses.filter((row) =>
         isToday(
           row.expense_date,
-          today
+          selectedDate
         )
       ),
-    [expenses, today]
+    [expenses, selectedDate]
   );
 
   const todayPurchases = useMemo(
@@ -327,10 +358,10 @@ export default function Dashboard() {
       purchases.filter((row) =>
         isToday(
           row.purchase_date,
-          today
+          selectedDate
         )
       ),
-    [purchases, today]
+    [purchases, selectedDate]
   );
 
   const totalSales = useMemo(
@@ -370,6 +401,10 @@ export default function Dashboard() {
                 0
               );
 
+        if (method === "split") {
+          return sum + numberValue(row.cash_amount);
+        }
+
         return method === "cash"
           ? sum + effectivePaid
           : sum;
@@ -398,6 +433,10 @@ export default function Dashboard() {
                   numberValue(row.balance_amount),
                 0
               );
+
+        if (method === "split") {
+          return sum + numberValue(row.upi_amount);
+        }
 
         return method === "upi"
           ? sum + effectivePaid
@@ -671,7 +710,7 @@ export default function Dashboard() {
             !sale ||
             !isToday(
               sale.sale_date,
-              today
+              selectedDate
             )
           ) {
             return sum;
@@ -708,7 +747,7 @@ export default function Dashboard() {
       saleItems,
       saleMap,
       productCostMap,
-      today,
+      selectedDate,
     ]
   );
 
@@ -780,8 +819,8 @@ export default function Dashboard() {
             </h1>
 
             <p className="mt-2 text-sm text-blue-100">
-              Daily business control for{" "}
-              {formatDDMMYYYY(today)}
+              Business control for{" "}
+              {formatDDMMYYYY(selectedDate)}
             </p>
 
             {lastUpdated && (
@@ -804,6 +843,111 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* DATE SELECTOR */}
+      <div className="mb-5 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm font-bold text-slate-700">Dashboard Date</p>
+            <p className="text-xs text-slate-500">
+              View the complete dashboard for any business date.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 md:flex md:items-center">
+            <button
+              type="button"
+              onClick={() => {
+                const d = new Date(`${selectedDate}T12:00:00`);
+                d.setDate(d.getDate() - 1);
+                setSelectedDate(getLocalDateISO(d));
+              }}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-bold text-slate-700 hover:bg-slate-50"
+            >
+              ← Previous
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedDate(today)}
+              className={`rounded-xl px-3 py-2 font-bold ${
+                selectedDate === today
+                  ? "bg-blue-600 text-white"
+                  : "border border-blue-200 bg-blue-50 text-blue-700"
+              }`}
+            >
+              Today
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const d = new Date(`${selectedDate}T12:00:00`);
+                d.setDate(d.getDate() + 1);
+                setSelectedDate(getLocalDateISO(d));
+              }}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-bold text-slate-700 hover:bg-slate-50"
+            >
+              Next →
+            </button>
+          </div>
+
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(event) => setSelectedDate(event.target.value)}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-700 outline-none focus:border-blue-500 md:w-auto"
+          />
+        </div>
+
+        <div className="mt-3 rounded-xl bg-blue-50 px-3 py-2 text-center text-sm font-bold text-blue-800">
+          Showing: {formatDDMMYYYY(selectedDate)}
+          {selectedDate === today ? " • Today" : ""}
+        </div>
+      </div>
+
+      {/* DAILY CLOSING */}
+      {(() => {
+        const closing = dailyClosings.find(
+          (row) => String(row.closing_date || "").slice(0, 10) === selectedDate
+        );
+
+        const opening =
+          closing ? numberValue(closing.opening_cash) : 0;
+
+        const savedClosing =
+          closing ? numberValue(closing.closing_cash) : null;
+
+        return (
+          <div className="mb-5 grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
+            <SmallCard
+              title="Opening Cash"
+              value={money(opening)}
+            />
+            <SmallCard
+              title="Cash Sales"
+              value={money(cashSales)}
+            />
+            <SmallCard
+              title="Collections"
+              value={money(totalCollections)}
+            />
+            <SmallCard
+              title="Closing Cash"
+              value={
+                savedClosing === null
+                  ? "Not Saved"
+                  : money(savedClosing)
+              }
+              footer={
+                savedClosing === null
+                  ? "No saved daily closing for this date"
+                  : "Saved Daily Closing"
+              }
+            />
+          </div>
+        );
+      })()}
+
       {/* DATA WARNING */}
       {errorMessage && (
         <div className="mb-6 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm font-semibold text-orange-800">
@@ -820,19 +964,19 @@ export default function Dashboard() {
       {/* PRIMARY CARDS */}
       <div className="grid w-full min-w-0 max-w-full grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-2 md:gap-4 xl:grid-cols-4">
         <MetricCard
-          title="Today's Sales"
+          title={selectedDate === today ? "Today's Sales" : "Selected Date Sales"}
           value={money(totalSales)}
           subtitle={`${todaySales.length} sale entries`}
         />
 
         <MetricCard
-          title="Today's Purchase"
+          title={selectedDate === today ? "Today's Purchase" : "Selected Date Purchase"}
           value={money(totalPurchases)}
           subtitle={`${todayPurchases.length} purchase entries`}
         />
 
         <MetricCard
-          title="Today's Collections"
+          title={selectedDate === today ? "Today's Collections" : "Selected Date Collections"}
           value={money(totalCollections)}
           subtitle={`${todayCollections.length} collection entries`}
         />
@@ -937,7 +1081,7 @@ export default function Dashboard() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm font-semibold text-blue-700">
-              Today's Physical Cash Movement
+              Physical Cash Movement
             </p>
 
             <p className="mt-1 text-xs text-slate-600">
@@ -980,11 +1124,11 @@ export default function Dashboard() {
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-xl font-bold text-slate-800">
-                Today's Sales
+                {selectedDate === today ? "Today's Sales" : "Selected Date Sales"}
               </h2>
 
               <p className="text-sm text-slate-500">
-                {formatDDMMYYYY(today)}
+                {formatDDMMYYYY(selectedDate)}
               </p>
             </div>
 
@@ -1076,11 +1220,11 @@ export default function Dashboard() {
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-xl font-bold text-slate-800">
-                Today's Purchases
+                {selectedDate === today ? "Today's Purchases" : "Selected Date Purchases"}
               </h2>
 
               <p className="text-sm text-slate-500">
-                {formatDDMMYYYY(today)}
+                {formatDDMMYYYY(selectedDate)}
               </p>
             </div>
 
@@ -1170,7 +1314,7 @@ export default function Dashboard() {
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-800">
-              Today's Collections
+              {selectedDate === today ? "Today's Collections" : "Selected Date Collections"}
             </h2>
 
             <p className="text-sm text-slate-500">
