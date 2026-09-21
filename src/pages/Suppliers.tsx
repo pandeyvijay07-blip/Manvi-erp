@@ -222,9 +222,16 @@ export default function Suppliers() {
           total_paid: purchaseSummary.paid,
           purchase_outstanding:
             purchaseSummary.balance,
-          outstanding:
+          // Supplier outstanding must be based on the transaction totals:
+          // Opening Balance + Purchases - Payments.
+          // This prevents a stale/duplicated balance_amount from inflating
+          // the supplier outstanding.
+          outstanding: Math.max(
             opening +
-            purchaseSummary.balance,
+              purchaseSummary.total -
+              purchaseSummary.paid,
+            0
+          ),
         };
       });
 
@@ -906,9 +913,9 @@ export default function Suppliers() {
         </p>
 
         <p className="mt-1">
-          Outstanding = Opening Balance + unpaid
-          purchase balances. Paid amounts are taken
-          from purchase payment records.
+          Outstanding = Opening Balance + Purchases - Payments.
+          For a new supplier with ₹0 opening balance, the first
+          unpaid purchase becomes the supplier outstanding.
         </p>
       </div>
     </div>
