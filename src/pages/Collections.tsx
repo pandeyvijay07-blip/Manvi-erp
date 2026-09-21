@@ -1,11 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
+function getLocalDateISO() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function formatDateDDMMYYYY(value: string | null | undefined) {
+  if (!value) return "-";
+  const text = String(value).slice(0, 10);
+  const parts = text.split("-");
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  return text;
+}
+
 type Customer = {
   id: string;
   customer_name: string;
-  route: string;
   opening_balance: number;
+  route?: string | null;
 };
 
 type OutstandingSale = {
@@ -21,10 +34,7 @@ type RecentCollection = {
   customer_name: string;
   amount: number;
   payment_method: string;
-  cash_amount: number;
-  upi_amount: number;
   remarks: string;
-  source: "Collection" | "Sale";
 };
 
 type Allocation = {
@@ -32,151 +42,33 @@ type Allocation = {
   amount: number;
 };
 
-
-function getTodayLocalDate() {
-  const now = new Date();
-
-  return `${now.getFullYear()}-${String(
-    now.getMonth() + 1
-  ).padStart(2, "0")}-${String(
-    now.getDate()
-  ).padStart(2, "0")}`;
-}
-
-function formatDateDDMMYYYY(
-  value: string | null | undefined
-) {
-  if (!value) return "-";
-
-  const part = String(value).slice(0, 10);
-  const parts = part.split("-");
-
-  if (
-    parts.length === 3 &&
-    /^\d{4}$/.test(parts[0])
-  ) {
-    return `${parts[2]}/${parts[1]}/${parts[0]}`;
-  }
-
-  return String(value);
-}
-
-function formatDateDDMMYYYYInput(
-  value: string
-) {
-  const digits = value
-    .replace(/\D/g, "")
-    .slice(0, 8);
-
-  if (digits.length <= 2) {
-    return digits;
-  }
-
-  if (digits.length <= 4) {
-    return `${digits.slice(
-      0,
-      2
-    )}/${digits.slice(2)}`;
-  }
-
-  return `${digits.slice(
-    0,
-    2
-  )}/${digits.slice(
-    2,
-    4
-  )}/${digits.slice(4, 8)}`;
-}
-
-function parseCollectionDate(
-  value: string
-) {
-  const digits = value.replace(
-    /\D/g,
-    ""
-  );
-
-  if (!/^\d{8}$/.test(digits)) {
-    return null;
-  }
-
-  const day = Number(
-    digits.slice(0, 2)
-  );
-
-  const month = Number(
-    digits.slice(2, 4)
-  );
-
-  const year = Number(
-    digits.slice(4, 8)
-  );
-
-  if (
-    year < 2000 ||
-    year > 2100 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31
-  ) {
-    return null;
-  }
-
-  const test = new Date(
-    year,
-    month - 1,
-    day
-  );
-
-  if (
-    test.getFullYear() !== year ||
-    test.getMonth() !== month - 1 ||
-    test.getDate() !== day
-  ) {
-    return null;
-  }
-
-  return `${year}-${String(
-    month
-  ).padStart(2, "0")}-${String(
-    day
-  ).padStart(2, "0")}`;
-}
-
 export default function Collections() {
   const [customers, setCustomers] = useState<Customer[]>([]);
 
-  const [customerId, setCustomerId] = useState("");
+  // Route-wise collection entry
+  const [selectedRoute, setSelectedRoute] = useState("");
+  const [routeAmounts, setRouteAmounts] = useState<Record<string, { cash: string; upi: string }>>({});
+  const [routeBalances, setRouteBalances] = useState<Record<string, number>>({});
+  const [routeSaving, setRouteSaving] = useState(false);
 
-  const [routeFilter, setRouteFilter] = useState("");
-  const [customerSearch, setCustomerSearch] = useState("");
+  const [customerId, setCustomerId] = useState("");
 
   const [balance, setBalance] = useState(0);
 
-  const [outstandingSales, setOutstandingSales] = useState<OutstandingSale[]>([]);
-
   const [amount, setAmount] = useState("");
+
+  const [cashAmount, setCashAmount] = useState("");
+
+  const [upiAmount, setUpiAmount] = useState("");
 
   const [paymentMethod, setPaymentMethod] =
     useState("Cash");
 
-  const [cashAmount, setCashAmount] =
-    useState("");
-
-  const [upiAmount, setUpiAmount] =
-    useState("");
-
   const [remarks, setRemarks] = useState("");
 
   const [collectionDate, setCollectionDate] =
-    useState(getTodayLocalDate());
-
-  const [collectionDateDisplay, setCollectionDateDisplay] =
     useState(
-      formatDateDDMMYYYY(
-        getTodayLocalDate()
-      )
+      getLocalDateISO()
     );
 
   const [recentCollections, setRecentCollections] =
@@ -203,8 +95,8 @@ export default function Collections() {
           `
           id,
           customer_name,
-          route,
-          opening_balance
+          opening_balance,
+          route
           `
         )
         .order("customer_name");
@@ -218,11 +110,12 @@ export default function Collections() {
           id: customer.id,
           customer_name:
             customer.customer_name || "",
-          route: customer.route || "",
           opening_balance:
             Number(
               customer.opening_balance
             ) || 0,
+          route:
+            customer.route || "",
         }))
       );
     } catch (error: any) {
@@ -241,145 +134,58 @@ export default function Collections() {
 
   async function loadRecentCollections() {
     try {
-      /*
-       * Recent Collections shows:
-       * 1. Payments entered in Collections
-       * 2. Payments received directly during Sales Punch
-       *
-       * Sale payments are DISPLAYED here only.
-       * They are not inserted into collections, so balances
-       * are never reduced twice.
-       */
+      const { data, error } = await supabase
+        .from("collections")
+        .select(
+          `
+          id,
+          collection_date,
+          customer_id,
+          amount,
+          payment_method,
+          remarks
+          `
+        )
+        .order("collection_date", {
+          ascending: false,
+        })
+        .limit(30);
 
-      const [
-        { data: collectionRows, error: collectionError },
-        { data: saleRows, error: saleError },
-      ] = await Promise.all([
-        supabase
-          .from("collections")
-          .select(
-            `
-            id,
-            collection_date,
-            customer_id,
-            amount,
-            payment_method,
-            cash_amount,
-            upi_amount,
-            remarks
-            `
-          )
-          .order("collection_date", {
-            ascending: false,
-          })
-          .limit(30),
-
-        supabase
-          .from("sales")
-          .select(
-            `
-            id,
-            sale_date,
-            customer_id,
-            paid_amount,
-            payment_method,
-            cash_amount,
-            upi_amount
-            `
-          )
-          .gt("paid_amount", 0)
-          .order("sale_date", {
-            ascending: false,
-          })
-          .limit(30),
-      ]);
-
-      if (collectionError) {
-        throw collectionError;
+      if (error) {
+        throw error;
       }
 
-      if (saleError) {
-        throw saleError;
-      }
+      const customerMap = new Map<
+        string,
+        string
+      >();
 
-      const customerMap = new Map<string, string>();
-
-      customers.forEach((customer) => {
+      (customers || []).forEach((customer) => {
         customerMap.set(
           customer.id,
           customer.customer_name
         );
       });
 
-      const collectionItems: RecentCollection[] =
-        (collectionRows || []).map((row: any) => ({
+      setRecentCollections(
+        (data || []).map((row: any) => ({
           id: row.id,
-          collection_date: row.collection_date,
-          customer_id: row.customer_id,
+          collection_date:
+            row.collection_date,
+          customer_id:
+            row.customer_id,
           customer_name:
-            customerMap.get(row.customer_id) || "Unknown",
-          amount: Number(row.amount) || 0,
-          payment_method: row.payment_method || "Cash",
-          cash_amount: Number(row.cash_amount) || 0,
-          upi_amount: Number(row.upi_amount) || 0,
-          remarks: row.remarks || "",
-          source: "Collection",
-        }));
-
-      const saleItems: RecentCollection[] =
-        (saleRows || []).map((row: any) => {
-          const method = String(
-            row.payment_method || "Cash"
-          ).trim();
-
-          const paid = Number(row.paid_amount) || 0;
-
-          const cash =
-            Number(row.cash_amount) ||
-            (method.toLowerCase() === "cash" ? paid : 0);
-
-          const upi =
-            Number(row.upi_amount) ||
-            (method.toLowerCase() === "upi" ? paid : 0);
-
-          return {
-            id: `sale-${row.id}`,
-            collection_date: row.sale_date,
-            customer_id: row.customer_id,
-            customer_name:
-              customerMap.get(row.customer_id) || "Unknown",
-            amount: paid,
-            payment_method: method || "Cash",
-            cash_amount: cash,
-            upi_amount: upi,
-            remarks: "Sale Payment",
-            source: "Sale",
-          };
-        });
-
-      const combined = [
-        ...collectionItems,
-        ...saleItems,
-      ]
-        .sort((a, b) => {
-          const dateCompare =
-            String(b.collection_date).localeCompare(
-              String(a.collection_date)
-            );
-
-          if (dateCompare !== 0) {
-            return dateCompare;
-          }
-
-          if (a.source !== b.source) {
-            return a.source === "Collection" ? -1 : 1;
-          }
-
-          return 0;
-        })
-        .slice(0, 50);
-
-      setRecentCollections(combined);
+            customerMap.get(
+              row.customer_id
+            ) || "Unknown",
+          amount:
+            Number(row.amount) || 0,
+          payment_method:
+            row.payment_method || "Cash",
+          remarks:
+            row.remarks || "",
+        }))
+      );
     } catch (error: any) {
       console.error(
         "Recent collection error:",
@@ -417,114 +223,352 @@ export default function Collections() {
   async function loadBalance(id: string) {
     if (!id) {
       setBalance(0);
-      setOutstandingSales([]);
-      return;
+      return 0;
     }
 
     try {
-      const customer =
-        customers.find(
-          (item) => item.id === id
-        );
+      const { data: customer, error: customerError } = await supabase
+        .from("customers")
+        .select("id, opening_balance")
+        .eq("id", id)
+        .single();
 
-      const openingBalance =
-        Number(
-          customer?.opening_balance || 0
-        );
+      if (customerError) throw customerError;
 
-      const { data, error } =
-        await supabase
-          .from("sales")
-          .select("balance_amount")
-          .eq("customer_id", id)
-          .gt("balance_amount", 0);
+      const openingBalance = Number(customer?.opening_balance) || 0;
 
-      if (error) {
-        throw error;
-      }
+      const { data, error } = await supabase
+        .from("sales")
+        .select("balance_amount")
+        .eq("customer_id", id)
+        .gt("balance_amount", 0);
 
-      const outstandingRows = (data || []).map(
-        (sale: any) => ({
-          id: sale.id,
-          sale_date: sale.sale_date,
-          balance_amount:
-            Number(sale.balance_amount) || 0,
-        })
-      ) as OutstandingSale[];
+      if (error) throw error;
 
-      setOutstandingSales(outstandingRows);
-
-      const salesOutstanding =
-        outstandingRows.reduce(
-          (total: number, sale: OutstandingSale) =>
-            total + sale.balance_amount,
-          0
-        );
-
-      setBalance(
-        openingBalance +
-          salesOutstanding
+      const salesOutstanding = (data || []).reduce(
+        (total: number, sale: any) =>
+          total + (Number(sale?.balance_amount) || 0),
+        0
       );
+
+      const totalBalance = openingBalance + salesOutstanding;
+      setBalance(totalBalance);
+      return totalBalance;
     } catch (error: any) {
       console.error(error);
-
+      setBalance(0);
       alert(
         "Unable to calculate balance:\n" +
           (error?.message || "Unknown error")
       );
+      return 0;
     }
   }
 
   /* =====================================================
-     PAYMENT METHOD CHANGE
+     ROUTE-WISE COLLECTIONS
+     Mobile-first: one route, vertical customer list,
+     Cash + UPI per customer, one Save All button.
   ===================================================== */
 
-  function handlePaymentMethodChange(
+  const routes = useMemo(() => {
+    return Array.from(
+      new Set<string>(
+        (customers || [])
+          .map((customer) => String(customer.route || "").trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [customers]);
+
+  const routeCustomers = useMemo(() => {
+    if (!selectedRoute) return [];
+    return (customers || [])
+      .filter(
+        (customer) =>
+          String(customer.route || "").trim() === selectedRoute
+      )
+      .sort((a, b) => a.customer_name.localeCompare(b.customer_name));
+  }, [customers, selectedRoute]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRouteBalances() {
+      if (!selectedRoute || routeCustomers.length === 0) {
+        setRouteBalances({});
+        return;
+      }
+
+      try {
+        const rows = await Promise.all(
+          routeCustomers.map(async (customer) => ({
+            id: customer.id,
+            balance: await getCustomerBalanceForRoute(customer.id),
+          }))
+        );
+
+        if (!cancelled) {
+          setRouteBalances(
+            Object.fromEntries(rows.map((row) => [row.id, row.balance]))
+          );
+        }
+      } catch (error) {
+        console.error("Route balance load error:", error);
+      }
+    }
+
+    loadRouteBalances();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRoute, routeCustomers]);
+
+  function getRouteAmount(customerIdValue: string) {
+    return routeAmounts[customerIdValue] || { cash: "", upi: "" };
+  }
+
+  function setRouteAmount(
+    customerIdValue: string,
+    field: "cash" | "upi",
     value: string
   ) {
-    setPaymentMethod(value);
+    setRouteAmounts((previous) => ({
+      ...previous,
+      [customerIdValue]: {
+        ...(previous[customerIdValue] || { cash: "", upi: "" }),
+        [field]: value,
+      },
+    }));
+  }
 
-    const normalized =
-      value.trim().toLowerCase();
+  const routeTotals = useMemo(() => {
+    let cash = 0;
+    let upi = 0;
 
-    if (normalized !== "split") {
-      setCashAmount("");
-      setUpiAmount("");
-    } else {
-      setCashAmount("");
-      setUpiAmount("");
-      setAmount("");
+    routeCustomers.forEach((customer) => {
+      const entry = getRouteAmount(customer.id);
+      cash += Math.max(0, Number(entry.cash) || 0);
+      upi += Math.max(0, Number(entry.upi) || 0);
+    });
+
+    return {
+      cash,
+      upi,
+      total: cash + upi,
+    };
+  }, [routeCustomers, routeAmounts]);
+
+  async function getCustomerBalanceForRoute(id: string) {
+    const { data: customer, error: customerError } = await supabase
+      .from("customers")
+      .select("id, opening_balance")
+      .eq("id", id)
+      .single();
+
+    if (customerError) throw customerError;
+
+    const openingBalance = Number(customer?.opening_balance) || 0;
+
+    const { data: salesData, error: salesError } = await supabase
+      .from("sales")
+      .select("balance_amount")
+      .eq("customer_id", id)
+      .gt("balance_amount", 0);
+
+    if (salesError) throw salesError;
+
+    const salesOutstanding = (salesData || []).reduce(
+      (sum: number, row: any) => sum + (Number(row.balance_amount) || 0),
+      0
+    );
+
+    return openingBalance + salesOutstanding;
+  }
+
+  async function saveRouteCollections() {
+    if (!selectedRoute) {
+      alert("Please select a route.");
+      return;
+    }
+
+    const entries = routeCustomers
+      .map((customer) => {
+        const entry = getRouteAmount(customer.id);
+        const cash = Math.max(0, Number(entry.cash) || 0);
+        const upi = Math.max(0, Number(entry.upi) || 0);
+        return {
+          customer,
+          cash,
+          upi,
+          total: cash + upi,
+        };
+      })
+      .filter((item) => item.total > 0);
+
+    if (entries.length === 0) {
+      alert("Please enter Cash or UPI for at least one customer.");
+      return;
+    }
+
+    try {
+      setRouteSaving(true);
+
+      for (const entry of entries) {
+        const currentBalance = await getCustomerBalanceForRoute(entry.customer.id);
+
+        if (entry.total > currentBalance + 0.000001) {
+          throw new Error(
+            `${entry.customer.customer_name}: collection ₹${entry.total.toFixed(2)} exceeds outstanding ₹${currentBalance.toFixed(2)}.`
+          );
+        }
+
+        const outstandingSales = await getOutstandingSales(entry.customer.id);
+
+        // Save Cash and UPI in one button press. Internally they remain separate
+        // collection rows so Daily Closing can distinguish Cash and UPI.
+        const rows: Array<{
+          customer_id: string;
+          collection_date: string;
+          amount: number;
+          payment_method: string;
+          remarks: string | null;
+        }> = [];
+
+        if (entry.cash > 0) {
+          rows.push({
+            customer_id: entry.customer.id,
+            collection_date: collectionDate,
+            amount: Number(entry.cash.toFixed(2)),
+            payment_method: "Cash",
+            remarks: `Route: ${selectedRoute}`,
+          });
+        }
+
+        if (entry.upi > 0) {
+          rows.push({
+            customer_id: entry.customer.id,
+            collection_date: collectionDate,
+            amount: Number(entry.upi.toFixed(2)),
+            payment_method: "UPI",
+            remarks: `Route: ${selectedRoute}`,
+          });
+        }
+
+        const { data: createdCollections, error: insertError } = await supabase
+          .from("collections")
+          .insert(rows)
+          .select("id, payment_method, amount");
+
+        if (insertError) throw insertError;
+        if (!createdCollections || createdCollections.length === 0) {
+          throw new Error(`Unable to save collection for ${entry.customer.customer_name}.`);
+        }
+
+        // Allocate each payment row separately to keep deletion/editing correct.
+        let saleIndex = 0;
+        let allocationRemaining = entry.total;
+        const allocationRows: Array<{ collection_id: string; sale_id: string; amount: number }> = [];
+
+        for (const createdCollection of createdCollections) {
+          let methodRemaining = Number(createdCollection.amount) || 0;
+
+          while (methodRemaining > 0.000001 && saleIndex < outstandingSales.length) {
+            const sale = outstandingSales[saleIndex];
+            const saleBalance = Number(sale.balance_amount) || 0;
+            const applied = Math.min(methodRemaining, saleBalance);
+
+            if (applied <= 0) {
+              saleIndex += 1;
+              continue;
+            }
+
+            allocationRows.push({
+              collection_id: createdCollection.id,
+              sale_id: sale.id,
+              amount: Number(applied.toFixed(2)),
+            });
+
+            sale.balance_amount = Math.max(0, saleBalance - applied);
+            methodRemaining -= applied;
+            allocationRemaining -= applied;
+
+            if (sale.balance_amount <= 0.000001) {
+              saleIndex += 1;
+            }
+          }
+        }
+
+        for (const sale of outstandingSales) {
+          const originalBalance = Number(
+            (await supabase.from("sales").select("balance_amount").eq("id", sale.id).single()).data?.balance_amount
+          ) || 0;
+
+          if (Math.abs(originalBalance - sale.balance_amount) > 0.000001) {
+            const { error: saleUpdateError } = await supabase
+              .from("sales")
+              .update({ balance_amount: sale.balance_amount })
+              .eq("id", sale.id);
+
+            if (saleUpdateError) throw saleUpdateError;
+          }
+        }
+
+        if (allocationRows.length > 0) {
+          const { error: allocationError } = await supabase
+            .from("collection_allocations")
+            .insert(allocationRows);
+
+          if (allocationError) throw allocationError;
+        }
+
+        const remaining = Math.max(0, allocationRemaining);
+
+        if (remaining > 0) {
+          const { data: freshCustomer, error: freshCustomerError } = await supabase
+            .from("customers")
+            .select("opening_balance")
+            .eq("id", entry.customer.id)
+            .single();
+
+          if (freshCustomerError) throw freshCustomerError;
+
+          const opening = Number(freshCustomer?.opening_balance) || 0;
+          const openingPayment = Math.min(remaining, opening);
+
+          if (openingPayment > 0) {
+            const { error: openingError } = await supabase
+              .from("customers")
+              .update({ opening_balance: opening - openingPayment })
+              .eq("id", entry.customer.id);
+
+            if (openingError) throw openingError;
+          }
+        }
+      }
+
+      alert(
+        `Route collection saved successfully.\n\nRoute: ${selectedRoute}\nCash: ₹${routeTotals.cash.toFixed(2)}\nUPI: ₹${routeTotals.upi.toFixed(2)}\nTotal: ₹${routeTotals.total.toFixed(2)}`
+      );
+
+      setRouteAmounts({});
+      await loadCustomers();
+      await loadRecentCollections();
+    } catch (error: any) {
+      console.error("Route collection error:", error);
+      alert(
+        "Route Collection Error:\n" +
+          (error?.message || "Unable to save route collections.")
+      );
+    } finally {
+      setRouteSaving(false);
     }
   }
 
-  /* =====================================================
-     COLLECTION PAYMENT TOTALS
-  ===================================================== */
-
-  const isSplitPayment =
-    paymentMethod.trim().toLowerCase() ===
-    "split";
-
-  const cashPaid =
-    isSplitPayment
-      ? Number(cashAmount) || 0
-      : paymentMethod.trim().toLowerCase() ===
-        "cash"
-      ? Number(amount) || 0
-      : 0;
-
-  const upiPaid =
-    isSplitPayment
-      ? Number(upiAmount) || 0
-      : paymentMethod.trim().toLowerCase() ===
-        "upi"
-      ? Number(amount) || 0
-      : 0;
-
-  const effectiveCollectionAmount =
-    isSplitPayment
-      ? cashPaid + upiPaid
-      : Number(amount) || 0;
+  function clearRouteEntries() {
+    setRouteAmounts({});
+  }
 
   /* =====================================================
      CUSTOMER CHANGE
@@ -633,56 +677,29 @@ export default function Collections() {
     };
   }
 
+  const cashValue = Number(cashAmount) || 0;
+  const upiValue = Number(upiAmount) || 0;
+  const combinedCollectionAmount = cashValue + upiValue;
+
   /* =====================================================
      SAVE NEW COLLECTION
   ===================================================== */
 
   async function saveNewCollection() {
-    const collectionAmount =
-      effectiveCollectionAmount;
-
-    const normalizedDate =
-      parseCollectionDate(
-        collectionDateDisplay
-      );
-
-    if (!normalizedDate) {
-      alert(
-        "Please enter a valid collection date in DD/MM/YYYY format.\nExample: 09/09/2026"
-      );
-      return;
-    }
-
-    setCollectionDate(
-      normalizedDate
-    );
+    const collectionAmount = combinedCollectionAmount;
 
     if (!customerId) {
       alert("Please select a customer.");
       return;
     }
 
-    if (
-      isSplitPayment &&
-      (cashPaid < 0 ||
-        upiPaid < 0 ||
-        cashPaid + upiPaid <= 0)
-    ) {
-      alert(
-        "For Split (Cash + UPI), enter a valid Cash and/or UPI amount."
-      );
+    if (!Number.isFinite(collectionAmount) || collectionAmount <= 0) {
+      alert("Please enter a Cash or UPI amount.");
       return;
     }
 
-    if (
-      !Number.isFinite(
-        collectionAmount
-      ) ||
-      collectionAmount <= 0
-    ) {
-      alert(
-        "Please enter a valid collection amount."
-      );
+    if (cashValue < 0 || upiValue < 0) {
+      alert("Cash and UPI amounts cannot be negative.");
       return;
     }
 
@@ -727,114 +744,114 @@ export default function Collections() {
          INSERT COLLECTION
       --------------------------------------------- */
 
-      const { data: collection, error } =
-        await supabase
-          .from("collections")
-          .insert({
-            customer_id:
-              customerId,
+      const collectionRows: Array<{
+        customer_id: string;
+        collection_date: string;
+        amount: number;
+        payment_method: string;
+        remarks: string | null;
+      }> = [];
 
-            collection_date:
-              normalizedDate,
+      if (cashValue > 0) {
+        collectionRows.push({
+          customer_id: customerId,
+          collection_date: collectionDate,
+          amount: Number(cashValue.toFixed(2)),
+          payment_method: "Cash",
+          remarks: remarks.trim() || null,
+        });
+      }
 
-            amount:
-              collectionAmount,
+      if (upiValue > 0) {
+        collectionRows.push({
+          customer_id: customerId,
+          collection_date: collectionDate,
+          amount: Number(upiValue.toFixed(2)),
+          payment_method: "UPI",
+          remarks: remarks.trim() || null,
+        });
+      }
 
-            payment_method:
-              paymentMethod,
-
-            cash_amount:
-              cashPaid,
-
-            upi_amount:
-              upiPaid,
-
-            remarks:
-              remarks.trim() || null,
-          })
-          .select()
-          .single();
+      const { data: collectionsCreated, error } = await supabase
+        .from("collections")
+        .insert(collectionRows)
+        .select();
 
       if (error) {
         throw error;
       }
 
-      if (!collection) {
-        throw new Error(
-          "Collection was not created."
-        );
+      if (!collectionsCreated || collectionsCreated.length === 0) {
+        throw new Error("Collection was not created.");
       }
 
       /* ---------------------------------------------
          UPDATE SALE BALANCES
       --------------------------------------------- */
 
-      for (const allocation of allocations) {
-        const sale =
-          outstandingSales.find(
-            (item) =>
-              item.id ===
-              allocation.sale_id
-          );
+      // Apply the total collection to sales FIFO, while recording each
+      // payment method separately. This keeps Cash/UPI correct for Daily Closing.
+      let allocationRemaining = collectionAmount;
+      let saleIndex = 0;
+      const allocationRowsByCollection: Array<{ collection_id: string; sale_id: string; amount: number }> = [];
 
-        if (!sale) {
-          continue;
-        }
+      for (const createdCollection of collectionsCreated) {
+        let methodRemaining = Number(createdCollection.amount) || 0;
 
-        const newBalance =
-          Math.max(
-            0,
-            sale.balance_amount -
-              allocation.amount
-          );
+        while (methodRemaining > 0.000001 && saleIndex < outstandingSales.length) {
+          const sale = outstandingSales[saleIndex];
+          const saleBalance = Number(sale.balance_amount) || 0;
+          const applied = Math.min(methodRemaining, saleBalance);
 
-        const { error: updateError } =
-          await supabase
-            .from("sales")
-            .update({
-              balance_amount:
-                newBalance,
-            })
-            .eq(
-              "id",
-              allocation.sale_id
-            );
+          if (applied <= 0) {
+            saleIndex += 1;
+            continue;
+          }
 
-        if (updateError) {
-          throw updateError;
-        }
-
-        /* -------------------------------------------
-           SAVE ALLOCATION
-        ------------------------------------------- */
-
-        const {
-          error: allocationError,
-        } = await supabase
-          .from(
-            "collection_allocations"
-          )
-          .insert({
-            collection_id:
-              collection.id,
-
-            sale_id:
-              allocation.sale_id,
-
-            amount:
-              allocation.amount,
+          allocationRowsByCollection.push({
+            collection_id: createdCollection.id,
+            sale_id: sale.id,
+            amount: Number(applied.toFixed(2)),
           });
 
-        if (allocationError) {
-          throw allocationError;
+          methodRemaining -= applied;
+          allocationRemaining -= applied;
+
+          // Update the in-memory sale balance so Cash and UPI together
+          // cannot apply more than the customer's outstanding amount.
+          sale.balance_amount = Math.max(0, saleBalance - applied);
+          if (sale.balance_amount <= 0.000001) {
+            saleIndex += 1;
+          }
         }
+      }
+
+      // Update affected sales once using the final in-memory balances.
+      for (const sale of outstandingSales) {
+        const original = Number(
+          (await supabase.from("sales").select("balance_amount").eq("id", sale.id).single()).data?.balance_amount
+        ) || 0;
+        if (Math.abs(original - sale.balance_amount) > 0.000001) {
+          const { error: updateError } = await supabase
+            .from("sales")
+            .update({ balance_amount: sale.balance_amount })
+            .eq("id", sale.id);
+          if (updateError) throw updateError;
+        }
+      }
+
+      if (allocationRowsByCollection.length > 0) {
+        const { error: allocationError } = await supabase
+          .from("collection_allocations")
+          .insert(allocationRowsByCollection);
+        if (allocationError) throw allocationError;
       }
 
       /* ---------------------------------------------
          OPENING BALANCE
       --------------------------------------------- */
 
-      if (remaining > 0) {
+      if (allocationRemaining > 0) {
         const customer =
           customers.find(
             (item) =>
@@ -850,7 +867,7 @@ export default function Collections() {
 
         const openingPayment =
           Math.min(
-            remaining,
+            allocationRemaining,
             opening
           );
 
@@ -1088,130 +1105,78 @@ export default function Collections() {
      EDIT COLLECTION
   ===================================================== */
 
-  async function editCollection(
-    collectionId: string
-  ) {
+  async function editCollection(collectionId: string) {
+    if (!collectionId) {
+      alert("Invalid collection selected.");
+      return;
+    }
+
+    // Do not block the Edit button with the page save/loading state.
+    // Only the actual update/delete operation should use loading.
     try {
-      setLoading(true);
-
-      const {
-        data: collection,
-        error: collectionError,
-      } = await supabase
+      const { data: collection, error } = await supabase
         .from("collections")
-        .select(
-          `
-          id,
-          customer_id,
-          collection_date,
-          amount,
-          payment_method,
-          remarks
-          `
-        )
-        .eq(
-          "id",
-          collectionId
-        )
-        .single();
+        .select("id, customer_id, collection_date, amount, payment_method, remarks")
+        .eq("id", collectionId)
+        .maybeSingle();
 
-      if (collectionError) {
-        throw collectionError;
+      if (error) throw error;
+      if (!collection) {
+        throw new Error("Collection not found. Please refresh the list and try again.");
       }
 
-      setEditingCollectionId(
-        collection.id
+      // Load customers if the list is not ready, then select the customer.
+      let currentCustomers = customers;
+      if (!currentCustomers || currentCustomers.length === 0) {
+        const { data: customerRows, error: customerError } = await supabase
+          .from("customers")
+          .select("id, customer_name, opening_balance")
+          .order("customer_name");
+
+        if (customerError) throw customerError;
+
+        currentCustomers = (customerRows || []).map((row: any) => ({
+          id: row.id,
+          customer_name: row.customer_name || "",
+          opening_balance: Number(row.opening_balance) || 0,
+        }));
+
+        setCustomers(currentCustomers);
+      }
+
+      const customerExists = currentCustomers.some(
+        (customer) => customer.id === collection.customer_id
       );
 
-      setCustomerId(
-        collection.customer_id
-      );
+      if (!customerExists) {
+        throw new Error("The customer for this collection could not be found.");
+      }
 
-      const editDate =
-        collection.collection_date
-          ? String(
-              collection.collection_date
-            ).slice(0, 10)
-          : getTodayLocalDate();
-
+      // Populate the form FIRST. No balance/allocation is changed here.
+      setEditingCollectionId(String(collection.id));
+      setCustomerId(String(collection.customer_id));
       setCollectionDate(
-        editDate
+        collection.collection_date
+          ? String(collection.collection_date).slice(0, 10)
+          : getLocalDateISO()
       );
+      setAmount(String(Number(collection.amount) || 0));
+      setPaymentMethod(String(collection.payment_method || "Cash"));
+      setRemarks(String(collection.remarks || ""));
 
-      setCollectionDateDisplay(
-        formatDateDDMMYYYY(
-          editDate
-        )
-      );
+      // Balance is informational while editing. The old collection is
+      // reversed only after the user presses Update Collection.
+      await loadBalance(String(collection.customer_id));
 
-      setAmount(
-        String(
-          Number(
-            collection.amount
-          ) || 0
-        )
-      );
-
-      const editMethod =
-        String(
-          collection.payment_method ||
-            "Cash"
-        )
-          .trim()
-          .toLowerCase();
-
-      setPaymentMethod(
-        collection.payment_method ||
-          "Cash"
-      );
-
-      setCashAmount(
-        editMethod === "split"
-          ? String(
-              Number(
-                (collection as any).cash_amount
-              ) || 0
-            )
-          : ""
-      );
-
-      setUpiAmount(
-        editMethod === "split"
-          ? String(
-              Number(
-                (collection as any).upi_amount
-              ) || 0
-            )
-          : ""
-      );
-
-      setRemarks(
-        collection.remarks || ""
-      );
-
-      // Do not change balances while opening the edit form.
-      // The old collection is reversed only when Update is clicked.
-
-      await loadCustomers();
-
-      await loadBalance(
-        collection.customer_id
-      );
-
-      window.scrollTo({
-        top: 0,
-        behavior: "smooth",
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
       });
     } catch (error: any) {
-      console.error(error);
-
+      console.error("Edit collection error:", error);
       alert(
         "Unable to edit collection:\n" +
-          (error?.message ||
-            "Unknown error")
+          (error?.message || "Unknown error")
       );
-    } finally {
-      setLoading(false);
     }
   }
 
@@ -1287,360 +1252,282 @@ export default function Collections() {
   ===================================================== */
 
   async function updateCollection() {
-    if (!editingCollectionId) {
+    if (!editingCollectionId) return;
+
+    const collectionAmount = Number(amount);
+
+    if (!customerId) {
+      alert("Please select a customer.");
       return;
     }
 
-    const collectionAmount =
-      effectiveCollectionAmount;
-
-    const normalizedDate =
-      parseCollectionDate(
-        collectionDateDisplay
-      );
-
-    if (!normalizedDate) {
-      alert(
-        "Please enter a valid collection date in DD/MM/YYYY format.\nExample: 09/09/2026"
-      );
+    if (!Number.isFinite(collectionAmount) || collectionAmount <= 0) {
+      alert("Please enter a valid collection amount.");
       return;
     }
 
-    if (
-      isSplitPayment &&
-      (cashPaid < 0 ||
-        upiPaid < 0 ||
-        cashPaid + upiPaid <= 0)
-    ) {
-      alert(
-        "For Split (Cash + UPI), enter a valid Cash and/or UPI amount."
-      );
-      return;
-    }
-
-    if (
-      !Number.isFinite(
-        collectionAmount
-      ) ||
-      collectionAmount <= 0
-    ) {
-      alert(
-        "Please enter a valid collection amount."
-      );
-      return;
-    }
+    let originalCollection: any = null;
+    let originalAllocations: any[] = [];
+    let oldEffectsReversed = false;
+    let newEffectsApplied = false;
 
     try {
       setLoading(true);
 
-      /*
-       * 1. Load original collection and allocations.
-       * 2. Reverse original sale/opening effects.
-       * 3. Delete original allocations.
-       * 4. Re-read outstanding.
-       * 5. Apply the edited collection.
-       */
-      const {
-        data: oldCollection,
-        error: oldCollectionError,
-      } = await supabase
+      // -----------------------------------------------------
+      // 1. LOAD ORIGINAL COLLECTION + ALLOCATIONS
+      // -----------------------------------------------------
+      const { data: collection, error: collectionError } = await supabase
         .from("collections")
-        .select(
-          `
-            id,
-            customer_id,
-            amount
-          `
-        )
-        .eq(
-          "id",
-          editingCollectionId
-        )
+        .select("id, customer_id, collection_date, amount, payment_method, remarks")
+        .eq("id", editingCollectionId)
         .single();
 
-      if (oldCollectionError) {
-        throw oldCollectionError;
-      }
+      if (collectionError) throw collectionError;
+      if (!collection) throw new Error("Collection not found.");
 
-      if (!oldCollection) {
+      originalCollection = collection;
+      originalAllocations = await getCollectionAllocations(editingCollectionId);
+
+      // -----------------------------------------------------
+      // 2. REVERSE THE OLD COLLECTION FIRST
+      // -----------------------------------------------------
+      await reverseCollectionEffects(originalCollection, originalAllocations);
+      oldEffectsReversed = true;
+
+      // Remove old allocation rows. They will be recreated below.
+      const { error: oldAllocationDeleteError } = await supabase
+        .from("collection_allocations")
+        .delete()
+        .eq("collection_id", editingCollectionId);
+
+      if (oldAllocationDeleteError) throw oldAllocationDeleteError;
+
+      // -----------------------------------------------------
+      // 3. READ FRESH BALANCE AFTER REVERSAL
+      //    This is important when customer/date/amount is edited.
+      // -----------------------------------------------------
+      const { data: newCustomer, error: newCustomerError } = await supabase
+        .from("customers")
+        .select("id, opening_balance")
+        .eq("id", customerId)
+        .single();
+
+      if (newCustomerError) throw newCustomerError;
+
+      const openingBalance = Number(newCustomer?.opening_balance) || 0;
+      const outstandingSales = await getOutstandingSales(customerId);
+      const salesOutstanding = (outstandingSales || []).reduce(
+        (total: number, sale: OutstandingSale) =>
+          total + (Number(sale?.balance_amount) || 0),
+        0
+      );
+      const availableBalance = openingBalance + salesOutstanding;
+
+      if (collectionAmount > availableBalance + 0.000001) {
         throw new Error(
-          "Original collection not found."
+          `Collection cannot exceed outstanding balance of ₹${availableBalance.toFixed(2)}.`
         );
       }
 
-      const oldAllocations =
-        await getCollectionAllocations(
-          editingCollectionId
-        );
-
-      await reverseCollectionEffects(
-        oldCollection,
-        oldAllocations
+      // -----------------------------------------------------
+      // 4. CALCULATE NEW FIFO ALLOCATION
+      // -----------------------------------------------------
+      const { allocations, remaining } = calculateAllocations(
+        outstandingSales || [],
+        collectionAmount
       );
 
-      const {
-        error: deleteAllocationError,
-      } = await supabase
-        .from(
-          "collection_allocations"
-        )
-        .delete()
-        .eq(
-          "collection_id",
-          editingCollectionId
+      // -----------------------------------------------------
+      // 5. APPLY NEW SALE ALLOCATIONS
+      // -----------------------------------------------------
+      for (const allocation of allocations || []) {
+        const sale = (outstandingSales || []).find(
+          (item) => item?.id === allocation?.sale_id
         );
-
-      if (deleteAllocationError) {
-        throw deleteAllocationError;
-      }
-
-      /*
-       * Get fresh customer master values after
-       * reversing the old opening-balance portion.
-       */
-      const {
-        data: refreshedCustomer,
-        error: refreshedCustomerError,
-      } = await supabase
-        .from("customers")
-        .select(
-          "id, opening_balance"
-        )
-        .eq(
-          "id",
-          customerId
-        )
-        .single();
-
-      if (refreshedCustomerError) {
-        throw refreshedCustomerError;
-      }
-
-      const outstandingSales =
-        await getOutstandingSales(
-          customerId
-        );
-
-      const openingBalance =
-        Number(
-          refreshedCustomer
-            ?.opening_balance || 0
-        );
-
-      const salesOutstanding =
-        outstandingSales.reduce(
-          (sum, sale) =>
-            sum +
-            Number(
-              sale.balance_amount || 0
-            ),
-          0
-        );
-
-      const currentBalance =
-        openingBalance +
-        salesOutstanding;
-
-      if (
-        collectionAmount >
-        currentBalance
-      ) {
-        throw new Error(
-          `Collection cannot exceed outstanding balance of ₹${currentBalance.toFixed(
-            2
-          )}.`
-        );
-      }
-
-      const {
-        allocations,
-        remaining,
-      } =
-        calculateAllocations(
-          outstandingSales,
-          collectionAmount
-        );
-
-      const {
-        error: updateError,
-      } = await supabase
-        .from("collections")
-        .update({
-          customer_id:
-            customerId,
-          collection_date:
-            normalizedDate,
-          amount:
-            collectionAmount,
-          payment_method:
-            paymentMethod,
-          cash_amount:
-            cashPaid,
-          upi_amount:
-            upiPaid,
-          remarks:
-            remarks.trim() ||
-            null,
-        })
-        .eq(
-          "id",
-          editingCollectionId
-        );
-
-      if (updateError) {
-        throw updateError;
-      }
-
-      for (
-        const allocation of allocations
-      ) {
-        const sale =
-          outstandingSales.find(
-            (item) =>
-              item.id ===
-              allocation.sale_id
-          );
 
         if (!sale) {
-          continue;
+          throw new Error("Unable to find a sale for collection allocation.");
         }
 
-        const newBalance =
-          Math.max(
-            0,
-            Number(
-              sale.balance_amount
-            ) -
-              Number(
-                allocation.amount
-              )
-          );
+        const newBalance = Math.max(
+          0,
+          (Number(sale.balance_amount) || 0) - (Number(allocation.amount) || 0)
+        );
 
-        const {
-          error: saleUpdateError,
-        } = await supabase
+        const { error: saleUpdateError } = await supabase
           .from("sales")
-          .update({
-            balance_amount:
-              newBalance,
-          })
-          .eq(
-            "id",
-            allocation.sale_id
-          );
+          .update({ balance_amount: newBalance })
+          .eq("id", allocation.sale_id);
 
-        if (saleUpdateError) {
-          throw saleUpdateError;
-        }
+        if (saleUpdateError) throw saleUpdateError;
 
-        const {
-          error: allocationError,
-        } = await supabase
-          .from(
-            "collection_allocations"
-          )
+        const { error: allocationError } = await supabase
+          .from("collection_allocations")
           .insert({
-            collection_id:
-              editingCollectionId,
-            sale_id:
-              allocation.sale_id,
-            amount:
-              allocation.amount,
+            collection_id: editingCollectionId,
+            sale_id: allocation.sale_id,
+            amount: allocation.amount,
           });
 
-        if (allocationError) {
-          throw allocationError;
-        }
+        if (allocationError) throw allocationError;
       }
 
-      /*
-       * Any amount left after clearing sale balances
-       * is applied to the customer's opening balance.
-       */
-      if (remaining > 0) {
-        const {
-          data: customer,
-          error: customerError,
-        } = await supabase
+      // -----------------------------------------------------
+      // 6. APPLY REMAINING AMOUNT TO OPENING BALANCE
+      // -----------------------------------------------------
+      const openingPayment = Math.min(
+        Math.max(0, Number(remaining) || 0),
+        openingBalance
+      );
+
+      if (openingPayment > 0) {
+        const { error: openingError } = await supabase
           .from("customers")
-          .select(
-            "id, opening_balance"
-          )
-          .eq(
-            "id",
-            customerId
-          )
-          .single();
+          .update({
+            opening_balance: openingBalance - openingPayment,
+          })
+          .eq("id", customerId);
 
-        if (customerError) {
-          throw customerError;
-        }
-
-        const opening =
-          Number(
-            customer?.opening_balance ||
-              0
-          );
-
-        const openingPayment =
-          Math.min(
-            remaining,
-            opening
-          );
-
-        if (
-          openingPayment > 0
-        ) {
-          const {
-            error: openingError,
-          } = await supabase
-            .from("customers")
-            .update({
-              opening_balance:
-                opening -
-                openingPayment,
-            })
-            .eq(
-              "id",
-              customerId
-            );
-
-          if (openingError) {
-            throw openingError;
-          }
-        }
+        if (openingError) throw openingError;
       }
 
-      alert(
-        "Collection updated successfully."
-      );
+      newEffectsApplied = true;
 
+      // -----------------------------------------------------
+      // 7. UPDATE COLLECTION HEADER LAST
+      // -----------------------------------------------------
+      const { error: updateError } = await supabase
+        .from("collections")
+        .update({
+          customer_id: customerId,
+          collection_date: collectionDate,
+          amount: collectionAmount,
+          payment_method: paymentMethod,
+          remarks: remarks.trim() || null,
+        })
+        .eq("id", editingCollectionId);
+
+      if (updateError) throw updateError;
+
+      alert("Collection updated successfully.");
+
+      const refreshedCustomerId = customerId;
       clearForm();
-
       await loadCustomers();
-
       await loadRecentCollections();
+      await loadBalance(refreshedCustomerId);
     } catch (error: any) {
-      console.error(
-        "UPDATE COLLECTION ERROR:",
-        error
-      );
+      console.error("Update collection error:", error);
+
+      // Best-effort rollback so a failed update does not leave the old
+      // collection permanently reversed.
+      try {
+        if (newEffectsApplied) {
+          // Reverse the newly applied effects.
+          const newAllocations = await getCollectionAllocations(editingCollectionId);
+          const tempCollection = {
+            ...originalCollection,
+            customer_id: customerId,
+            amount: collectionAmount,
+          };
+          await reverseCollectionEffects(tempCollection, newAllocations);
+          await supabase
+            .from("collection_allocations")
+            .delete()
+            .eq("collection_id", editingCollectionId);
+        }
+
+        if (oldEffectsReversed && originalCollection) {
+          // Restore original allocation rows and balances.
+          for (const allocation of originalAllocations || []) {
+            const { data: sale, error: saleError } = await supabase
+              .from("sales")
+              .select("id, balance_amount")
+              .eq("id", allocation.sale_id)
+              .single();
+
+            if (saleError) throw saleError;
+            if (!sale) continue;
+
+            const restoredOldBalance =
+              (Number(sale.balance_amount) || 0) - (Number(allocation.amount) || 0);
+
+            const { error: restoreSaleError } = await supabase
+              .from("sales")
+              .update({ balance_amount: Math.max(0, restoredOldBalance) })
+              .eq("id", allocation.sale_id);
+
+            if (restoreSaleError) throw restoreSaleError;
+          }
+
+          const allocatedOld = (originalAllocations || []).reduce(
+            (total: number, item: any) =>
+              total + (Number(item?.amount) || 0),
+            0
+          );
+          const oldOpeningUsed = Math.max(
+            0,
+            (Number(originalCollection.amount) || 0) - allocatedOld
+          );
+
+          if (oldOpeningUsed > 0 && originalCollection.customer_id) {
+            const { data: oldCustomer, error: oldCustomerError } = await supabase
+              .from("customers")
+              .select("id, opening_balance")
+              .eq("id", originalCollection.customer_id)
+              .single();
+
+            if (oldCustomerError) throw oldCustomerError;
+
+            if (oldCustomer) {
+              const { error: restoreOpeningError } = await supabase
+                .from("customers")
+                .update({
+                  opening_balance:
+                    (Number(oldCustomer.opening_balance) || 0) - oldOpeningUsed,
+                })
+                .eq("id", originalCollection.customer_id);
+
+              if (restoreOpeningError) throw restoreOpeningError;
+            }
+          }
+
+          for (const allocation of originalAllocations || []) {
+            const { error: insertOldAllocationError } = await supabase
+              .from("collection_allocations")
+              .insert({
+                collection_id: editingCollectionId,
+                sale_id: allocation.sale_id,
+                amount: allocation.amount,
+              });
+
+            if (insertOldAllocationError) throw insertOldAllocationError;
+          }
+
+          await supabase
+            .from("collections")
+            .update({
+              customer_id: originalCollection.customer_id,
+              collection_date: originalCollection.collection_date,
+              amount: originalCollection.amount,
+              payment_method: originalCollection.payment_method,
+              remarks: originalCollection.remarks,
+            })
+            .eq("id", editingCollectionId);
+        }
+      } catch (rollbackError) {
+        console.error("Collection update rollback error:", rollbackError);
+      }
 
       alert(
-        "Update Collection Error:\n\n" +
-          (
-            error?.message ||
-            "Unable to update collection."
-          )
+        "Update Collection Error:\n" +
+          (error?.message || "Unable to update collection.")
       );
 
       await loadCustomers();
-
-      if (customerId) {
-        await loadBalance(
-          customerId
-        );
-      }
+      await loadRecentCollections();
+      await loadBalance(customerId);
     } finally {
       setLoading(false);
     }
@@ -1664,75 +1551,25 @@ export default function Collections() {
 
   function clearForm() {
     setCustomerId("");
-    setRouteFilter("");
-    setCustomerSearch("");
 
     setBalance(0);
 
     setAmount("");
 
-    setPaymentMethod("Cash");
-
     setCashAmount("");
+
     setUpiAmount("");
+
+    setPaymentMethod("Cash");
 
     setRemarks("");
 
-    const todayDate =
-      getTodayLocalDate();
-
     setCollectionDate(
-      todayDate
-    );
-
-    setCollectionDateDisplay(
-      formatDateDDMMYYYY(
-        todayDate
-      )
+      getLocalDateISO()
     );
 
     setEditingCollectionId(null);
   }
-
-  /* =====================================================
-     ROUTE + CUSTOMER SEARCH
-     ===================================================== */
-
-  const routeOptions = useMemo(() => {
-    const uniqueRoutes = new Set<string>();
-
-    customers.forEach((customer) => {
-      const route = String(customer.route || "").trim();
-
-      if (route) {
-        uniqueRoutes.add(route);
-      }
-    });
-
-    return Array.from(uniqueRoutes).sort((a, b) =>
-      a.localeCompare(b, undefined, {
-        numeric: true,
-        sensitivity: "base",
-      })
-    );
-  }, [customers]);
-
-  const filteredCustomers = useMemo(() => {
-    const query = customerSearch.trim().toLowerCase();
-
-    return customers.filter((customer) => {
-      const matchesRoute =
-        !routeFilter ||
-        String(customer.route || "").trim().toLowerCase() ===
-          routeFilter.trim().toLowerCase();
-
-      const matchesCustomer =
-        !query ||
-        customer.customer_name.toLowerCase().includes(query);
-
-      return matchesRoute && matchesCustomer;
-    });
-  }, [customers, routeFilter, customerSearch]);
 
   /* =====================================================
      SELECTED CUSTOMER
@@ -1740,7 +1577,7 @@ export default function Collections() {
 
   const selectedCustomer =
     useMemo(() => {
-      return customers.find(
+      return (customers || []).find(
         (customer) =>
           customer.id ===
           customerId
@@ -1773,7 +1610,7 @@ export default function Collections() {
      ===================================================== */
 
   return (
-    <div className="w-full min-w-0 space-y-6">
+    <div className="space-y-6">
 
       {/* =================================================
           HEADER
@@ -1792,6 +1629,168 @@ export default function Collections() {
       </div>
 
       {/* =================================================
+          ROUTE-WISE COLLECTIONS
+      ================================================= */}
+
+      <div className="bg-white rounded-2xl shadow p-4 sm:p-6">
+        <div className="flex flex-col gap-2 mb-4">
+          <h2 className="text-2xl font-bold text-blue-700">
+            Route-wise Collections
+          </h2>
+          <p className="text-gray-500 text-sm">
+            Select one route, enter Cash and/or UPI for each customer, then save everyone together.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+          <div>
+            <label className="block font-semibold mb-2">Collection Date</label>
+            <input
+              type="date"
+              value={collectionDate}
+              onChange={(e) => setCollectionDate(e.target.value)}
+              className="w-full border rounded-xl px-4 py-3"
+            />
+          </div>
+
+          <div>
+            <label className="block font-semibold mb-2">Select Route</label>
+            <select
+              value={selectedRoute}
+              onChange={(e) => {
+                setSelectedRoute(e.target.value);
+                setRouteAmounts({});
+                setRouteBalances({});
+              }}
+              className="w-full border rounded-xl px-4 py-3"
+            >
+              <option value="">Select Route</option>
+              {routes.map((route) => (
+                <option key={route} value={route}>{route}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="rounded-xl bg-blue-50 border border-blue-100 px-4 py-3 flex items-center justify-between">
+            <div>
+              <div className="text-sm text-gray-500">Customers</div>
+              <div className="text-xl font-bold text-blue-700">{routeCustomers.length}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-gray-500">Route Total</div>
+              <div className="text-xl font-bold text-green-700">₹{routeTotals.total.toFixed(2)}</div>
+            </div>
+          </div>
+        </div>
+
+        {selectedRoute && routeCustomers.length === 0 && (
+          <div className="rounded-xl bg-yellow-50 border border-yellow-200 p-4 text-yellow-800">
+            No customers found in this route.
+          </div>
+        )}
+
+        {selectedRoute && routeCustomers.length > 0 && (
+          <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+            {routeCustomers.map((customer, index) => {
+              const entry = getRouteAmount(customer.id);
+              const cash = Number(entry.cash) || 0;
+              const upi = Number(entry.upi) || 0;
+              const total = cash + upi;
+
+              return (
+                <div
+                  key={customer.id}
+                  className="border rounded-2xl p-4 bg-gray-50"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <div className="font-bold text-blue-700 text-lg">
+                        {index + 1}. {customer.customer_name}
+                      </div>
+                      <div className="text-red-600 font-semibold text-sm">
+                        Outstanding: ₹{(routeBalances[customer.id] ?? 0).toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="text-right bg-green-50 rounded-lg px-3 py-2 min-w-[100px]">
+                      <div className="text-xs text-gray-500">Entry Total</div>
+                      <div className="font-bold text-green-700">₹{total.toFixed(2)}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-semibold mb-1">Cash</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={entry.cash}
+                        onChange={(e) => setRouteAmount(customer.id, "cash", e.target.value)}
+                        className="w-full border rounded-xl px-3 py-3 bg-white text-base"
+                        placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold mb-1">UPI</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={entry.upi}
+                        onChange={(e) => setRouteAmount(customer.id, "upi", e.target.value)}
+                        className="w-full border rounded-xl px-3 py-3 bg-white text-base"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {selectedRoute && routeCustomers.length > 0 && (
+          <div className="mt-5 rounded-2xl border border-green-200 bg-green-50 p-4 sticky bottom-2 shadow-lg">
+            <div className="grid grid-cols-3 gap-2 text-center mb-4">
+              <div>
+                <div className="text-xs text-gray-500">Total Cash</div>
+                <div className="font-bold text-green-700">₹{routeTotals.cash.toFixed(2)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Total UPI</div>
+                <div className="font-bold text-blue-700">₹{routeTotals.upi.toFixed(2)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Grand Total</div>
+                <div className="font-bold text-xl text-green-800">₹{routeTotals.total.toFixed(2)}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={routeSaving || routeTotals.total <= 0}
+                onClick={saveRouteCollections}
+                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-6 py-4 rounded-xl font-bold text-lg"
+              >
+                {routeSaving ? "Saving Route..." : "Save All Collections"}
+              </button>
+              <button
+                type="button"
+                disabled={routeSaving}
+                onClick={clearRouteEntries}
+                className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-6 py-4 rounded-xl font-bold"
+              >
+                Clear Route Entries
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* =================================================
           FORM
       ================================================= */}
 
@@ -1807,112 +1806,15 @@ export default function Collections() {
             </label>
 
             <input
-              type="text"
-              inputMode="numeric"
-              value={collectionDateDisplay}
-              onChange={(e) => {
-                const display =
-                  formatDateDDMMYYYYInput(
-                    e.target.value
-                  );
-
-                setCollectionDateDisplay(
-                  display
-                );
-
-                const parsed =
-                  parseCollectionDate(
-                    display
-                  );
-
-                if (parsed) {
-                  setCollectionDate(
-                    parsed
-                  );
-                }
-              }}
-              placeholder="DD/MM/YYYY"
-              maxLength={10}
-              className="w-full border rounded-xl px-4 py-3"
-            />
-          </div>
-
-          {/* ROUTE */}
-
-          <div>
-            <label className="block font-semibold mb-2">
-              Route
-            </label>
-
-            <select
-              value={routeFilter}
-              onChange={(e) => {
-                setRouteFilter(e.target.value);
-
-                // Clear selected customer if it no longer
-                // belongs to the selected route.
-                if (
-                  e.target.value &&
-                  customerId
-                ) {
-                  const selected = customers.find(
-                    (customer) =>
-                      customer.id === customerId
-                  );
-
-                  if (
-                    selected &&
-                    String(selected.route || "").trim().toLowerCase() !==
-                      e.target.value.trim().toLowerCase()
-                  ) {
-                    setCustomerId("");
-                    setBalance(0);
-                    setOutstandingSales([]);
-                  }
-                }
-              }}
-              className="w-full border rounded-xl px-4 py-3 bg-white"
-            >
-              <option value="">
-                All Routes
-              </option>
-
-              {routeOptions.map((route) => (
-                <option
-                  key={route}
-                  value={route}
-                >
-                  {route}
-                </option>
-              ))}
-            </select>
-
-            <p className="mt-1 text-xs text-gray-500">
-              Select a route to show only its customers.
-            </p>
-          </div>
-
-          {/* CUSTOMER SEARCH */}
-
-          <div>
-            <label className="block font-semibold mb-2">
-              Search Customer
-            </label>
-
-            <input
-              type="text"
-              value={customerSearch}
+              type="date"
+              value={collectionDate}
               onChange={(e) =>
-                setCustomerSearch(e.target.value)
+                setCollectionDate(
+                  e.target.value
+                )
               }
-              placeholder="Search customer name..."
               className="w-full border rounded-xl px-4 py-3"
             />
-
-            <p className="mt-1 text-xs text-gray-500">
-              {filteredCustomers.length} customer
-              {filteredCustomers.length === 1 ? "" : "s"} found
-            </p>
           </div>
 
           {/* CUSTOMER */}
@@ -1925,7 +1827,7 @@ export default function Collections() {
             <select
               value={customerId}
               onChange={(e) =>
-                void handleCustomerChange(
+                handleCustomerChange(
                   e.target.value
                 )
               }
@@ -1935,16 +1837,19 @@ export default function Collections() {
                 Select Customer
               </option>
 
-              {filteredCustomers.map(
+              {(customers || []).map(
                 (customer) => (
                   <option
-                    key={customer.id}
-                    value={customer.id}
+                    key={
+                      customer.id
+                    }
+                    value={
+                      customer.id
+                    }
                   >
-                    {customer.customer_name}
-                    {customer.route
-                      ? ` — ${customer.route}`
-                      : ""}
+                    {
+                      customer.customer_name
+                    }
                   </option>
                 )
               )}
@@ -1963,156 +1868,80 @@ export default function Collections() {
             </div>
           </div>
 
-          {/* OUTSTANDING SALES */}
-
-          {customerId && outstandingSales.length > 0 && (
-            <div className="md:col-span-3 mt-1 rounded-xl border border-red-200 bg-red-50 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <h3 className="font-bold text-red-700">
-                    Outstanding Sales
-                  </h3>
-                  <p className="text-sm text-red-600">
-                    Unpaid sale balances for this customer
-                  </p>
-                </div>
-                <div className="font-bold text-red-700">
-                  {outstandingSales.length} sale
-                  {outstandingSales.length === 1 ? "" : "s"}
-                </div>
-              </div>
-
-              <div className="overflow-x-auto bg-white rounded-lg border border-red-100">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-red-100 text-red-800">
-                      <th className="text-left px-3 py-2">Date</th>
-                      <th className="text-right px-3 py-2">Outstanding</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {outstandingSales.map((sale) => (
-                      <tr key={sale.id} className="border-t border-red-100">
-                        <td className="px-3 py-2">
-                          {formatDateDDMMYYYY(sale.sale_date)}
-                        </td>
-                        <td className="px-3 py-2 text-right font-semibold text-red-700">
-                          ₹{sale.balance_amount.toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* PAYMENT */}
+          {/* CASH */}
 
           <div>
             <label className="block font-semibold mb-2">
-              Payment Method
+              Cash Collection
             </label>
 
-            <select
-              value={
-                paymentMethod
-              }
-              onChange={(e) =>
-                handlePaymentMethodChange(
-                  e.target.value
-                )
-              }
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={editingCollectionId ? (paymentMethod === "Cash" ? amount : "") : cashAmount}
+              onChange={(e) => {
+                if (editingCollectionId) {
+                  if (paymentMethod === "Cash") setAmount(e.target.value);
+                } else {
+                  setCashAmount(e.target.value);
+                }
+              }}
               className="w-full border rounded-xl px-4 py-3"
-            >
-              <option value="Cash">
-                Cash
-              </option>
-
-              <option value="UPI">
-                UPI
-              </option>
-
-              <option value="Bank">
-                Bank
-              </option>
-
-              <option value="Split">
-                Split (Cash + UPI)
-              </option>
-            </select>
+              placeholder="Cash amount"
+            />
           </div>
 
-          {isSplitPayment ? (
-            <>
-              <div>
-                <label className="block font-semibold mb-2">
-                  Cash Received
-                </label>
+          {/* UPI */}
 
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cashAmount}
-                  onChange={(e) =>
-                    setCashAmount(
-                      e.target.value
-                    )
-                  }
-                  className="w-full border-2 border-green-200 rounded-xl px-4 py-3"
-                  placeholder="0"
-                />
-              </div>
+          <div>
+            <label className="block font-semibold mb-2">
+              UPI Collection
+            </label>
 
-              <div>
-                <label className="block font-semibold mb-2">
-                  UPI Received
-                </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={editingCollectionId ? (paymentMethod === "UPI" ? amount : "") : upiAmount}
+              onChange={(e) => {
+                if (editingCollectionId) {
+                  if (paymentMethod === "UPI") setAmount(e.target.value);
+                } else {
+                  setUpiAmount(e.target.value);
+                }
+              }}
+              className="w-full border rounded-xl px-4 py-3"
+              placeholder="UPI amount"
+            />
+          </div>
 
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={upiAmount}
-                  onChange={(e) =>
-                    setUpiAmount(
-                      e.target.value
-                    )
-                  }
-                  className="w-full border-2 border-blue-200 rounded-xl px-4 py-3"
-                  placeholder="0"
-                />
-              </div>
+          {/* TOTAL */}
 
-              <div className="rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3">
-                <p className="text-sm text-slate-600">
-                  Total Collection
-                </p>
-                <p className="text-xl font-bold text-indigo-700">
-                  ₹{effectiveCollectionAmount.toFixed(2)}
-                </p>
-              </div>
-            </>
-          ) : (
+          <div>
+            <label className="block font-semibold mb-2">
+              Total Collection
+            </label>
+
+            <div className="w-full border rounded-xl px-4 py-3 bg-green-50 text-xl font-bold text-green-700">
+              ₹{(editingCollectionId ? Number(amount) || 0 : combinedCollectionAmount).toFixed(2)}
+            </div>
+          </div>
+
+          {editingCollectionId && (
             <div>
               <label className="block font-semibold mb-2">
-                Collection Amount
+                Payment Method
               </label>
-
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={amount}
-                onChange={(e) =>
-                  setAmount(
-                    e.target.value
-                  )
-                }
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
                 className="w-full border rounded-xl px-4 py-3"
-                placeholder="Enter amount"
-              />
+              >
+                <option value="Cash">Cash</option>
+                <option value="UPI">UPI</option>
+                <option value="Bank">Bank</option>
+              </select>
             </div>
           )}
 
@@ -2147,14 +1976,9 @@ export default function Collections() {
             </p>
 
             <p className="font-bold text-blue-700 text-lg">
-              {selectedCustomer.customer_name}
-            </p>
-
-            <p className="mt-1 text-sm text-slate-600">
-              Route:{" "}
-              <span className="font-semibold">
-                {selectedCustomer.route || "-"}
-              </span>
+              {
+                selectedCustomer.customer_name
+              }
             </p>
           </div>
         )}
@@ -2168,7 +1992,7 @@ export default function Collections() {
             disabled={
               loading ||
               !customerId ||
-              balance <= 0
+              (!editingCollectionId && balance <= 0)
             }
             onClick={handleSave}
             className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-8 py-3 rounded-xl font-bold"
@@ -2282,9 +2106,7 @@ export default function Collections() {
                     >
 
                       <td className="p-3">
-                        {formatDateDDMMYYYY(
-                          collection.collection_date
-                        )}
+                        {formatDateDDMMYYYY(collection.collection_date)}
                       </td>
 
                       <td className="p-3 font-semibold">
@@ -2301,18 +2123,9 @@ export default function Collections() {
                       </td>
 
                       <td className="p-3">
-                        {collection.payment_method}
-                        {collection.payment_method
-                          .trim()
-                          .toLowerCase() ===
-                          "split" && (
-                          <span className="ml-2 text-xs font-semibold text-slate-500">
-                            (Cash ₹
-                            {collection.cash_amount.toFixed(2)}
-                            + UPI ₹
-                            {collection.upi_amount.toFixed(2)})
-                          </span>
-                        )}
+                        {
+                          collection.payment_method
+                        }
                       </td>
 
                       <td className="p-3">
@@ -2323,41 +2136,41 @@ export default function Collections() {
                       </td>
 
                       <td className="p-3">
-                        {collection.source === "Sale" ? (
-                          <span className="inline-block bg-blue-100 text-blue-700 px-3 py-2 rounded-lg font-semibold">
-                            Sale Payment
-                          </span>
-                        ) : (
-                          <div className="flex justify-center gap-2">
 
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() =>
-                                editCollection(
-                                  collection.id
-                                )
-                              }
-                              className="bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
-                            >
-                              Edit
-                            </button>
+                        <div className="flex justify-center gap-2">
 
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() =>
-                                deleteCollection(
-                                  collection.id
-                                )
-                              }
-                              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
-                            >
-                              Delete
-                            </button>
+                          <button
+                            type="button"
+                            disabled={
+                              loading
+                            }
+                            onClick={() =>
+                              editCollection(
+                                collection.id
+                              )
+                            }
+                            className="bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                          >
+                            Edit
+                          </button>
 
-                          </div>
-                        )}
+                          <button
+                            type="button"
+                            disabled={
+                              loading
+                            }
+                            onClick={() =>
+                              deleteCollection(
+                                collection.id
+                              )
+                            }
+                            className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                          >
+                            Delete
+                          </button>
+
+                        </div>
+
                       </td>
 
                     </tr>
