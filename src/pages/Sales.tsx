@@ -1979,6 +1979,21 @@ GET OLD SALE ITEMS
       saleId
     );
 
+  if (saleUpdateError) {
+    throw saleUpdateError;
+  }
+
+  const {
+    error:
+      deleteItemsError,
+  } = await supabase
+    .from("sale_items")
+    .delete()
+    .eq(
+      "sale_id",
+      saleId
+    );
+
   if (deleteItemsError) {
     throw deleteItemsError;
   }
