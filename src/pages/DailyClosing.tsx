@@ -1,794 +1,508 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 type ClosingRow = {
   id: string;
   closing_date: string;
+
   opening_cash: number | string | null;
+  opening_upi: number | string | null;
+
   cash_sales: number | string | null;
   upi_sales: number | string | null;
-  credit_sales: number | string | null;
-  collections: number | string | null;
+
+  cash_collections: number | string | null;
+  upi_collections: number | string | null;
+
   expenses: number | string | null;
+
   closing_cash: number | string | null;
+  closing_upi: number | string | null;
 };
 
 type SaleRow = {
   id: string;
   payment_method: string | null;
   paid_amount: number | string | null;
-  balance_amount: number | string | null;
-  total_amount: number | string | null;
   cash_amount: number | string | null;
   upi_amount: number | string | null;
-  sale_date: string;
+  sale_date: string | null;
 };
 
 type CollectionRow = {
   id: string;
   amount: number | string | null;
-  collection_date: string;
   payment_method: string | null;
   cash_amount: number | string | null;
   upi_amount: number | string | null;
+  collection_date: string | null;
 };
 
 type ExpenseRow = {
   id: string;
   amount: number | string | null;
-  expense_date: string;
+  expense_date: string | null;
 };
 
-type PurchaseRow = {
-  id: string;
-  purchase_date: string;
-  invoice_no: string | null;
-  supplier_name: string | null;
-  payment_method: string | null;
-  total_amount: number | string | null;
-  paid_amount: number | string | null;
-  balance_amount: number | string | null;
-};
+function todayDate() {
+  const d = new Date();
+
+  return `${d.getFullYear()}-${String(
+    d.getMonth() + 1
+  ).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function num(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function money(value: number) {
+  return `₹${value.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function dateKey(value: unknown) {
+  if (!value) return "";
+
+  const text = String(value);
+
+  const match = text.match(
+    /^(\d{4}-\d{2}-\d{2})/
+  );
+
+  if (match) return match[1];
+
+  const d = new Date(text);
+
+  if (Number.isNaN(d.getTime())) return "";
+
+  return `${d.getFullYear()}-${String(
+    d.getMonth() + 1
+  ).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function displayDate(value: string) {
+  if (!value) return "-";
+
+  const p = value.substring(0, 10).split("-");
+
+  if (p.length !== 3) return value;
+
+  return `${p[2]}/${p[1]}/${p[0]}`;
+}
 
 export default function DailyClosing() {
-  // =========================================================
-  // TODAY
-  // =========================================================
+  const [selectedDate, setSelectedDate] =
+    useState(todayDate());
 
-  function getToday() {
-    const now = new Date();
+  const [openingCash, setOpeningCash] =
+    useState("0");
 
-    return `${now.getFullYear()}-${String(
-      now.getMonth() + 1
-    ).padStart(2, "0")}-${String(
-      now.getDate()
-    ).padStart(2, "0")}`;
-  }
+  const [openingUpi, setOpeningUpi] =
+    useState("0");
 
-  const [date, setDate] = useState(getToday());
+  const [cashSales, setCashSales] =
+    useState(0);
 
-  const [dateDisplay, setDateDisplay] =
-    useState(() => {
-      const value = getToday();
-      const [year, month, day] =
-        value.split("-");
-      return `${day}/${month}/${year}`;
-    });
+  const [upiSales, setUpiSales] =
+    useState(0);
 
-  // =========================================================
-  // VALUES
-  // =========================================================
-
-  const [cashSales, setCashSales] = useState(0);
-  const [upiSales, setUpiSales] = useState(0);
-  const [creditSales, setCreditSales] = useState(0);
-
-  const [collections, setCollections] = useState(0);
+  const [cashCollections, setCashCollections] =
+    useState(0);
 
   const [upiCollections, setUpiCollections] =
     useState(0);
-  const [expenses, setExpenses] = useState(0);
-  const [cashPurchasePayments, setCashPurchasePayments] =
+
+  const [expenses, setExpenses] =
     useState(0);
 
-  const [cashPurchaseRows, setCashPurchaseRows] =
-    useState<PurchaseRow[]>([]);
+  const [history, setHistory] =
+    useState<ClosingRow[]>([]);
 
-  const [openingCash, setOpeningCash] = useState(0);
-  const [closingCash, setClosingCash] = useState(0);
+  const [loading, setLoading] =
+    useState(false);
 
-  // =========================================================
-  // STATE
-  // =========================================================
+  const [saving, setSaving] =
+    useState(false);
 
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [manualOpeningCash, setManualOpeningCash] =
+    useState(false);
 
-  const [history, setHistory] = useState<ClosingRow[]>([]);
+  const [manualOpeningUpi, setManualOpeningUpi] =
+    useState(false);
 
-  // =========================================================
-  // DATE FORMAT
-  // =========================================================
+  const closingCash = useMemo(
+    () =>
+      num(openingCash) +
+      cashSales +
+      cashCollections -
+      expenses,
+    [
+      openingCash,
+      cashSales,
+      cashCollections,
+      expenses,
+    ]
+  );
 
-  function formatDate(value: string) {
-    if (!value) return "";
+  const closingUpi = useMemo(
+    () =>
+      num(openingUpi) +
+      upiSales +
+      upiCollections,
+    [
+      openingUpi,
+      upiSales,
+      upiCollections,
+    ]
+  );
 
-    const parts = value.substring(0, 10).split("-");
+  async function loadClosing(
+    date = selectedDate
+  ) {
+    if (!date) return;
 
-    if (parts.length !== 3) {
-      return value;
-    }
-
-    return `${parts[2]}/${parts[1]}/${parts[0]}`;
-  }
-
-  // =========================================================
-  // IMPORTANT DATE HELPER
-  //
-  // Handles:
-  // 2026-09-02
-  // 2026-09-02T10:30:00
-  // 2026-09-02T10:30:00+00:00
-  // =========================================================
-
-  function getDateKey(value: unknown): string {
-    if (!value) return "";
-
-    const text = String(value).trim();
-
-    if (!text) return "";
-
-    // Date-only value
-    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
-      return text;
-    }
-
-    // Timestamp beginning with YYYY-MM-DD
-    if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
-      return text.substring(0, 10);
-    }
-
-    // Fallback
-    const parsed = new Date(text);
-
-    if (Number.isNaN(parsed.getTime())) {
-      return "";
-    }
-
-    return `${parsed.getFullYear()}-${String(
-      parsed.getMonth() + 1
-    ).padStart(2, "0")}-${String(
-      parsed.getDate()
-    ).padStart(2, "0")}`;
-  }
-
-  function formatDateInput(value: string) {
-    const digits = value
-      .replace(/\D/g, "")
-      .slice(0, 8);
-
-    if (digits.length <= 2) {
-      return digits;
-    }
-
-    if (digits.length <= 4) {
-      return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-    }
-
-    return `${digits.slice(0, 2)}/${digits.slice(
-      2,
-      4
-    )}/${digits.slice(4, 8)}`;
-  }
-
-  function parseDDMMYYYY(value: string) {
-    const digits = value.replace(/\D/g, "");
-
-    if (!/^\d{8}$/.test(digits)) {
-      return null;
-    }
-
-    const day = Number(digits.slice(0, 2));
-    const month = Number(digits.slice(2, 4));
-    const year = Number(digits.slice(4, 8));
-
-    if (
-      year < 2000 ||
-      year > 2100 ||
-      month < 1 ||
-      month > 12 ||
-      day < 1 ||
-      day > 31
-    ) {
-      return null;
-    }
-
-    const test = new Date(
-      year,
-      month - 1,
-      day
-    );
-
-    if (
-      test.getFullYear() !== year ||
-      test.getMonth() !== month - 1 ||
-      test.getDate() !== day
-    ) {
-      return null;
-    }
-
-    return `${year}-${String(month).padStart(
-      2,
-      "0"
-    )}-${String(day).padStart(2, "0")}`;
-  }
-
-  function handleDateInput(value: string) {
-    const display = formatDateInput(value);
-
-    setDateDisplay(display);
-
-    const parsed = parseDDMMYYYY(display);
-
-    if (parsed) {
-      setDate(parsed);
-    }
-  }
-
-  // =========================================================
-  // LOAD WHEN DATE CHANGES
-  // =========================================================
-
-  useEffect(() => {
-    loadClosing();
-    loadHistory();
-  }, [date]);
-
-  // =========================================================
-  // LOAD DAILY CLOSING
-  // =========================================================
-
-  async function loadClosing() {
     setLoading(true);
 
     try {
-      // =====================================================
-      // SALES
-      //
-      // IMPORTANT:
-      // Do NOT filter sale_date in Supabase.
-      // Load records and compare YYYY-MM-DD locally.
-      // This avoids date/timestamp mismatch.
-      // =====================================================
+      /*
+       * =====================================================
+       * SAVED CLOSING
+       * =====================================================
+       */
 
       const {
-        data: salesData,
+        data: saved,
+        error: savedError,
+      } = await supabase
+        .from("daily_closings")
+        .select("*")
+        .eq("closing_date", date)
+        .maybeSingle();
+
+      if (savedError) {
+        throw savedError;
+      }
+
+      /*
+       * =====================================================
+       * SALES
+       * =====================================================
+       */
+
+      const {
+        data: sales,
         error: salesError,
       } = await supabase
         .from("sales")
-        .select(`
+        .select(
+          `
           id,
           payment_method,
           paid_amount,
-          balance_amount,
-          total_amount,
           cash_amount,
           upi_amount,
           sale_date
-        `)
-        .order("sale_date", {
-          ascending: false,
-        });
+          `
+        );
 
       if (salesError) {
         throw salesError;
       }
 
-      const sales: SaleRow[] =
-        (salesData || []) as SaleRow[];
-
-      // =====================================================
-      // FILTER SALES FOR SELECTED DATE
-      // =====================================================
-
-      const selectedSales = sales.filter(
-        (sale) =>
-          getDateKey(sale.sale_date) === date
-      );
-
-      // =====================================================
-      // PURCHASE PAYMENTS
-      // =====================================================
+      /*
+       * =====================================================
+       * COLLECTIONS
+       * =====================================================
+       */
 
       const {
-        data: purchaseData,
-        error: purchaseError,
-      } = await supabase
-        .from("purchases")
-        .select(`
-          id,
-          purchase_date,
-          invoice_no,
-          supplier_name,
-          payment_method,
-          total_amount,
-          paid_amount,
-          balance_amount
-        `)
-        .order("purchase_date", {
-          ascending: false,
-        });
-
-      if (purchaseError) {
-        throw purchaseError;
-      }
-
-      const purchasesData: PurchaseRow[] =
-        (purchaseData || []) as PurchaseRow[];
-
-      const selectedPurchases =
-        purchasesData.filter(
-          (item) =>
-            getDateKey(item.purchase_date) ===
-            date
-        );
-
-      const cashPurchaseRows =
-        selectedPurchases.filter(
-          (item) => {
-            const method = String(
-              item.payment_method || ""
-            )
-              .trim()
-              .toLowerCase();
-
-            return (
-              method === "cash" &&
-              (
-                Number(
-                  item.paid_amount || 0
-                ) > 0 ||
-                Number(
-                  item.total_amount || 0
-                ) > 0
-              )
-            );
-          }
-        );
-
-      const cashPurchases =
-        cashPurchaseRows.reduce(
-          (sum, item) => {
-            const storedPaid =
-              Number(
-                item.paid_amount || 0
-              );
-
-            const total =
-              Number(
-                item.total_amount || 0
-              );
-
-            return (
-              sum +
-              (
-                storedPaid > 0
-                  ? storedPaid
-                  : total
-              )
-            );
-          },
-          0
-        );
-
-      // =====================================================
-      // COLLECTIONS
-      // =====================================================
-
-      const {
-        data: collectionData,
-        error: collectionError,
+        data: collections,
+        error: collectionsError,
       } = await supabase
         .from("collections")
-        .select(`
+        .select(
+          `
           id,
           amount,
           payment_method,
           cash_amount,
           upi_amount,
           collection_date
-        `)
-        .order("collection_date", {
-          ascending: false,
-        });
-
-      if (collectionError) {
-        throw collectionError;
-      }
-
-      const collectionsData: CollectionRow[] =
-        (collectionData || []) as CollectionRow[];
-
-      // =====================================================
-      // FILTER COLLECTIONS FOR SELECTED DATE
-      // =====================================================
-
-      const selectedCollections =
-        collectionsData.filter(
-          (item) =>
-            getDateKey(item.collection_date) ===
-            date
+          `
         );
 
-      // =====================================================
-      // EXPENSES
-      // =====================================================
+      if (collectionsError) {
+        throw collectionsError;
+      }
+
+      /*
+       * =====================================================
+       * EXPENSES
+       * =====================================================
+       */
 
       const {
-        data: expenseData,
+        data: expenseRows,
         error: expenseError,
       } = await supabase
         .from("expenses")
-        .select(`
+        .select(
+          `
           id,
           amount,
           expense_date
-        `)
-        .order("expense_date", {
-          ascending: false,
-        });
+          `
+        );
 
       if (expenseError) {
         throw expenseError;
       }
 
-      const expensesData: ExpenseRow[] =
-        (expenseData || []) as ExpenseRow[];
+      /*
+       * =====================================================
+       * FILTER DATE
+       * =====================================================
+       */
 
-      // =====================================================
-      // FILTER EXPENSES FOR SELECTED DATE
-      // =====================================================
-
-      const selectedExpenses =
-        expensesData.filter(
-          (item) =>
-            getDateKey(item.expense_date) ===
-            date
+      const todaysSales =
+        (sales || []).filter(
+          (row: SaleRow) =>
+            dateKey(row.sale_date) === date
         );
 
-      // =====================================================
-      // CALCULATE SALES
-      // =====================================================
+      const todaysCollections =
+        (collections || []).filter(
+          (row: CollectionRow) =>
+            dateKey(
+              row.collection_date
+            ) === date
+        );
 
-      let cash = 0;
-      let upi = 0;
-      let credit = 0;
+      const todaysExpenses =
+        (expenseRows || []).filter(
+          (row: ExpenseRow) =>
+            dateKey(row.expense_date) === date
+        );
 
-      selectedSales.forEach((sale) => {
-        const paymentMethod = String(
-          sale.payment_method || ""
-        )
-          .trim()
-          .toLowerCase();
+      /*
+       * =====================================================
+       * SALES CASH / UPI
+       * =====================================================
+       */
 
-        const paid =
-          Number(
-            sale.paid_amount || 0
-          );
+      let cashSaleTotal = 0;
+      let upiSaleTotal = 0;
 
-        const balance =
-          Number(
-            sale.balance_amount || 0
-          );
+      todaysSales.forEach(
+        (sale: SaleRow) => {
+          const method = String(
+            sale.payment_method || ""
+          )
+            .trim()
+            .toLowerCase();
 
-        const total =
-          Number(
-            sale.total_amount || 0
-          );
-
-        const storedCash =
-          Number(
-            sale.cash_amount || 0
-          );
-
-        const storedUpi =
-          Number(
-            sale.upi_amount || 0
-          );
-
-        const fallbackPaid =
-          paid > 0
-            ? paid
-            : total;
-
-        const cashPaid =
-          storedCash > 0
-            ? storedCash
-            : paymentMethod === "cash"
-            ? fallbackPaid
-            : 0;
-
-        const upiPaid =
-          storedUpi > 0
-            ? storedUpi
-            : paymentMethod === "upi"
-            ? fallbackPaid
-            : 0;
-
-        if (
-          paymentMethod === "cash" ||
-          paymentMethod === "split"
-        ) {
-          cash += cashPaid;
-        }
-
-        if (
-          paymentMethod === "upi" ||
-          paymentMethod === "split"
-        ) {
-          upi += upiPaid;
-        }
-
-        if (
-          paymentMethod === "credit"
-        ) {
-          credit += balance;
-        }
-      });
-
-      // =====================================================
-      // TOTAL COLLECTIONS
-      // =====================================================
-
-      let totalCollections = 0;
-      let cashCollections = 0;
-      let upiCollectionTotal = 0;
-
-      selectedCollections.forEach(
-        (collection) => {
-          const total =
-            Number(
-              collection.amount || 0
-            );
-
-          const method =
-            String(
-              collection.payment_method ||
-                "Cash"
-            )
-              .trim()
-              .toLowerCase();
-
-          const storedCash =
-            Number(
-              collection.cash_amount || 0
-            );
-
-          const storedUpi =
-            Number(
-              collection.upi_amount || 0
-            );
+          const paid =
+            num(sale.paid_amount);
 
           const cash =
-            storedCash > 0
-              ? storedCash
-              : method === "cash"
-              ? total
-              : 0;
+            num(sale.cash_amount);
 
           const upi =
-            storedUpi > 0
-              ? storedUpi
-              : method === "upi"
-              ? total
-              : 0;
+            num(sale.upi_amount);
 
-          totalCollections +=
-            cash + upi;
+          /*
+           * Split payment / explicit amounts
+           */
+          if (cash > 0 || upi > 0) {
+            cashSaleTotal += cash;
+            upiSaleTotal += upi;
+            return;
+          }
 
-          cashCollections +=
-            cash;
+          if (method === "cash") {
+            cashSaleTotal += paid;
+          }
 
-          upiCollectionTotal +=
-            upi;
+          if (method === "upi") {
+            upiSaleTotal += paid;
+          }
         }
       );
 
-      // =====================================================
-      // TOTAL EXPENSES
-      // =====================================================
+      /*
+       * =====================================================
+       * COLLECTIONS CASH / UPI
+       * =====================================================
+       */
 
-      const totalExpenses =
-        selectedExpenses.reduce(
-          (sum, item) =>
-            sum + Number(item.amount || 0),
+      let cashCollectionTotal = 0;
+      let upiCollectionTotal = 0;
+
+      todaysCollections.forEach(
+        (collection: CollectionRow) => {
+          const method = String(
+            collection.payment_method || ""
+          )
+            .trim()
+            .toLowerCase();
+
+          const amount =
+            num(collection.amount);
+
+          const cash =
+            num(collection.cash_amount);
+
+          const upi =
+            num(collection.upi_amount);
+
+          /*
+           * Split collection
+           */
+          if (cash > 0 || upi > 0) {
+            cashCollectionTotal += cash;
+            upiCollectionTotal += upi;
+            return;
+          }
+
+          if (method === "cash") {
+            cashCollectionTotal += amount;
+          }
+
+          if (method === "upi") {
+            upiCollectionTotal += amount;
+          }
+        }
+      );
+
+      /*
+       * =====================================================
+       * EXPENSES
+       * =====================================================
+       */
+
+      const expenseTotal =
+        todaysExpenses.reduce(
+          (
+            total: number,
+            row: ExpenseRow
+          ) =>
+            total + num(row.amount),
           0
         );
 
-      // =====================================================
-      // PREVIOUS CLOSING
-      // =====================================================
+      setCashSales(cashSaleTotal);
+      setUpiSales(upiSaleTotal);
 
-      const {
-        data: previousClosing,
-        error: previousError,
-      } = await supabase
-        .from("daily_closings")
-        .select(`
-          closing_date,
-          closing_cash
-        `)
-        .lt("closing_date", date)
-        .order("closing_date", {
-          ascending: false,
-        })
-        .limit(1)
-        .maybeSingle();
-
-      if (previousError) {
-        throw previousError;
-      }
-
-      const opening = Number(
-        previousClosing?.closing_cash || 0
+      setCashCollections(
+        cashCollectionTotal
       );
 
-      // =====================================================
-      // CLOSING CASH
-      //
-      // Physical cash:
-      //
-      // Opening Cash
-      // + Cash Sales
-      // + Cash Collections
-      // - Cash Purchase Payments
-      // - Expenses
-      //
-      // UPI is NOT physical cash.
-      // Bank is NOT physical cash.
-      // Credit is NOT physical cash.
-      // =====================================================
-
-      const closing =
-        opening +
-        cash +
-        cashCollections -
-        cashPurchases -
-        totalExpenses;
-
-      // =====================================================
-      // SET STATE
-      // =====================================================
-
-      setCashSales(cash);
-      setUpiSales(upi);
-      setCreditSales(credit);
-
-      setCollections(totalCollections);
       setUpiCollections(
         upiCollectionTotal
       );
-      setExpenses(totalExpenses);
-      setCashPurchasePayments(
-        cashPurchases
-      );
 
-      setCashPurchaseRows(
-        cashPurchaseRows
-      );
+      setExpenses(expenseTotal);
 
-      setOpeningCash(opening);
-      setClosingCash(closing);
+      /*
+       * =====================================================
+       * OPENING BALANCES
+       * =====================================================
+       */
 
-      // =====================================================
-      // DEBUG
-      // =====================================================
+      if (saved) {
+        /*
+         * Existing saved day.
+         */
+        setOpeningCash(
+          String(num(saved.opening_cash))
+        );
 
-      console.log(
-        "MANVI DAILY CLOSING",
-        {
-          selectedDate: date,
-          totalSalesRecords: sales.length,
-          selectedSalesRecords:
-            selectedSales.length,
-          cash,
-          upi,
-          credit,
-          collections: totalCollections,
-          expenses: totalExpenses,
-          opening,
-          closing,
-          selectedSales,
+        setOpeningUpi(
+          String(num(saved.opening_upi))
+        );
+
+        setManualOpeningCash(true);
+        setManualOpeningUpi(true);
+      } else {
+        /*
+         * Find previous closing.
+         */
+
+        const {
+          data: previous,
+          error: previousError,
+        } = await supabase
+          .from("daily_closings")
+          .select(
+            `
+            closing_date,
+            closing_cash,
+            closing_upi
+            `
+          )
+          .lt("closing_date", date)
+          .order("closing_date", {
+            ascending: false,
+          })
+          .limit(1)
+          .maybeSingle();
+
+        if (previousError) {
+          throw previousError;
         }
-      );
-    } catch (error) {
+
+        if (previous) {
+          /*
+           * NEXT DAY AUTOMATIC CARRY FORWARD
+           */
+          setOpeningCash(
+            String(
+              num(previous.closing_cash)
+            )
+          );
+
+          setOpeningUpi(
+            String(
+              num(previous.closing_upi)
+            )
+          );
+
+          setManualOpeningCash(false);
+          setManualOpeningUpi(false);
+        } else {
+          /*
+           * FIRST DAY / NEW START
+           */
+          setOpeningCash("0");
+          setOpeningUpi("0");
+
+          setManualOpeningCash(true);
+          setManualOpeningUpi(true);
+        }
+      }
+    } catch (error: any) {
       console.error(
-        "DAILY CLOSING ERROR:",
+        "DAILY CLOSING LOAD ERROR:",
         error
       );
 
       alert(
-        error instanceof Error
-          ? error.message
-          : "Unable to load daily closing."
+        "Unable to load Daily Closing.\n\n" +
+          (error?.message ||
+            "Unknown error")
       );
-
-      // Reset visible values on error
-      setCashSales(0);
-      setUpiSales(0);
-      setCreditSales(0);
-      setCollections(0);
-    setUpiCollections(0);
-      setExpenses(0);
-      setCashPurchasePayments(0);
-      setCashPurchaseRows([]);
-      setOpeningCash(0);
-      setClosingCash(0);
     } finally {
       setLoading(false);
     }
   }
-
-  // =========================================================
-  // SAVE CLOSING
-  // =========================================================
-
-  async function saveClosing() {
-    setSaving(true);
-
-    try {
-      const record = {
-        closing_date: date,
-        opening_cash: openingCash,
-        cash_sales: cashSales,
-        upi_sales: upiSales,
-        credit_sales: creditSales,
-        collections: collections,
-        expenses: expenses,
-        closing_cash: closingCash,
-      };
-
-      const {
-        error,
-      } = await supabase
-        .from("daily_closings")
-        .upsert(
-          record,
-          {
-            onConflict: "closing_date",
-          }
-        );
-
-      if (error) {
-        throw error;
-      }
-
-      alert(
-        `Closing saved successfully for ${formatDate(
-          date
-        )}`
-      );
-
-      await loadHistory();
-    } catch (error) {
-      console.error(
-        "SAVE CLOSING ERROR:",
-        error
-      );
-
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Unable to save closing."
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // =========================================================
-  // HISTORY
-  // =========================================================
 
   async function loadHistory() {
     try {
@@ -797,656 +511,685 @@ export default function DailyClosing() {
         error,
       } = await supabase
         .from("daily_closings")
-        .select(`
-          id,
-          closing_date,
-          opening_cash,
-          cash_sales,
-          upi_sales,
-          credit_sales,
-          collections,
-          expenses,
-          closing_cash
-        `)
+        .select("*")
         .order("closing_date", {
           ascending: false,
         })
         .limit(30);
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       setHistory(
         (data || []) as ClosingRow[]
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error(
-        "CLOSING HISTORY ERROR:",
+        "HISTORY ERROR:",
         error
       );
     }
   }
 
-  // =========================================================
-  // TODAY
-  // =========================================================
+  async function saveClosing() {
+    if (!selectedDate) {
+      alert("Select a date first.");
+      return;
+    }
 
-  function goToday() {
-    const todayValue = getToday();
-    setDate(todayValue);
+    setSaving(true);
 
-    const [
-      year,
-      month,
-      day,
-    ] = todayValue.split("-");
+    try {
+      const payload = {
+        closing_date: selectedDate,
 
-    setDateDisplay(
-      `${day}/${month}/${year}`
-    );
+        opening_cash: num(
+          openingCash
+        ),
+
+        opening_upi: num(
+          openingUpi
+        ),
+
+        cash_sales: cashSales,
+
+        upi_sales: upiSales,
+
+        cash_collections:
+          cashCollections,
+
+        upi_collections:
+          upiCollections,
+
+        expenses,
+
+        closing_cash:
+          closingCash,
+
+        closing_upi:
+          closingUpi,
+
+        updated_at:
+          new Date().toISOString(),
+      };
+
+      const {
+        error,
+      } = await supabase
+        .from("daily_closings")
+        .upsert(payload, {
+          onConflict:
+            "closing_date",
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      alert(
+        `Daily Closing saved.\n\n` +
+          `Closing Cash: ${money(
+            closingCash
+          )}\n` +
+          `Closing UPI: ${money(
+            closingUpi
+          )}`
+      );
+
+      await loadHistory();
+    } catch (error: any) {
+      console.error(
+        "SAVE CLOSING ERROR:",
+        error
+      );
+
+      alert(
+        "Unable to save Daily Closing.\n\n" +
+          (error?.message ||
+            "Unknown error")
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
-  // =========================================================
-  // UI
-  // =========================================================
+  useEffect(() => {
+    void loadClosing(todayDate());
+    void loadHistory();
+  }, []);
+
+  function changeDate(
+    value: string
+  ) {
+    setSelectedDate(value);
+
+    if (value) {
+      void loadClosing(value);
+    }
+  }
+
+  function today() {
+    const value = todayDate();
+
+    setSelectedDate(value);
+
+    void loadClosing(value);
+  }
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
+    <div className="min-h-screen bg-slate-50 p-3 sm:p-5">
 
-      {/* ===================================================
-          HEADER
-      =================================================== */}
+      <div className="mx-auto max-w-7xl">
 
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-blue-700">
-          Daily Closing
-        </h1>
+        {/* HEADER */}
 
-        <p className="mt-1 text-gray-600">
-          Daily cash closing and previous-day carry forward
-        </p>
-      </div>
+        <div className="mb-5 rounded-2xl bg-white p-5 shadow-sm">
 
-      {/* ===================================================
-          DATE
-      =================================================== */}
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800">
+                Daily Closing
+              </h1>
 
-        <div className="flex flex-col md:flex-row md:items-end gap-4">
+              <p className="text-sm text-slate-500">
+                Opening and closing Cash + UPI
+              </p>
+            </div>
 
-          <div className="flex-1">
+            <div className="flex flex-col gap-2 sm:flex-row">
 
-            <label className="block font-semibold mb-2">
-              Closing Date
-            </label>
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) =>
+                  changeDate(
+                    e.target.value
+                  )
+                }
+                className="rounded-xl border border-slate-300 px-4 py-3 font-semibold"
+              />
+
+              <button
+                type="button"
+                onClick={today}
+                className="rounded-xl bg-blue-600 px-5 py-3 font-bold text-white"
+              >
+                Today
+              </button>
+
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() =>
+                  void loadClosing(
+                    selectedDate
+                  )
+                }
+                className="rounded-xl bg-slate-800 px-5 py-3 font-bold text-white disabled:opacity-50"
+              >
+                {loading
+                  ? "Loading..."
+                  : "Refresh"}
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* FIRST DAY */}
+
+        {(manualOpeningCash ||
+          manualOpeningUpi) && (
+          <div className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-5">
+
+            <h2 className="font-bold text-blue-800">
+              Opening Balance / New Start
+            </h2>
+
+            <p className="mt-1 text-sm text-blue-700">
+              Enter the Cash and UPI already available
+              before starting business. After saving the
+              first closing, the next day will automatically
+              use these closing balances as opening balances.
+            </p>
+
+          </div>
+        )}
+
+        {/* OPENING */}
+
+        <div className="mb-5 grid grid-cols-1 gap-5 md:grid-cols-2">
+
+          <div className="rounded-2xl border border-green-200 bg-green-50 p-5">
+
+            <p className="font-semibold text-green-700">
+              Opening Cash
+            </p>
 
             <input
-              type="text"
-              inputMode="numeric"
-              value={dateDisplay}
+              type="number"
+              step="0.01"
+              min="0"
+              value={openingCash}
+              disabled={!manualOpeningCash}
               onChange={(e) =>
-                handleDateInput(
+                setOpeningCash(
                   e.target.value
                 )
               }
-              placeholder="DD/MM/YYYY"
-              maxLength={10}
-              className="w-full border rounded-lg p-3"
+              className="mt-2 w-full rounded-xl border border-green-300 bg-white px-4 py-4 text-2xl font-bold text-green-800 disabled:bg-green-100"
             />
 
-            <p className="text-sm text-gray-500 mt-2">
-              Date format: DD/MM/YYYY
-            </p>
-
-            <p className="font-semibold text-blue-700 mt-1">
-              Selected: {formatDate(date)}
-            </p>
-
-          </div>
-
-          <button
-            type="button"
-            onClick={goToday}
-            className="bg-gray-700 hover:bg-gray-800 text-white px-6 py-3 rounded-lg font-semibold"
-          >
-            Today
-          </button>
-
-          <button
-            type="button"
-            onClick={loadClosing}
-            disabled={loading}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-semibold"
-          >
-            {loading
-              ? "Loading..."
-              : "Load Closing"}
-          </button>
-
-        </div>
-
-      </div>
-
-      {/* ===================================================
-          SUMMARY
-      =================================================== */}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-
-        {/* CASH SALES */}
-
-        <div className="bg-green-500 text-white rounded-xl p-6 shadow">
-
-          <h2 className="text-lg font-semibold">
-            Cash Sales
-          </h2>
-
-          <p className="text-3xl font-bold mt-3">
-            ₹ {cashSales.toFixed(2)}
-          </p>
-
-        </div>
-
-        {/* UPI SALES */}
-
-        <div className="bg-blue-600 text-white rounded-xl p-6 shadow">
-
-          <h2 className="text-lg font-semibold">
-            UPI Sales
-          </h2>
-
-          <p className="text-3xl font-bold mt-3">
-            ₹ {upiSales.toFixed(2)}
-          </p>
-
-        </div>
-
-        {/* CREDIT SALES */}
-
-        <div className="bg-yellow-500 text-white rounded-xl p-6 shadow">
-
-          <h2 className="text-lg font-semibold">
-            Credit Sales
-          </h2>
-
-          <p className="text-3xl font-bold mt-3">
-            ₹ {creditSales.toFixed(2)}
-          </p>
-
-        </div>
-
-        {/* COLLECTIONS */}
-
-        <div className="bg-purple-600 text-white rounded-xl p-6 shadow">
-
-          <h2 className="text-lg font-semibold">
-            Collections
-          </h2>
-
-          <p className="text-3xl font-bold mt-3">
-            ₹ {collections.toFixed(2)}
-          </p>
-
-          <p className="mt-2 text-sm text-blue-100">
-            UPI Collections: ₹ {upiCollections.toFixed(2)}
-          </p>
-
-        </div>
-
-        {/* CASH PURCHASE PAYMENTS */}
-
-        <div className="bg-purple-600 text-white rounded-xl p-6 shadow">
-          <h2 className="text-lg font-semibold">
-            Cash Purchase Payments
-          </h2>
-
-          <p className="text-3xl font-bold mt-3">
-            ₹ {cashPurchasePayments.toFixed(2)}
-          </p>
-
-          <p className="text-sm mt-2 text-purple-100">
-            Cash paid to suppliers
-          </p>
-        </div>
-
-        {/* EXPENSES */}
-
-        <div className="bg-red-500 text-white rounded-xl p-6 shadow">
-
-          <h2 className="text-lg font-semibold">
-            Expenses
-          </h2>
-
-          <p className="text-3xl font-bold mt-3">
-            ₹ {expenses.toFixed(2)}
-          </p>
-
-        </div>
-
-        {/* OPENING CASH */}
-
-        <div className="bg-gray-700 text-white rounded-xl p-6 shadow">
-
-          <h2 className="text-lg font-semibold">
-            Opening Cash
-          </h2>
-
-          <p className="text-3xl font-bold mt-3">
-            ₹ {openingCash.toFixed(2)}
-          </p>
-
-          <p className="text-sm mt-2 text-gray-200">
-            Previous closing carried forward
-          </p>
-
-        </div>
-
-        {/* CLOSING CASH */}
-
-        <div className="bg-indigo-600 text-white rounded-xl p-6 shadow lg:col-span-2">
-
-          <h2 className="text-lg font-semibold">
-            Closing Cash
-          </h2>
-
-          <p className="text-4xl font-bold mt-4">
-            ₹ {closingCash.toFixed(2)}
-          </p>
-
-          <p className="text-sm mt-2 text-indigo-100">
-            Physical cash expected at closing
-          </p>
-
-        </div>
-
-      </div>
-
-      {/* ===================================================
-          SAVE
-      =================================================== */}
-
-      <div className="bg-white rounded-xl shadow-lg p-6 mt-6">
-
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-
-          <div>
-
-            <h2 className="text-xl font-bold">
-              Save Daily Closing
-            </h2>
-
-            <p className="text-gray-500 mt-1">
-              Save or update closing for{" "}
-              <strong>
-                {formatDate(date)}
-              </strong>
+            <p className="mt-2 text-xs text-green-700">
+              {manualOpeningCash
+                ? "Manual entry"
+                : "Carried from previous Closing Cash"}
             </p>
 
           </div>
 
+          <div className="rounded-2xl border border-purple-200 bg-purple-50 p-5">
+
+            <p className="font-semibold text-purple-700">
+              Opening UPI
+            </p>
+
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={openingUpi}
+              disabled={!manualOpeningUpi}
+              onChange={(e) =>
+                setOpeningUpi(
+                  e.target.value
+                )
+              }
+              className="mt-2 w-full rounded-xl border border-purple-300 bg-white px-4 py-4 text-2xl font-bold text-purple-800 disabled:bg-purple-100"
+            />
+
+            <p className="mt-2 text-xs text-purple-700">
+              {manualOpeningUpi
+                ? "Manual entry"
+                : "Carried from previous Closing UPI"}
+            </p>
+
+          </div>
+
+        </div>
+
+        {/* MOVEMENT */}
+
+        <div className="mb-5 rounded-2xl bg-white p-5 shadow-sm">
+
+          <h2 className="mb-4 text-xl font-bold">
+            Today's Movement
+          </h2>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+
+            <div className="rounded-xl bg-green-50 p-4">
+              <p className="text-sm text-green-700">
+                Cash Sales
+              </p>
+              <p className="text-2xl font-bold text-green-800">
+                {money(cashSales)}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-purple-50 p-4">
+              <p className="text-sm text-purple-700">
+                UPI Sales
+              </p>
+              <p className="text-2xl font-bold text-purple-800">
+                {money(upiSales)}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-green-50 p-4">
+              <p className="text-sm text-green-700">
+                Cash Collections
+              </p>
+              <p className="text-2xl font-bold text-green-800">
+                {money(
+                  cashCollections
+                )}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-purple-50 p-4">
+              <p className="text-sm text-purple-700">
+                UPI Collections
+              </p>
+              <p className="text-2xl font-bold text-purple-800">
+                {money(
+                  upiCollections
+                )}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-red-50 p-4">
+              <p className="text-sm text-red-700">
+                Expenses
+              </p>
+              <p className="text-2xl font-bold text-red-800">
+                {money(expenses)}
+              </p>
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* CLOSING */}
+
+        <div className="mb-5 grid grid-cols-1 gap-5 md:grid-cols-2">
+
+          {/* CASH */}
+
+          <div className="rounded-2xl border border-green-200 bg-white p-5 shadow-sm">
+
+            <div className="mb-4 flex items-center justify-between">
+
+              <h2 className="text-xl font-bold">
+                Closing Cash
+              </h2>
+
+              <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-700">
+                CASH
+              </span>
+
+            </div>
+
+            <div className="space-y-3">
+
+              <div className="flex justify-between">
+                <span>Opening Cash</span>
+                <b>
+                  {money(
+                    num(openingCash)
+                  )}
+                </b>
+              </div>
+
+              <div className="flex justify-between text-green-700">
+                <span>+ Cash Sales</span>
+                <b>
+                  {money(cashSales)}
+                </b>
+              </div>
+
+              <div className="flex justify-between text-green-700">
+                <span>+ Cash Collections</span>
+                <b>
+                  {money(
+                    cashCollections
+                  )}
+                </b>
+              </div>
+
+              <div className="flex justify-between text-red-700">
+                <span>- Expenses</span>
+                <b>
+                  {money(expenses)}
+                </b>
+              </div>
+
+              <div className="border-t pt-4">
+
+                <div className="flex justify-between">
+
+                  <span className="text-lg font-bold">
+                    Closing Cash
+                  </span>
+
+                  <span className="text-2xl font-bold text-green-700">
+                    {money(closingCash)}
+                  </span>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+          {/* UPI */}
+
+          <div className="rounded-2xl border border-purple-200 bg-white p-5 shadow-sm">
+
+            <div className="mb-4 flex items-center justify-between">
+
+              <h2 className="text-xl font-bold">
+                Closing UPI
+              </h2>
+
+              <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">
+                UPI
+              </span>
+
+            </div>
+
+            <div className="space-y-3">
+
+              <div className="flex justify-between">
+                <span>Opening UPI</span>
+                <b>
+                  {money(
+                    num(openingUpi)
+                  )}
+                </b>
+              </div>
+
+              <div className="flex justify-between text-purple-700">
+                <span>+ UPI Sales</span>
+                <b>
+                  {money(upiSales)}
+                </b>
+              </div>
+
+              <div className="flex justify-between text-purple-700">
+                <span>+ UPI Collections</span>
+                <b>
+                  {money(
+                    upiCollections
+                  )}
+                </b>
+              </div>
+
+              <div className="border-t pt-4">
+
+                <div className="flex justify-between">
+
+                  <span className="text-lg font-bold">
+                    Closing UPI
+                  </span>
+
+                  <span className="text-2xl font-bold text-purple-700">
+                    {money(closingUpi)}
+                  </span>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+        {/* SAVE */}
+
+        <div className="mb-6 rounded-2xl bg-white p-5 shadow-sm">
+
           <button
             type="button"
-            onClick={saveClosing}
             disabled={saving || loading}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-8 py-3 rounded-lg font-bold"
+            onClick={() =>
+              void saveClosing()
+            }
+            className="w-full rounded-xl bg-blue-600 px-6 py-4 text-lg font-bold text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {saving
               ? "Saving..."
-              : "✓ Save Closing"}
+              : "Save Daily Closing"}
           </button>
 
         </div>
 
-      </div>
+        {/* HISTORY */}
 
-      {/* ===================================================
-          CASH PURCHASE PAYMENTS
-      =================================================== */}
+        <div className="rounded-2xl bg-white p-5 shadow-sm">
 
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-4">
-          <div>
-            <h2 className="text-xl font-bold text-slate-800">
-              Cash Purchase Payments
+          <div className="mb-4 flex items-center justify-between">
+
+            <h2 className="text-xl font-bold">
+              Closing History
             </h2>
 
-            <p className="text-sm text-gray-600 mt-1">
-              Purchases paid in cash on {formatDate(date)}.
-            </p>
+            <button
+              type="button"
+              onClick={() =>
+                void loadHistory()
+              }
+              className="rounded-lg bg-slate-100 px-4 py-2 font-semibold"
+            >
+              Refresh
+            </button>
+
           </div>
 
-          <div className="text-xl font-bold text-purple-700">
-            ₹ {cashPurchasePayments.toFixed(2)}
-          </div>
-        </div>
-
-        {cashPurchaseRows.length === 0 ? (
-          <div className="rounded-lg bg-slate-50 p-5 text-center text-gray-500">
-            No cash purchase payment found for this date.
-          </div>
-        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px]">
-              <thead className="bg-purple-700 text-white">
+
+            <table className="w-full min-w-[1000px] text-sm">
+
+              <thead className="bg-slate-800 text-white">
+
                 <tr>
+
                   <th className="p-3 text-left">
                     Date
                   </th>
-                  <th className="p-3 text-left">
-                    Invoice No.
-                  </th>
-                  <th className="p-3 text-left">
-                    Supplier
-                  </th>
-                  <th className="p-3 text-left">
-                    Payment
-                  </th>
+
                   <th className="p-3 text-right">
-                    Paid
+                    Opening Cash
                   </th>
+
+                  <th className="p-3 text-right">
+                    Cash Sales
+                  </th>
+
+                  <th className="p-3 text-right">
+                    Cash Collection
+                  </th>
+
+                  <th className="p-3 text-right">
+                    Expenses
+                  </th>
+
+                  <th className="p-3 text-right">
+                    Closing Cash
+                  </th>
+
+                  <th className="p-3 text-right">
+                    Opening UPI
+                  </th>
+
+                  <th className="p-3 text-right">
+                    UPI Sales
+                  </th>
+
+                  <th className="p-3 text-right">
+                    UPI Collection
+                  </th>
+
+                  <th className="p-3 text-right">
+                    Closing UPI
+                  </th>
+
                 </tr>
+
               </thead>
 
               <tbody>
-                {cashPurchaseRows.map(
-                  (purchase) => {
-                    const paid =
-                      Number(
-                        purchase.paid_amount || 0
-                      ) > 0
-                        ? Number(
-                            purchase.paid_amount || 0
-                          )
-                        : Number(
-                            purchase.total_amount || 0
-                          );
 
-                    return (
-                      <tr
-                        key={purchase.id}
-                        className="border-b hover:bg-purple-50"
-                      >
-                        <td className="p-3">
-                          {formatDate(
-                            purchase.purchase_date
-                          )}
-                        </td>
+                {history.length === 0 ? (
 
-                        <td className="p-3 font-semibold text-blue-700">
-                          {purchase.invoice_no ||
-                            "-"}
-                        </td>
-
-                        <td className="p-3">
-                          {purchase.supplier_name ||
-                            "Supplier"}
-                        </td>
-
-                        <td className="p-3 font-semibold text-green-700">
-                          Cash
-                        </td>
-
-                        <td className="p-3 text-right font-bold text-red-600">
-                          ₹ {paid.toFixed(2)}
-                        </td>
-                      </tr>
-                    );
-                  }
-                )}
-
-                <tr className="bg-purple-50 font-bold">
-                  <td
-                    colSpan={4}
-                    className="p-3 text-right"
-                  >
-                    Total Cash Purchase Payments
-                  </td>
-
-                  <td className="p-3 text-right text-red-700">
-                    ₹ {cashPurchasePayments.toFixed(2)}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ===================================================
-          CALCULATION
-      =================================================== */}
-
-      <div className="bg-white rounded-xl shadow-lg p-6 mt-6">
-
-        <h2 className="text-2xl font-bold mb-5">
-          Closing Calculation
-        </h2>
-
-        <div className="space-y-4">
-
-          <div className="flex justify-between border-b pb-3">
-            <span>
-              Opening Cash
-            </span>
-
-            <strong>
-              ₹ {openingCash.toFixed(2)}
-            </strong>
-          </div>
-
-          <div className="flex justify-between border-b pb-3">
-            <span className="text-green-600">
-              + Cash Sales
-            </span>
-
-            <strong className="text-green-600">
-              ₹ {cashSales.toFixed(2)}
-            </strong>
-          </div>
-
-          <div className="flex justify-between border-b pb-3">
-            <span className="text-purple-600">
-              + Collections
-            </span>
-
-            <strong className="text-purple-600">
-              ₹ {collections.toFixed(2)}
-            </strong>
-          </div>
-
-          <div className="flex justify-between border-b pb-3">
-            <span className="text-purple-600">
-              - Cash Purchase Payments
-            </span>
-
-            <strong className="text-purple-600">
-              ₹ {cashPurchasePayments.toFixed(2)}
-            </strong>
-          </div>
-
-          <div className="flex justify-between border-b pb-3">
-            <span className="text-red-600">
-              - Expenses
-            </span>
-
-            <strong className="text-red-600">
-              ₹ {expenses.toFixed(2)}
-            </strong>
-          </div>
-
-          <div className="flex justify-between pt-2 text-xl">
-
-            <span className="font-bold">
-              Closing Cash
-            </span>
-
-            <strong className="text-indigo-600">
-              ₹ {closingCash.toFixed(2)}
-            </strong>
-
-          </div>
-
-        </div>
-
-      </div>
-
-      {/* ===================================================
-          HISTORY
-      =================================================== */}
-
-      <div className="bg-white rounded-xl shadow-lg mt-8 overflow-hidden">
-
-        <div className="p-6 border-b">
-
-          <h2 className="text-2xl font-bold">
-            Closing History
-          </h2>
-
-          <p className="text-gray-500 mt-1">
-            Last 30 saved daily closings
-          </p>
-
-        </div>
-
-        <div className="overflow-x-auto">
-
-          <table className="w-full min-w-[1000px]">
-
-            <thead className="bg-blue-600 text-white">
-
-              <tr>
-
-                <th className="p-3 text-left">
-                  Date
-                </th>
-
-                <th className="p-3 text-right">
-                  Opening
-                </th>
-
-                <th className="p-3 text-right">
-                  Cash Sales
-                </th>
-
-                <th className="p-3 text-right">
-                  UPI Sales
-                </th>
-
-                <th className="p-3 text-right">
-                  Credit Sales
-                </th>
-
-                <th className="p-3 text-right">
-                  Collections
-                </th>
-
-                <th className="p-3 text-right">
-                  Expenses
-                </th>
-
-                <th className="p-3 text-right">
-                  Closing
-                </th>
-
-              </tr>
-
-            </thead>
-
-            <tbody>
-
-              {history.length === 0 ? (
-
-                <tr>
-
-                  <td
-                    colSpan={8}
-                    className="p-8 text-center text-gray-500"
-                  >
-                    No saved closing records yet.
-                  </td>
-
-                </tr>
-
-              ) : (
-
-                history.map((row) => (
-
-                  <tr
-                    key={row.id}
-                    className="border-b hover:bg-gray-50"
-                  >
-
-                    <td className="p-3 font-semibold">
-                      {formatDate(
-                        row.closing_date
-                      )}
+                  <tr>
+                    <td
+                      colSpan={10}
+                      className="p-8 text-center text-slate-500"
+                    >
+                      No closing history.
                     </td>
-
-                    <td className="p-3 text-right">
-                      ₹{" "}
-                      {Number(
-                        row.opening_cash || 0
-                      ).toFixed(2)}
-                    </td>
-
-                    <td className="p-3 text-right text-green-600">
-                      ₹{" "}
-                      {Number(
-                        row.cash_sales || 0
-                      ).toFixed(2)}
-                    </td>
-
-                    <td className="p-3 text-right text-blue-600">
-                      ₹{" "}
-                      {Number(
-                        row.upi_sales || 0
-                      ).toFixed(2)}
-                    </td>
-
-                    <td className="p-3 text-right text-yellow-600">
-                      ₹{" "}
-                      {Number(
-                        row.credit_sales || 0
-                      ).toFixed(2)}
-                    </td>
-
-                    <td className="p-3 text-right text-purple-600">
-                      ₹{" "}
-                      {Number(
-                        row.collections || 0
-                      ).toFixed(2)}
-                    </td>
-
-                    <td className="p-3 text-right text-red-600">
-                      ₹{" "}
-                      {Number(
-                        row.expenses || 0
-                      ).toFixed(2)}
-                    </td>
-
-                    <td className="p-3 text-right font-bold text-indigo-700">
-                      ₹{" "}
-                      {Number(
-                        row.closing_cash || 0
-                      ).toFixed(2)}
-                    </td>
-
                   </tr>
 
-                ))
+                ) : (
 
-              )}
+                  history.map((row) => (
 
-            </tbody>
+                    <tr
+                      key={row.id}
+                      className="border-b hover:bg-slate-50"
+                    >
 
-          </table>
+                      <td className="p-3 font-semibold">
+                        {displayDate(
+                          row.closing_date
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right">
+                        {money(
+                          num(
+                            row.opening_cash
+                          )
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right">
+                        {money(
+                          num(
+                            row.cash_sales
+                          )
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right">
+                        {money(
+                          num(
+                            row.cash_collections
+                          )
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right text-red-600">
+                        {money(
+                          num(
+                            row.expenses
+                          )
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right font-bold text-green-700">
+                        {money(
+                          num(
+                            row.closing_cash
+                          )
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right">
+                        {money(
+                          num(
+                            row.opening_upi
+                          )
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right">
+                        {money(
+                          num(
+                            row.upi_sales
+                          )
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right">
+                        {money(
+                          num(
+                            row.upi_collections
+                          )
+                        )}
+                      </td>
+
+                      <td className="p-3 text-right font-bold text-purple-700">
+                        {money(
+                          num(
+                            row.closing_upi
+                          )
+                        )}
+                      </td>
+
+                    </tr>
+
+                  ))
+
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
 
         </div>
 
       </div>
-
     </div>
   );
 }
