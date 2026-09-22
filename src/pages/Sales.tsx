@@ -1919,6 +1919,49 @@ GET OLD SALE ITEMS
     }
   }
 
+  const { data: existingSale, error: existingSaleError } = await supabase
+    .from("sales")
+    .select("sale_date, sale_no")
+    .eq("id", saleId)
+    .single();
+
+  if (existingSaleError) {
+    throw existingSaleError;
+  }
+
+  const headerUpdate: Record<string, unknown> = {
+    sale_date: saleDate,
+    customer_id: customerId,
+    payment_method: paymentMethod,
+    total_amount: totalSale,
+    paid_amount: paid,
+    balance_amount: balance,
+    cash_amount: paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+    upi_amount: paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
+  };
+
+  if (normalizeSaleDate(existingSale.sale_date) !== saleDate) {
+    const { data: salesOnTargetDate, error: targetDateError } = await supabase
+      .from("sales")
+      .select("sale_no")
+      .eq("sale_date", saleDate)
+      .neq("id", saleId);
+
+    if (targetDateError) {
+      throw targetDateError;
+    }
+
+    const highestSaleNo = (salesOnTargetDate || []).reduce(
+      (highest: number, sale: any) => {
+        const saleNo = Number(sale.sale_no);
+        return Number.isFinite(saleNo) ? Math.max(highest, saleNo) : highest;
+      },
+      0
+    );
+
+    headerUpdate.sale_no = highestSaleNo + 1;
+  }
+
   await saveCustomerRates(saleItems);
 
   /* =====================================================
@@ -1930,52 +1973,9 @@ GET OLD SALE ITEMS
       saleUpdateError,
   } = await supabase
     .from("sales")
-    .update({
-      sale_date:
-        saleDate,
-
-      customer_id:
-        customerId,
-
-      payment_method:
-        paymentMethod,
-
-      total_amount:
-        totalSale,
-
-      paid_amount:
-        paid,
-
-      balance_amount:
-        balance,
-
-      cash_amount:
-        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
-
-      upi_amount:
-        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
-    })
+    .update(headerUpdate)
     .eq(
       "id",
-      saleId
-    );
-
-  if (saleUpdateError) {
-    throw saleUpdateError;
-  }
-
-  /* =====================================================
-     DELETE OLD ITEMS
-     ===================================================== */
-
-  const {
-    error:
-      deleteItemsError,
-  } = await supabase
-    .from("sale_items")
-    .delete()
-    .eq(
-      "sale_id",
       saleId
     );
 
