@@ -976,20 +976,6 @@ export default function Purchases() {
       const day = String(yesterdayDate.getDate()).padStart(2, "0");
       const yesterday = `${year}-${month}-${day}`;
 
-      // If a product is already selected, repeat ONLY that selected product
-      // from yesterday. This prevents a different product from appearing.
-      const selectedProductForCopy = selectedProductId
-        ? products.find(
-            (productItem) =>
-              String(productItem.id) === String(selectedProductId)
-          )
-        : null;
-
-      if (selectedProductId && !selectedProductForCopy) {
-        alert("Selected product was not found.");
-        return;
-      }
-
       const { data: yesterdayPurchases, error: purchaseError } =
         await supabase
           .from("purchases")
@@ -1044,19 +1030,57 @@ export default function Purchases() {
         return;
       }
 
-      // When a product is selected, only use yesterday's rows for that
-      // exact product_id. Otherwise, copy all products from yesterday.
-      const sourceItems = selectedProductForCopy
-        ? (yesterdayItems as any[]).filter(
-            (item) =>
-              String(item.product_id) ===
-              String(selectedProductForCopy.id)
+      const selectedProductForCopy = selectedProductId
+        ? products.find(
+            (productItem) =>
+              String(productItem.id) === String(selectedProductId)
           )
-        : (yesterdayItems as any[]);
+        : null;
+
+      if (selectedProductId && !selectedProductForCopy) {
+        alert("Selected product was not found.");
+        return;
+      }
+
+      // Scope the copy by the current selection, but always use the exact
+      // product_id and quantities stored in yesterday's purchase_items.
+      const sourceItems = (yesterdayItems as any[]).filter((item) => {
+        const product = products.find(
+          (productItem) =>
+            String(productItem.id) === String(item.product_id)
+        );
+
+        if (!product) {
+          return false;
+        }
+
+        if (
+          selectedProductForCopy &&
+          String(product.id) !== String(selectedProductForCopy.id)
+        ) {
+          return false;
+        }
+
+        if (
+          selectedSupplierId &&
+          String(product.supplier_id) !== String(selectedSupplierId)
+        ) {
+          return false;
+        }
+
+        if (
+          selectedBrandId &&
+          String(product.brand_id) !== String(selectedBrandId)
+        ) {
+          return false;
+        }
+
+        return true;
+      });
 
       if (sourceItems.length === 0) {
         alert(
-          `${selectedProductForCopy?.product_name || "Selected product"} was not purchased yesterday (${formatDate(yesterday)}).`
+          `${selectedProductForCopy?.product_name || getBrandName(selectedBrandId) || "Selected products"} was not purchased yesterday (${formatDate(yesterday)}).`
         );
         return;
       }
@@ -1116,9 +1140,8 @@ export default function Purchases() {
         return;
       }
 
-      // If a product was selected, add/replace only that product in the
-      // current purchase cart. If no product was selected, replace with
-      // the complete previous-day product list.
+      // Product scope updates one row. Brand or supplier scope merges the
+      // matching exact rows into the cart. No selection replaces the cart.
       if (selectedProductForCopy) {
         setPurchaseRows((previous) => {
           const copiedRow = copiedRows[0];
@@ -1144,9 +1167,25 @@ export default function Purchases() {
         setSelectedProductId(String(selectedProductForCopy.id));
         setQuantity(String(copiedRows[0].quantity));
         setRate(String(copiedRows[0].rate));
+      } else if (selectedBrandId || selectedSupplierId) {
+        setPurchaseRows((previous) => {
+          const copiedByProduct = new Map(
+            copiedRows.map((row) => [String(row.product_id), row])
+          );
+          const remaining = previous.filter(
+            (row) => !copiedByProduct.has(String(row.product_id))
+          );
+          return [...remaining, ...copiedRows];
+        });
+
+        setSelectedProductId("");
+        setQuantity("");
+        setRate("");
       } else {
         setPurchaseRows(copiedRows);
 
+        setSelectedSupplierId("");
+        setSupplierName("");
         setSelectedBrandId("");
         setSelectedProductId("");
         setQuantity("");
@@ -1200,6 +1239,10 @@ export default function Purchases() {
       alert(
         selectedProductForCopy
           ? `${selectedProductForCopy.product_name} repeated from yesterday (${formatDate(yesterday)}).`
+          : selectedBrandId
+          ? `${copiedRows.length} product(s) from ${getBrandName(selectedBrandId)} repeated from yesterday (${formatDate(yesterday)}).`
+          : selectedSupplierId
+          ? `${copiedRows.length} product(s) from the selected supplier repeated from yesterday (${formatDate(yesterday)}).`
           : `${copiedRows.length} product(s) repeated from yesterday (${formatDate(yesterday)}).`
       );
     } catch (error: any) {
@@ -2513,7 +2556,7 @@ export default function Purchases() {
               {suppliers.map((supplier) => (
                 <option
                   key={supplier.id}
-                  value={supplier.supplier_name}
+                  value={supplier.id}
                 >
                   {supplier.supplier_name}
                 </option>
