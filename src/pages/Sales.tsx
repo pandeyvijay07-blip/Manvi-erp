@@ -91,6 +91,12 @@ function normalizeSaleDate(value: string | null | undefined) {
   return String(value).slice(0, 10);
 }
 
+function getPreviousDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  date.setDate(date.getDate() - 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 type Brand = {
 id: string;
 brand_name: string;
@@ -218,7 +224,7 @@ upiValue: number = 0
 const itemLines = items
 .map((item, index) => {
 const pack = item.pack_size ? ` (${getPackDisplay(item.pack_size)})` : "";
-return `${index + 1}. ${item.product_name}${pack}\n   Qty: ${item.quantity}  Rate: ₹${item.rate.toFixed(2)}  Amount: ₹${item.amount.toFixed(2)}`;
+return `${index + 1}. ${item.product_name}${pack}\n   Qty: ${item.quantity}  Amount: ₹${item.amount.toFixed(2)}`;
 })
 .join("\n");
 
@@ -692,7 +698,7 @@ async function punchTodaysSale() {
         paid_amount
       `)
       .eq("customer_id", customerId)
-      .lt("sale_date", saleDate)
+      .eq("sale_date", getPreviousDate(saleDate))
       .order("sale_date", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -800,7 +806,7 @@ async function punchTodaysSale() {
     });
 
     alert(
-      `Today's sale prepared from ${formatDisplayDate(
+      `Yesterday's sale copied from ${formatDisplayDate(
         previousSale.sale_date
       )}.\n\nPlease check the quantities and press Save Sale.`
     );
@@ -914,13 +920,30 @@ if (!customer || !product) {
 return null;
 }
 
+async function saveCustomerRates(items: SaleItem[]) {
+  if (!customerId || items.length === 0) return;
+
+  const { error } = await supabase
+    .from("customer_prices")
+    .upsert(
+      items.map((item) => ({
+        customer_id: customerId,
+        product_id: item.product_id,
+        selling_rate: Number(item.rate),
+      })),
+      { onConflict: "customer_id,product_id" }
+    );
+
+  if (error) throw error;
+}
+
 try {
   const {
     data,
     error,
   } = await supabase
     .from("customer_prices")
-    .select("rate")
+    .select("selling_rate")
     .eq(
       "customer_id",
       customer
@@ -944,9 +967,7 @@ try {
     return null;
   }
 
-  const rate = Number(
-    data.rate
-  );
+  const rate = Number(data.selling_rate);
 
   if (
     !Number.isFinite(rate)
@@ -1480,6 +1501,15 @@ if (paid > totalSale) {
   return;
 }
 
+const productQuantities = new Map<string, number>();
+for (const item of saleItems) {
+  if (productQuantities.has(item.product_id)) {
+    alert(`Duplicate product in sale: ${item.product_name}`);
+    return;
+  }
+  productQuantities.set(item.product_id, Number(item.quantity));
+}
+
 if (paymentMethod === "Split" && cashPaid < 0) {
   alert("Cash amount cannot be negative.");
   return;
@@ -1540,6 +1570,8 @@ try {
       );
     }
   }
+
+  await saveCustomerRates(saleItems);
 
   /* =====================================================
      INSERT SALE HEADER
@@ -1635,18 +1667,29 @@ try {
     throw itemError;
   }
 
+  const { data: savedItems, error: verificationError } = await supabase
+    .from("sale_items")
+    .select("product_id, quantity, rate, amount")
+    .eq("sale_id", sale.id);
+
+  if (verificationError) throw verificationError;
+
+  if (
+    savedItems?.length !== saleItems.length ||
+    new Set(savedItems.map((item: any) => item.product_id)).size !== saleItems.length
+  ) {
+    throw new Error("Sale items verification failed. Duplicate or missing items were detected.");
+  }
+
   /* =====================================================
      UPDATE STOCK
      ===================================================== */
 
-  for (
-    const item of saleItems
-  ) {
+  for (const [productId, quantityToDeduct] of productQuantities) {
     const product =
       products.find(
         (p) =>
-          p.id ===
-          item.product_id
+          p.id === productId
       );
 
     if (!product) {
@@ -1658,17 +1701,13 @@ try {
         product.stock_qty
       ) || 0;
 
-    const newStock =
-      oldStock -
-      Number(
-        item.quantity
-      );
+    const newStock = oldStock - quantityToDeduct;
 
     if (
       newStock < 0
     ) {
       throw new Error(
-        `Insufficient stock for ${item.product_name}.`
+        `Insufficient stock for ${product.product_name}.`
       );
     }
 
@@ -1683,7 +1722,7 @@ try {
       })
       .eq(
         "id",
-        item.product_id
+        productId
       );
 
     if (stockError) {
@@ -1746,6 +1785,14 @@ GET OLD SALE ITEMS
 
   if (oldItemsError) {
     throw oldItemsError;
+  }
+
+  const editedProductIds = new Set<string>();
+  for (const item of saleItems) {
+    if (editedProductIds.has(item.product_id)) {
+      throw new Error(`Duplicate product in sale: ${item.product_name}`);
+    }
+    editedProductIds.add(item.product_id);
   }
 
   /* =====================================================
@@ -1847,37 +1894,7 @@ GET OLD SALE ITEMS
     }
   }
 
-  /* =====================================================
-     UPDATE STOCK
-     ===================================================== */
-
-  /*
-   * First restore old stock in database.
-   */
-  for (
-    const [
-      productId,
-      restoredStock,
-    ] of stockMap
-  ) {
-    const {
-      error:
-        restoreError,
-    } = await supabase
-      .from("products")
-      .update({
-        stock_qty:
-          restoredStock,
-      })
-      .eq(
-        "id",
-        productId
-      );
-
-    if (restoreError) {
-      throw restoreError;
-    }
-  }
+  await saveCustomerRates(saleItems);
 
   /* =====================================================
      UPDATE SALE HEADER
@@ -1981,9 +1998,22 @@ GET OLD SALE ITEMS
     throw insertItemsError;
   }
 
-  /* =====================================================
-     APPLY NEW STOCK
-     ===================================================== */
+  const { data: verifiedItems, error: verificationError } = await supabase
+    .from("sale_items")
+    .select("product_id")
+    .eq("sale_id", saleId);
+
+  if (verificationError) throw verificationError;
+  if (
+    verifiedItems?.length !== saleItems.length ||
+    new Set(verifiedItems.map((item: any) => item.product_id)).size !== saleItems.length
+  ) {
+    throw new Error("Sale items verification failed. Duplicate or missing items were detected.");
+  }
+
+    /* =====================================================
+      APPLY FINAL STOCK ONCE PER PRODUCT
+      ===================================================== */
 
   for (
     const [
@@ -2521,7 +2551,6 @@ async function printSavedBill(saleId: string) {
         return `<tr>
           <td>${index + 1}</td>
           <td>${safe(product?.product_name || "Product")}</td>
-          <td>${safe(product?.pack_size || "")}</td>
           <td>${Number(item.quantity || 0)}</td>
           <td>₹ ${Number(item.amount || 0).toFixed(2)}</td>
         </tr>`;
@@ -2543,7 +2572,7 @@ async function printSavedBill(saleId: string) {
       ${address ? `<div style="text-align:center;margin-bottom:8px">${safe(address)}</div>` : ""}
       <h2>BILL</h2>
       <div class="meta"><strong>Bill No:</strong> ${safe(billNo)}<br><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
-      <table><thead><tr><th>#</th><th>Product</th><th>Pack</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>#</th><th>Product</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="totals"><div>Total: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ${currency} ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
       <div class="footer">${safe(footer)}</div>
       <script>window.onload=function(){window.print();}</script></body></html>`;
@@ -2851,11 +2880,11 @@ return (
             onClick={punchTodaysSale}
             className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
           >
-            ⚡ Punch Today's Sale
+            Copy Yesterday's Sale
           </button>
 
           <p className="mt-2 text-sm text-gray-500">
-            Loads the customer's last sale for today's entry. Check quantities before saving.
+            Copies this customer's sale from the day before the selected date. Check quantities before saving.
           </p>
         </div>
       )}
