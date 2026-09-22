@@ -6,9 +6,15 @@ type Brand = {
   brand_name: string;
 };
 
+type Supplier = {
+  id: string;
+  supplier_name: string;
+};
+
 type Product = {
   id: string;
   brand_id: string | null;
+  supplier_id: string | null;
   product_name: string;
   size: number | string | null;
   unit: string | null;
@@ -33,6 +39,9 @@ export default function Products() {
   const [brands, setBrands] =
     useState<Brand[]>([]);
 
+  const [suppliers, setSuppliers] =
+    useState<Supplier[]>([]);
+
   const [products, setProducts] =
     useState<Product[]>([]);
 
@@ -53,6 +62,9 @@ export default function Products() {
     useState<string | null>(null);
 
   const [brandId, setBrandId] =
+    useState("");
+
+  const [supplierId, setSupplierId] =
     useState("");
 
   const [productName, setProductName] =
@@ -83,12 +95,16 @@ export default function Products() {
   const [filterBrandId, setFilterBrandId] =
     useState("");
 
+  const [filterSupplierId, setFilterSupplierId] =
+    useState("");
+
   // =====================================================
   // INITIAL LOAD
   // =====================================================
 
   useEffect(() => {
     loadBrands();
+    loadSuppliers();
     loadProducts();
   }, []);
 
@@ -124,6 +140,21 @@ export default function Products() {
     );
   }
 
+  async function loadSuppliers() {
+    const { data, error } = await supabase
+      .from("suppliers")
+      .select("id, supplier_name")
+      .order("supplier_name");
+
+    if (error) {
+      console.error("LOAD SUPPLIERS ERROR:", error);
+      alert("Unable to load suppliers:\n\n" + error.message);
+      return;
+    }
+
+    setSuppliers((data || []) as Supplier[]);
+  }
+
   // =====================================================
   // LOAD PRODUCTS
   // =====================================================
@@ -139,6 +170,7 @@ export default function Products() {
       .select(`
         id,
         brand_id,
+        supplier_id,
         product_name,
         size,
         unit,
@@ -194,6 +226,20 @@ export default function Products() {
     );
   }
 
+  function getSupplierName(
+    id: string | null
+  ) {
+    if (!id) {
+      return "No Supplier";
+    }
+
+    return (
+      suppliers.find(
+        (item) => String(item.id) === String(id)
+      )?.supplier_name || "No Supplier"
+    );
+  }
+
   // =====================================================
   // CLEAR FORM
   // =====================================================
@@ -201,6 +247,7 @@ export default function Products() {
   function clearForm() {
     setEditingId(null);
     setBrandId("");
+    setSupplierId("");
     setProductName("");
     setSize("1");
     setUnit("Litre");
@@ -220,6 +267,10 @@ export default function Products() {
 
     setBrandId(
       product.brand_id || ""
+    );
+
+    setSupplierId(
+      product.supplier_id || ""
     );
 
     setProductName(
@@ -273,6 +324,13 @@ export default function Products() {
     if (!brandId) {
       alert(
         "Please select a brand."
+      );
+      return;
+    }
+
+    if (!supplierId) {
+      alert(
+        "Please select a supplier."
       );
       return;
     }
@@ -380,6 +438,9 @@ export default function Products() {
             brand_id:
               brandId,
 
+            supplier_id:
+              supplierId,
+
             product_name:
               productName.trim(),
 
@@ -440,6 +501,9 @@ export default function Products() {
           .insert({
             brand_id:
               brandId,
+
+            supplier_id:
+              supplierId,
 
             product_name:
               productName.trim(),
@@ -653,6 +717,14 @@ export default function Products() {
             return false;
           }
 
+          if (
+            filterSupplierId &&
+            String(product.supplier_id) !==
+              String(filterSupplierId)
+          ) {
+            return false;
+          }
+
           // ---------------------------------------------
           // SEARCH
           // ---------------------------------------------
@@ -664,6 +736,11 @@ export default function Products() {
           const brandName =
             getBrandName(
               product.brand_id
+            ).toLowerCase();
+
+          const supplierName =
+            getSupplierName(
+              product.supplier_id
             ).toLowerCase();
 
           const productName =
@@ -688,6 +765,9 @@ export default function Products() {
             brandName.includes(
               searchText
             ) ||
+            supplierName.includes(
+              searchText
+            ) ||
             productName.includes(
               searchText
             ) ||
@@ -703,8 +783,10 @@ export default function Products() {
     }, [
       products,
       brands,
+      suppliers,
       search,
       filterBrandId,
+      filterSupplierId,
     ]);
 
   // =====================================================
@@ -768,8 +850,8 @@ export default function Products() {
             </h2>
 
             <p className="text-sm text-gray-500 mt-1">
-              One brand can have multiple
-              products.
+              Connect each product to its brand
+              and supplier.
             </p>
 
           </div>
@@ -841,6 +923,45 @@ export default function Products() {
                 No brands found.
                 Add a brand from
                 Brands section first.
+              </p>
+            )}
+
+          </div>
+
+          {/* =================================================
+              SUPPLIER
+          ================================================= */}
+
+          <div>
+
+            <label className="block text-sm font-semibold mb-2">
+              Supplier
+            </label>
+
+            <select
+              value={supplierId}
+              onChange={(e) =>
+                setSupplierId(e.target.value)
+              }
+              className="w-full border border-gray-300 rounded-lg p-3 bg-white"
+            >
+              <option value="">
+                Select Supplier
+              </option>
+
+              {suppliers.map((supplier) => (
+                <option
+                  key={supplier.id}
+                  value={supplier.id}
+                >
+                  {supplier.supplier_name}
+                </option>
+              ))}
+            </select>
+
+            {suppliers.length === 0 && (
+              <p className="text-xs text-red-600 mt-1">
+                No suppliers found. Add a supplier first.
               </p>
             )}
 
@@ -1122,7 +1243,7 @@ export default function Products() {
                   e.target.value
                 )
               }
-              placeholder="Search brand, product, size or unit..."
+              placeholder="Search brand, supplier, product, size or unit..."
               className="w-full border border-gray-300 rounded-lg p-3"
             />
 
@@ -1173,6 +1294,37 @@ export default function Products() {
 
           </div>
 
+          {/* SUPPLIER FILTER */}
+
+          <div>
+
+            <label className="block text-sm font-semibold mb-2">
+              Filter by Supplier
+            </label>
+
+            <select
+              value={filterSupplierId}
+              onChange={(e) =>
+                setFilterSupplierId(e.target.value)
+              }
+              className="w-full border border-gray-300 rounded-lg p-3 bg-white"
+            >
+              <option value="">
+                All Suppliers
+              </option>
+
+              {suppliers.map((supplier) => (
+                <option
+                  key={supplier.id}
+                  value={supplier.id}
+                >
+                  {supplier.supplier_name}
+                </option>
+              ))}
+            </select>
+
+          </div>
+
         </div>
 
         <div className="flex justify-between mt-4 text-sm text-gray-600">
@@ -1217,6 +1369,10 @@ export default function Products() {
               </th>
 
               <th className="p-3 text-left">
+                Supplier
+              </th>
+
+              <th className="p-3 text-left">
                 Product
               </th>
 
@@ -1254,7 +1410,7 @@ export default function Products() {
               <tr>
 
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="p-8 text-center text-gray-500"
                 >
                   Loading products...
@@ -1281,6 +1437,12 @@ export default function Products() {
                           product.brand_id
                         )
                       }
+                    </td>
+
+                    {/* SUPPLIER */}
+
+                    <td className="p-3 font-semibold text-emerald-700">
+                      {getSupplierName(product.supplier_id)}
                     </td>
 
                     {/* PRODUCT */}
@@ -1400,7 +1562,7 @@ export default function Products() {
                 <tr>
 
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     className="p-8 text-center text-gray-500"
                   >
                     No products found.

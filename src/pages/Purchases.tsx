@@ -23,6 +23,7 @@ type Supplier = {
 type Product = {
   id: string;
   brand_id: string | null;
+  supplier_id: string | null;
   product_name: string;
   size: number | string | null;
   unit: string | null;
@@ -251,6 +252,12 @@ export default function Purchases() {
     useState("");
 
   const [
+    selectedSupplierId,
+    setSelectedSupplierId,
+  ] =
+    useState("");
+
+  const [
     paymentMethod,
     setPaymentMethod,
   ] =
@@ -441,6 +448,7 @@ export default function Purchases() {
             `
               id,
               brand_id,
+              supplier_id,
               product_name,
               size,
               unit,
@@ -563,7 +571,7 @@ export default function Purchases() {
   const brandProducts =
     useMemo(() => {
 
-      if (!selectedBrandId) {
+      if (!selectedSupplierId || !selectedBrandId) {
         return [];
       }
 
@@ -574,12 +582,40 @@ export default function Purchases() {
           ) ===
           String(
             selectedBrandId
-          )
+          ) &&
+          String(product.supplier_id) ===
+            String(selectedSupplierId)
       );
 
     }, [
       products,
       selectedBrandId,
+      selectedSupplierId,
+    ]);
+
+  const supplierBrands =
+    useMemo(() => {
+      if (!selectedSupplierId) {
+        return [];
+      }
+
+      const supplierBrandIds = new Set(
+        products
+          .filter(
+            (product) =>
+              String(product.supplier_id) ===
+              String(selectedSupplierId)
+          )
+          .map((product) => String(product.brand_id))
+      );
+
+      return brands.filter((brand) =>
+        supplierBrandIds.has(String(brand.id))
+      );
+    }, [
+      brands,
+      products,
+      selectedSupplierId,
     ]);
 
   // ====================================================
@@ -658,6 +694,21 @@ export default function Purchases() {
       ""
     );
 
+  }
+
+  function handleSupplierChange(
+    value: string
+  ) {
+    const supplier = suppliers.find(
+      (item) => String(item.id) === String(value)
+    );
+
+    setSelectedSupplierId(value);
+    setSupplierName(supplier?.supplier_name || "");
+    setSelectedBrandId("");
+    setSelectedProductId("");
+    setQuantity("");
+    setRate("");
   }
 
   // ====================================================
@@ -1105,8 +1156,43 @@ export default function Purchases() {
       const latestPurchase =
         yesterdayPurchases[yesterdayPurchases.length - 1] as any;
 
-      if (latestPurchase?.supplier_name && !supplierName) {
-        setSupplierName(String(latestPurchase.supplier_name));
+      const copiedSupplierIds = Array.from(
+        new Set(
+          copiedRows
+            .map((row) =>
+              products.find(
+                (productItem) =>
+                  String(productItem.id) === String(row.product_id)
+              )?.supplier_id
+            )
+            .filter(Boolean)
+            .map(String)
+        )
+      );
+
+      const linkedSupplier =
+        copiedSupplierIds.length === 1
+          ? suppliers.find(
+              (supplier) =>
+                String(supplier.id) === copiedSupplierIds[0]
+            )
+          : null;
+
+      if (linkedSupplier?.supplier_name) {
+        setSelectedSupplierId(String(linkedSupplier.id));
+        setSupplierName(linkedSupplier.supplier_name);
+      } else if (!supplierName && latestPurchase?.supplier_name) {
+        const fallbackSupplierName = String(
+          latestPurchase.supplier_name
+        );
+        const fallbackSupplier = suppliers.find(
+          (supplier) =>
+            supplier.supplier_name === fallbackSupplierName
+        );
+        setSelectedSupplierId(
+          fallbackSupplier ? String(fallbackSupplier.id) : ""
+        );
+        setSupplierName(fallbackSupplierName);
       }
 
       setEditingPurchaseId(null);
@@ -1150,6 +1236,10 @@ export default function Purchases() {
     );
 
     setSupplierName(
+      ""
+    );
+
+    setSelectedSupplierId(
       ""
     );
 
@@ -1377,6 +1467,13 @@ export default function Purchases() {
       setPurchaseDateDisplay(formatDate(date || todayInput()));
       setInvoiceNo(purchase.invoice_no || "");
       setSupplierName(purchase.supplier_name || "");
+      const purchaseSupplier = suppliers.find(
+        (supplier) =>
+          supplier.supplier_name === purchase.supplier_name
+      );
+      setSelectedSupplierId(
+        purchaseSupplier ? String(purchaseSupplier.id) : ""
+      );
       setPaymentMethod(purchase.payment_method || "Credit");
       setPaidAmount(String(Number(purchase.paid_amount || 0)));
       setPurchaseRows(rows);
@@ -2388,13 +2485,15 @@ export default function Purchases() {
                 text-slate-700
               "
             >
-              Company / Supplier
+              1. Select Supplier
             </label>
 
             <select
               value={supplierName}
               onChange={(e) =>
-                setSupplierName(e.target.value)
+                handleSupplierChange(
+                  e.target.value
+                )
               }
               className="
                 w-full
@@ -2414,7 +2513,7 @@ export default function Purchases() {
               {suppliers.map((supplier) => (
                 <option
                   key={supplier.id}
-                  value={supplier.supplier_name}
+                  value={supplier.id}
                 >
                   {supplier.supplier_name}
                 </option>
@@ -2625,7 +2724,7 @@ export default function Purchases() {
                 text-slate-800
               "
             >
-              1. Select Brand
+              2. Select Brand
             </h2>
 
             <p
@@ -2635,8 +2734,8 @@ export default function Purchases() {
                 text-slate-500
               "
             >
-              Select a brand to
-              open its products.
+              Select a brand supplied by the
+              selected supplier.
             </p>
 
           </div>
@@ -2675,6 +2774,7 @@ export default function Purchases() {
           value={
             selectedBrandId
           }
+          disabled={!selectedSupplierId}
           onChange={(e) =>
             handleBrandChange(
               e.target.value
@@ -2695,10 +2795,12 @@ export default function Purchases() {
         >
 
           <option value="">
-            Select Brand
+            {selectedSupplierId
+              ? "Select Brand"
+              : "Select Supplier First"}
           </option>
 
-          {brands.map(
+          {supplierBrands.map(
             (brand) => {
 
               const count =
@@ -2711,7 +2813,9 @@ export default function Purchases() {
                     ) ===
                     String(
                       brand.id
-                    )
+                    ) &&
+                    String(product.supplier_id) ===
+                    String(selectedSupplierId)
                 ).length;
 
               return (
@@ -2745,7 +2849,7 @@ export default function Purchases() {
           PRODUCT SELECTION
       ================================================== */}
 
-      {selectedBrandId && (
+      {selectedSupplierId && selectedBrandId && (
 
         <div
           className="
@@ -2766,7 +2870,7 @@ export default function Purchases() {
                 text-slate-800
               "
             >
-              2. Select Product
+              3. Select Product
             </h2>
 
             <p
@@ -2807,8 +2911,8 @@ export default function Purchases() {
               "
             >
 
-              No products found
-              for this brand.
+              No products found for this
+              supplier and brand.
 
               <br />
 
