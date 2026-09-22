@@ -13,6 +13,22 @@ type SupplierRow = {
   outstanding: number;
 };
 
+type Brand = {
+  id: string;
+  brand_name: string;
+};
+
+type Product = {
+  id: string;
+  product_name: string;
+  brand_id: string | null;
+};
+
+type SupplierProductLink = {
+  supplier_id: string;
+  product_id: string;
+};
+
 type PurchaseRow = {
   supplier_name: string | null;
   total_amount: number | string | null;
@@ -71,9 +87,106 @@ export default function Suppliers() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [supplierProductLinks, setSupplierProductLinks] = useState<SupplierProductLink[]>([]);
+  const [mappingSupplierId, setMappingSupplierId] = useState("");
+  const [mappingSaving, setMappingSaving] = useState(false);
+
   useEffect(() => {
     void loadSuppliers();
+    void loadSupplierProductMaster();
   }, []);
+
+  async function loadSupplierProductMaster() {
+    try {
+      const [brandsResponse, productsResponse, linksResponse] = await Promise.all([
+        supabase.from("brands").select("id, brand_name").order("brand_name"),
+        supabase.from("products").select("id, product_name, brand_id").order("product_name"),
+        supabase.from("supplier_products").select("supplier_id, product_id"),
+      ]);
+
+      if (brandsResponse.error) throw brandsResponse.error;
+      if (productsResponse.error) throw productsResponse.error;
+      if (linksResponse.error) throw linksResponse.error;
+
+      setBrands((brandsResponse.data || []) as Brand[]);
+      setProducts((productsResponse.data || []) as Product[]);
+      setSupplierProductLinks((linksResponse.data || []) as SupplierProductLink[]);
+    } catch (error) {
+      console.error("LOAD SUPPLIER PRODUCT MASTER ERROR:", error);
+      alert(`Unable to load supplier-product connections.\n\n${getErrorMessage(error, "Unknown error.")}`);
+    }
+  }
+
+  const mappingProductIds = useMemo(() => {
+    return new Set(
+      supplierProductLinks
+        .filter((link) => String(link.supplier_id) === String(mappingSupplierId))
+        .map((link) => String(link.product_id))
+    );
+  }, [supplierProductLinks, mappingSupplierId]);
+
+  async function saveSupplierProductLinks() {
+    if (!mappingSupplierId) {
+      alert("Select a supplier first.");
+      return;
+    }
+
+    setMappingSaving(true);
+    try {
+      const selectedProductIds = products
+        .filter((product) => mappingProductIds.has(String(product.id)))
+        .map((product) => product.id);
+
+      const { error: deleteError } = await supabase
+        .from("supplier_products")
+        .delete()
+        .eq("supplier_id", mappingSupplierId);
+
+      if (deleteError) throw deleteError;
+
+      if (selectedProductIds.length > 0) {
+        const rows = selectedProductIds.map((productId) => ({
+          supplier_id: mappingSupplierId,
+          product_id: productId,
+        }));
+
+        const { error: insertError } = await supabase
+          .from("supplier_products")
+          .insert(rows);
+
+        if (insertError) throw insertError;
+      }
+
+      await loadSupplierProductMaster();
+      alert("Supplier products updated successfully.");
+    } catch (error) {
+      console.error("SAVE SUPPLIER PRODUCT LINKS ERROR:", error);
+      alert(`Unable to save supplier products.\n\n${getErrorMessage(error, "Unknown error.")}`);
+    } finally {
+      setMappingSaving(false);
+    }
+  }
+
+  function toggleMappingProduct(productId: string) {
+    setSupplierProductLinks((previous) => {
+      const exists = previous.some(
+        (link) =>
+          String(link.supplier_id) === String(mappingSupplierId) &&
+          String(link.product_id) === String(productId)
+      );
+
+      if (exists) {
+        return previous.filter(
+          (link) =>
+            !(String(link.supplier_id) === String(mappingSupplierId) && String(link.product_id) === String(productId))
+        );
+      }
+
+      return [...previous, { supplier_id: mappingSupplierId, product_id: productId }];
+    });
+  }
 
   async function loadSuppliers() {
     setLoading(true);
@@ -737,6 +850,70 @@ export default function Suppliers() {
             </button>
           )}
         </div>
+      </div>
+
+      {/* SUPPLIER -> BRAND -> PRODUCT CONNECTION */}
+      <div className="mb-6 rounded-xl bg-white p-6 shadow-lg">
+        <div className="mb-4">
+          <h2 className="text-xl font-semibold text-slate-800">Supplier Products</h2>
+          <p className="mt-1 text-sm text-gray-500">Connect each supplier with the exact products it supplies. Purchases will then show only connected brands and products.</p>
+        </div>
+
+        <select
+          value={mappingSupplierId}
+          onChange={(e) => setMappingSupplierId(e.target.value)}
+          className="mb-5 w-full rounded-lg border border-slate-300 p-3 font-semibold focus:border-blue-500 focus:outline-none"
+        >
+          <option value="">Select Supplier</option>
+          {suppliers.map((supplier) => (
+            <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+          ))}
+        </select>
+
+        {mappingSupplierId && (
+          <div className="max-h-[520px] overflow-y-auto rounded-xl border border-slate-200 p-4">
+            {brands.map((brand) => {
+              const brandProducts = products.filter((product) => String(product.brand_id) === String(brand.id));
+              if (brandProducts.length === 0) return null;
+
+              return (
+                <div key={brand.id} className="mb-5">
+                  <h3 className="mb-2 rounded-lg bg-blue-50 px-3 py-2 font-bold text-blue-800">{brand.brand_name}</h3>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {brandProducts.map((product) => {
+                      const checked = mappingProductIds.has(String(product.id));
+                      return (
+                        <label key={product.id} className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${checked ? "border-blue-500 bg-blue-50" : "border-slate-200 bg-white"}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleMappingProduct(product.id)}
+                            className="h-5 w-5"
+                          />
+                          <span className="font-semibold text-slate-700">{product.product_name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {mappingSupplierId && (
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-slate-600">Selected products: <span className="font-bold">{mappingProductIds.size}</span></p>
+            <button
+              type="button"
+              onClick={() => void saveSupplierProductLinks()}
+              disabled={mappingSaving}
+              className="rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {mappingSaving ? "Saving..." : "Save Supplier Products"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* SEARCH */}
