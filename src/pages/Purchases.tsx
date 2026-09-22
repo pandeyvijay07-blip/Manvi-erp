@@ -331,40 +331,6 @@ export default function Purchases() {
     useState(false);
 
   // ====================================================
-  // AUTOMATIC PURCHASE BILL NUMBER
-  // ====================================================
-
-  async function generateNextPurchaseBillNo() {
-    try {
-      const { data, error } = await supabase
-        .from("purchases")
-        .select("invoice_no")
-        .not("invoice_no", "is", null)
-        .limit(5000);
-
-      if (error) throw error;
-
-      let maxNumber = 0;
-
-      for (const row of data || []) {
-        const value = String(row.invoice_no || "").trim();
-        const match = value.match(/^PUR-(\d+)$/i);
-        if (match) {
-          const number = Number(match[1]);
-          if (Number.isFinite(number)) {
-            maxNumber = Math.max(maxNumber, number);
-          }
-        }
-      }
-
-      setInvoiceNo(`PUR-${String(maxNumber + 1).padStart(5, "0")}`);
-    } catch (error: any) {
-      console.error("GENERATE PURCHASE BILL NUMBER ERROR:", error);
-      setInvoiceNo(`PUR-${Date.now()}`);
-    }
-  }
-
-  // ====================================================
   // INITIAL LOAD
   // ====================================================
 
@@ -377,8 +343,6 @@ export default function Purchases() {
     loadProducts();
 
     loadPurchaseHistory();
-
-    generateNextPurchaseBillNo();
 
   }, []);
 
@@ -949,16 +913,6 @@ export default function Purchases() {
   // ====================================================
 
   async function copyYesterdayPurchase() {
-    if (purchaseRows.length > 0) {
-      const confirmed = window.confirm(
-        "Current purchase entries will be replaced with yesterday's purchase. Continue?"
-      );
-
-      if (!confirmed) {
-        return;
-      }
-    }
-
     setLoading(true);
 
     try {
@@ -970,6 +924,20 @@ export default function Purchases() {
       const month = String(yesterdayDate.getMonth() + 1).padStart(2, "0");
       const day = String(yesterdayDate.getDate()).padStart(2, "0");
       const yesterday = `${year}-${month}-${day}`;
+
+      // If a product is already selected, repeat ONLY that selected product
+      // from yesterday. This prevents a different product from appearing.
+      const selectedProductForCopy = selectedProductId
+        ? products.find(
+            (productItem) =>
+              String(productItem.id) === String(selectedProductId)
+          )
+        : null;
+
+      if (selectedProductId && !selectedProductForCopy) {
+        alert("Selected product was not found.");
+        return;
+      }
 
       const { data: yesterdayPurchases, error: purchaseError } =
         await supabase
@@ -985,32 +953,34 @@ export default function Purchases() {
             balance_amount
           `)
           .eq("purchase_date", yesterday)
-          .order("id", { ascending: false })
-          .limit(1);
+          .order("id", { ascending: true });
 
       if (purchaseError) {
         throw purchaseError;
       }
 
-      const previousPurchase = yesterdayPurchases?.[0];
-
-      if (!previousPurchase?.id) {
+      if (!yesterdayPurchases || yesterdayPurchases.length === 0) {
         alert(
           `No purchase was found for yesterday (${formatDate(yesterday)}).`
         );
         return;
       }
 
+      const purchaseIds = yesterdayPurchases
+        .map((purchase: any) => purchase.id)
+        .filter(Boolean);
+
       const { data: yesterdayItems, error: itemsError } =
         await supabase
           .from("purchase_items")
           .select(`
+            purchase_id,
             product_id,
             quantity,
             rate,
             amount
           `)
-          .eq("purchase_id", previousPurchase.id);
+          .in("purchase_id", purchaseIds);
 
       if (itemsError) {
         throw itemsError;
@@ -1018,71 +988,138 @@ export default function Purchases() {
 
       if (!yesterdayItems || yesterdayItems.length === 0) {
         alert(
-          `Yesterday's purchase (${previousPurchase.invoice_no || "No invoice"}) has no product items.`
+          `Yesterday's purchases (${formatDate(yesterday)}) have no product items.`
         );
         return;
       }
 
-      const copiedRows: PurchaseRow[] = yesterdayItems
-        .map((item: any) => {
-          const product = products.find(
-            (productItem) =>
-              String(productItem.id) === String(item.product_id)
-          );
+      // When a product is selected, only use yesterday's rows for that
+      // exact product_id. Otherwise, copy all products from yesterday.
+      const sourceItems = selectedProductForCopy
+        ? (yesterdayItems as any[]).filter(
+            (item) =>
+              String(item.product_id) ===
+              String(selectedProductForCopy.id)
+          )
+        : (yesterdayItems as any[]);
 
-          if (!product) {
-            return null;
+      if (sourceItems.length === 0) {
+        alert(
+          `${selectedProductForCopy?.product_name || "Selected product"} was not purchased yesterday (${formatDate(yesterday)}).`
+        );
+        return;
+      }
+
+      // Merge repeated occurrences of the same product.
+      const merged = new Map<string, PurchaseRow>();
+
+      for (const item of sourceItems) {
+        const product = products.find(
+          (productItem) =>
+            String(productItem.id) === String(item.product_id)
+        );
+
+        if (!product) {
+          continue;
+        }
+
+        const productId = String(product.id);
+        const copiedQuantity = Number(item.quantity || 0);
+        const copiedRate = Number(item.rate || 0);
+
+        if (copiedQuantity <= 0) {
+          continue;
+        }
+
+        const existing = merged.get(productId);
+
+        if (existing) {
+          existing.quantity += copiedQuantity;
+          if (copiedRate > 0) {
+            existing.rate = copiedRate;
           }
+          existing.amount = existing.quantity * existing.rate;
+        } else {
+          const finalRate =
+            copiedRate || Number(product.purchase_rate || 0);
 
-          const copiedQuantity = Number(item.quantity || 0);
-          const copiedRate = Number(item.rate || 0);
-
-          return {
+          merged.set(productId, {
             product_id: product.id,
             product_name: product.product_name,
             size: Number(product.size || 1),
             unit: product.unit || "Litre",
             quantity: copiedQuantity,
-            rate: copiedRate,
-            amount: copiedQuantity * copiedRate,
+            rate: finalRate,
+            amount: copiedQuantity * finalRate,
             brand_id: product.brand_id,
-          };
-        })
-        .filter((row): row is PurchaseRow => row !== null && row.quantity > 0);
+          });
+        }
+      }
+
+      const copiedRows = Array.from(merged.values());
 
       if (copiedRows.length === 0) {
         alert(
-          "Yesterday's purchase products could not be matched with Product Master."
+          `${selectedProductForCopy?.product_name || "Yesterday's products"} could not be found in the product master.`
         );
         return;
       }
 
-      // IMPORTANT: this is only a draft. Nothing is saved until the user
-      // presses Punch / Save Purchase. Payment is reset to avoid duplicating
-      // yesterday's Cash / UPI / Bank payment.
-      setPurchaseRows(copiedRows);
-      setPurchaseDate(today);
-      setPurchaseDateDisplay(formatDate(today));
-      setSupplierName(previousPurchase.supplier_name || "");
-      await generateNextPurchaseBillNo();
-      setPaymentMethod("Credit");
-      setPaidAmount("0");
-      setSelectedBrandId("");
-      setSelectedProductId("");
-      setQuantity("");
-      setRate("");
+      // If a product was selected, add/replace only that product in the
+      // current purchase cart. If no product was selected, replace with
+      // the complete previous-day product list.
+      if (selectedProductForCopy) {
+        setPurchaseRows((previous) => {
+          const copiedRow = copiedRows[0];
+
+          const existingIndex = previous.findIndex(
+            (row) =>
+              String(row.product_id) === String(copiedRow.product_id)
+          );
+
+          if (existingIndex >= 0) {
+            const updated = [...previous];
+            updated[existingIndex] = copiedRow;
+            return updated;
+          }
+
+          return [...previous, copiedRow];
+        });
+
+        // Keep the selected Chitale Jeevan (or selected product) visible
+        // after copying. Load its yesterday quantity and rate into the
+        // entry fields as well.
+        setSelectedBrandId(String(selectedProductForCopy.brand_id || ""));
+        setSelectedProductId(String(selectedProductForCopy.id));
+        setQuantity(String(copiedRows[0].quantity));
+        setRate(String(copiedRows[0].rate));
+      } else {
+        setPurchaseRows(copiedRows);
+
+        setSelectedBrandId("");
+        setSelectedProductId("");
+        setQuantity("");
+        setRate("");
+      }
+
+      const latestPurchase =
+        yesterdayPurchases[yesterdayPurchases.length - 1] as any;
+
+      if (latestPurchase?.supplier_name && !supplierName) {
+        setSupplierName(String(latestPurchase.supplier_name));
+      }
+
+      setEditingPurchaseId(null);
 
       alert(
-        `Yesterday's purchase loaded successfully.\n\n` +
-        `Date: ${formatDate(yesterday)}\n` +
-        `Supplier: ${previousPurchase.supplier_name || "-"}\n` +
-        `Products: ${copiedRows.length}\n\n` +
-        "It is a draft only. Enter today's invoice number and payment, then press Punch / Save Purchase."
+        selectedProductForCopy
+          ? `${selectedProductForCopy.product_name} repeated from yesterday (${formatDate(yesterday)}).`
+          : `${copiedRows.length} product(s) repeated from yesterday (${formatDate(yesterday)}).`
       );
     } catch (error: any) {
       console.error("COPY YESTERDAY PURCHASE ERROR:", error);
       alert(
-        "Unable to copy yesterday's purchase:\n\n" +
+        "Unable to repeat yesterday's purchase:\n\n" +
           (error?.message || "Unknown error")
       );
     } finally {
@@ -1111,8 +1148,6 @@ export default function Purchases() {
     setInvoiceNo(
       ""
     );
-
-    void generateNextPurchaseBillNo();
 
     setSupplierName(
       ""
@@ -1639,8 +1674,17 @@ export default function Purchases() {
     // -----------------------------------------------
 
     const cleanInvoice =
-      invoiceNo.trim() ||
-      `PUR-${Date.now()}`;
+      invoiceNo.trim();
+
+    if (!cleanInvoice) {
+
+      alert(
+        "Please enter Purchase Bill / Invoice No."
+      );
+
+      return;
+
+    }
 
     // -----------------------------------------------
     // SUPPLIER
@@ -2302,7 +2346,8 @@ export default function Purchases() {
                 text-slate-700
               "
             >
-              Automatic Purchase Bill No.
+              Purchase Bill /
+              Invoice No.
             </label>
 
             <input
@@ -2310,31 +2355,23 @@ export default function Purchases() {
               value={
                 invoiceNo
               }
-              readOnly
-              placeholder="Generating..."
+              onChange={(e) =>
+                setInvoiceNo(
+                  e.target.value
+                )
+              }
+              placeholder="Example: PUR-00125"
               className="
                 w-full
                 rounded-lg
                 border-2
                 border-blue-200
-                bg-blue-50
                 p-3
                 font-semibold
-                text-blue-800
                 focus:border-blue-500
                 focus:outline-none
               "
             />
-
-            <p
-              className="
-                mt-1
-                text-xs
-                text-slate-500
-              "
-            >
-              Bill number is generated automatically.
-            </p>
 
           </div>
 
