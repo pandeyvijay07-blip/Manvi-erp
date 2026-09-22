@@ -20,10 +20,14 @@ type Supplier = {
   supplier_name: string;
 };
 
+type SupplierProductLink = {
+  supplier_id: string;
+  product_id: string;
+};
+
 type Product = {
   id: string;
   brand_id: string | null;
-  supplier_id: string | null;
   product_name: string;
   size: number | string | null;
   unit: string | null;
@@ -214,6 +218,12 @@ export default function Purchases() {
     useState<Product[]>([]);
 
   const [
+    supplierProductLinks,
+    setSupplierProductLinks,
+  ] =
+    useState<SupplierProductLink[]>([]);
+
+  const [
     purchaseHistory,
     setPurchaseHistory,
   ] =
@@ -248,12 +258,6 @@ export default function Purchases() {
   const [
     supplierName,
     setSupplierName,
-  ] =
-    useState("");
-
-  const [
-    selectedSupplierId,
-    setSelectedSupplierId,
   ] =
     useState("");
 
@@ -348,6 +352,8 @@ export default function Purchases() {
     loadSuppliers();
 
     loadProducts();
+
+    loadSupplierProductLinks();
 
     loadPurchaseHistory();
 
@@ -448,7 +454,6 @@ export default function Purchases() {
             `
               id,
               brand_id,
-              supplier_id,
               product_name,
               size,
               unit,
@@ -492,6 +497,56 @@ export default function Purchases() {
 
     }
   }
+
+  // ====================================================
+  // LOAD SUPPLIER -> PRODUCT CONNECTIONS
+  // ====================================================
+
+  async function loadSupplierProductLinks() {
+    try {
+      const { data, error } = await supabase
+        .from("supplier_products")
+        .select("supplier_id, product_id");
+
+      if (error) throw error;
+
+      setSupplierProductLinks(
+        (data || []) as SupplierProductLink[]
+      );
+    } catch (error: any) {
+      console.error("LOAD SUPPLIER PRODUCT LINKS ERROR:", error);
+      alert(
+        "Unable to load supplier-product connections:\n\n" +
+          (error?.message || "Unknown error")
+      );
+    }
+  }
+
+  // ====================================================
+  // SELECTED SUPPLIER / ALLOWED PRODUCTS
+  // ====================================================
+
+  const selectedSupplierId = useMemo(() => {
+    const supplier = suppliers.find(
+      (item) =>
+        String(item.supplier_name).trim().toLowerCase() ===
+        String(supplierName).trim().toLowerCase()
+    );
+
+    return supplier?.id || "";
+  }, [suppliers, supplierName]);
+
+  const allowedProductIds = useMemo(() => {
+    if (!selectedSupplierId) return new Set<string>();
+
+    return new Set(
+      supplierProductLinks
+        .filter(
+          (link) => String(link.supplier_id) === String(selectedSupplierId)
+        )
+        .map((link) => String(link.product_id))
+    );
+  }, [supplierProductLinks, selectedSupplierId]);
 
   // ====================================================
   // LOAD PURCHASE HISTORY
@@ -571,52 +626,47 @@ export default function Purchases() {
   const brandProducts =
     useMemo(() => {
 
-      if (!selectedSupplierId || !selectedBrandId) {
+      if (!selectedBrandId) {
         return [];
       }
 
       return products.filter(
         (product) =>
-          String(
-            product.brand_id
-          ) ===
-          String(
-            selectedBrandId
-          ) &&
-          String(product.supplier_id) ===
-            String(selectedSupplierId)
+          String(product.brand_id) === String(selectedBrandId) &&
+          (!selectedSupplierId || allowedProductIds.has(String(product.id)))
       );
 
     }, [
       products,
       selectedBrandId,
       selectedSupplierId,
+      allowedProductIds,
     ]);
 
-  const supplierBrands =
-    useMemo(() => {
-      if (!selectedSupplierId) {
-        return [];
-      }
+  // ====================================================
+  // BRANDS AVAILABLE FOR SELECTED SUPPLIER
+  // ====================================================
 
-      const supplierBrandIds = new Set(
-        products
-          .filter(
-            (product) =>
-              String(product.supplier_id) ===
-              String(selectedSupplierId)
-          )
-          .map((product) => String(product.brand_id))
-      );
+  const supplierBrands = useMemo(() => {
+    if (!selectedSupplierId) return [];
 
-      return brands.filter((brand) =>
-        supplierBrandIds.has(String(brand.id))
-      );
-    }, [
-      brands,
-      products,
-      selectedSupplierId,
-    ]);
+    const linkedProductIds = new Set(
+      supplierProductLinks
+        .filter(
+          (link) => String(link.supplier_id) === String(selectedSupplierId)
+        )
+        .map((link) => String(link.product_id))
+    );
+
+    const brandIds = new Set(
+      products
+        .filter((product) => linkedProductIds.has(String(product.id)))
+        .map((product) => String(product.brand_id || ""))
+        .filter(Boolean)
+    );
+
+    return brands.filter((brand) => brandIds.has(String(brand.id)));
+  }, [brands, products, supplierProductLinks, selectedSupplierId]);
 
   // ====================================================
   // SELECTED BRAND PRODUCT COUNT
@@ -694,21 +744,6 @@ export default function Purchases() {
       ""
     );
 
-  }
-
-  function handleSupplierChange(
-    value: string
-  ) {
-    const supplier = suppliers.find(
-      (item) => String(item.id) === String(value)
-    );
-
-    setSelectedSupplierId(value);
-    setSupplierName(supplier?.supplier_name || "");
-    setSelectedBrandId("");
-    setSelectedProductId("");
-    setQuantity("");
-    setRate("");
   }
 
   // ====================================================
@@ -976,6 +1011,20 @@ export default function Purchases() {
       const day = String(yesterdayDate.getDate()).padStart(2, "0");
       const yesterday = `${year}-${month}-${day}`;
 
+      // If a product is already selected, repeat ONLY that selected product
+      // from yesterday. This prevents a different product from appearing.
+      const selectedProductForCopy = selectedProductId
+        ? products.find(
+            (productItem) =>
+              String(productItem.id) === String(selectedProductId)
+          )
+        : null;
+
+      if (selectedProductId && !selectedProductForCopy) {
+        alert("Selected product was not found.");
+        return;
+      }
+
       const { data: yesterdayPurchases, error: purchaseError } =
         await supabase
           .from("purchases")
@@ -1003,7 +1052,24 @@ export default function Purchases() {
         return;
       }
 
-      const purchaseIds = yesterdayPurchases
+      // If a supplier is selected, copy only that supplier's purchase.
+      // This prevents products from another supplier/brand from appearing.
+      const purchasesForCopy = supplierName.trim()
+        ? (yesterdayPurchases as any[]).filter(
+            (purchase) =>
+              String(purchase.supplier_name || "").trim().toLowerCase() ===
+              supplierName.trim().toLowerCase()
+          )
+        : (yesterdayPurchases as any[]);
+
+      if (purchasesForCopy.length === 0) {
+        alert(
+          `No purchase for supplier "${supplierName.trim()}" was found yesterday (${formatDate(yesterday)}).`
+        );
+        return;
+      }
+
+      const purchaseIds = purchasesForCopy
         .map((purchase: any) => purchase.id)
         .filter(Boolean);
 
@@ -1030,57 +1096,19 @@ export default function Purchases() {
         return;
       }
 
-      const selectedProductForCopy = selectedProductId
-        ? products.find(
-            (productItem) =>
-              String(productItem.id) === String(selectedProductId)
+      // When a product is selected, only use yesterday's rows for that
+      // exact product_id. Otherwise, copy all products from yesterday.
+      const sourceItems = selectedProductForCopy
+        ? (yesterdayItems as any[]).filter(
+            (item) =>
+              String(item.product_id) ===
+              String(selectedProductForCopy.id)
           )
-        : null;
-
-      if (selectedProductId && !selectedProductForCopy) {
-        alert("Selected product was not found.");
-        return;
-      }
-
-      // Scope the copy by the current selection, but always use the exact
-      // product_id and quantities stored in yesterday's purchase_items.
-      const sourceItems = (yesterdayItems as any[]).filter((item) => {
-        const product = products.find(
-          (productItem) =>
-            String(productItem.id) === String(item.product_id)
-        );
-
-        if (!product) {
-          return false;
-        }
-
-        if (
-          selectedProductForCopy &&
-          String(product.id) !== String(selectedProductForCopy.id)
-        ) {
-          return false;
-        }
-
-        if (
-          selectedSupplierId &&
-          String(product.supplier_id) !== String(selectedSupplierId)
-        ) {
-          return false;
-        }
-
-        if (
-          selectedBrandId &&
-          String(product.brand_id) !== String(selectedBrandId)
-        ) {
-          return false;
-        }
-
-        return true;
-      });
+        : (yesterdayItems as any[]);
 
       if (sourceItems.length === 0) {
         alert(
-          `${selectedProductForCopy?.product_name || getBrandName(selectedBrandId) || "Selected products"} was not purchased yesterday (${formatDate(yesterday)}).`
+          `${selectedProductForCopy?.product_name || "Selected product"} was not purchased yesterday (${formatDate(yesterday)}).`
         );
         return;
       }
@@ -1140,8 +1168,9 @@ export default function Purchases() {
         return;
       }
 
-      // Product scope updates one row. Brand or supplier scope merges the
-      // matching exact rows into the cart. No selection replaces the cart.
+      // If a product was selected, add/replace only that product in the
+      // current purchase cart. If no product was selected, replace with
+      // the complete previous-day product list.
       if (selectedProductForCopy) {
         setPurchaseRows((previous) => {
           const copiedRow = copiedRows[0];
@@ -1167,25 +1196,9 @@ export default function Purchases() {
         setSelectedProductId(String(selectedProductForCopy.id));
         setQuantity(String(copiedRows[0].quantity));
         setRate(String(copiedRows[0].rate));
-      } else if (selectedBrandId || selectedSupplierId) {
-        setPurchaseRows((previous) => {
-          const copiedByProduct = new Map(
-            copiedRows.map((row) => [String(row.product_id), row])
-          );
-          const remaining = previous.filter(
-            (row) => !copiedByProduct.has(String(row.product_id))
-          );
-          return [...remaining, ...copiedRows];
-        });
-
-        setSelectedProductId("");
-        setQuantity("");
-        setRate("");
       } else {
         setPurchaseRows(copiedRows);
 
-        setSelectedSupplierId("");
-        setSupplierName("");
         setSelectedBrandId("");
         setSelectedProductId("");
         setQuantity("");
@@ -1193,45 +1206,10 @@ export default function Purchases() {
       }
 
       const latestPurchase =
-        yesterdayPurchases[yesterdayPurchases.length - 1] as any;
+        purchasesForCopy[purchasesForCopy.length - 1] as any;
 
-      const copiedSupplierIds = Array.from(
-        new Set(
-          copiedRows
-            .map((row) =>
-              products.find(
-                (productItem) =>
-                  String(productItem.id) === String(row.product_id)
-              )?.supplier_id
-            )
-            .filter(Boolean)
-            .map(String)
-        )
-      );
-
-      const linkedSupplier =
-        copiedSupplierIds.length === 1
-          ? suppliers.find(
-              (supplier) =>
-                String(supplier.id) === copiedSupplierIds[0]
-            )
-          : null;
-
-      if (linkedSupplier?.supplier_name) {
-        setSelectedSupplierId(String(linkedSupplier.id));
-        setSupplierName(linkedSupplier.supplier_name);
-      } else if (!supplierName && latestPurchase?.supplier_name) {
-        const fallbackSupplierName = String(
-          latestPurchase.supplier_name
-        );
-        const fallbackSupplier = suppliers.find(
-          (supplier) =>
-            supplier.supplier_name === fallbackSupplierName
-        );
-        setSelectedSupplierId(
-          fallbackSupplier ? String(fallbackSupplier.id) : ""
-        );
-        setSupplierName(fallbackSupplierName);
+      if (latestPurchase?.supplier_name && !supplierName) {
+        setSupplierName(String(latestPurchase.supplier_name));
       }
 
       setEditingPurchaseId(null);
@@ -1239,10 +1217,6 @@ export default function Purchases() {
       alert(
         selectedProductForCopy
           ? `${selectedProductForCopy.product_name} repeated from yesterday (${formatDate(yesterday)}).`
-          : selectedBrandId
-          ? `${copiedRows.length} product(s) from ${getBrandName(selectedBrandId)} repeated from yesterday (${formatDate(yesterday)}).`
-          : selectedSupplierId
-          ? `${copiedRows.length} product(s) from the selected supplier repeated from yesterday (${formatDate(yesterday)}).`
           : `${copiedRows.length} product(s) repeated from yesterday (${formatDate(yesterday)}).`
       );
     } catch (error: any) {
@@ -1279,10 +1253,6 @@ export default function Purchases() {
     );
 
     setSupplierName(
-      ""
-    );
-
-    setSelectedSupplierId(
       ""
     );
 
@@ -1510,13 +1480,6 @@ export default function Purchases() {
       setPurchaseDateDisplay(formatDate(date || todayInput()));
       setInvoiceNo(purchase.invoice_no || "");
       setSupplierName(purchase.supplier_name || "");
-      const purchaseSupplier = suppliers.find(
-        (supplier) =>
-          supplier.supplier_name === purchase.supplier_name
-      );
-      setSelectedSupplierId(
-        purchaseSupplier ? String(purchaseSupplier.id) : ""
-      );
       setPaymentMethod(purchase.payment_method || "Credit");
       setPaidAmount(String(Number(purchase.paid_amount || 0)));
       setPurchaseRows(rows);
@@ -2528,16 +2491,18 @@ export default function Purchases() {
                 text-slate-700
               "
             >
-              1. Select Supplier
+              Company / Supplier
             </label>
 
             <select
               value={supplierName}
-              onChange={(e) =>
-                handleSupplierChange(
-                  e.target.value
-                )
-              }
+              onChange={(e) => {
+                setSupplierName(e.target.value);
+                setSelectedBrandId("");
+                setSelectedProductId("");
+                setQuantity("");
+                setRate("");
+              }}
               className="
                 w-full
                 rounded-lg
@@ -2556,7 +2521,7 @@ export default function Purchases() {
               {suppliers.map((supplier) => (
                 <option
                   key={supplier.id}
-                  value={supplier.id}
+                  value={supplier.supplier_name}
                 >
                   {supplier.supplier_name}
                 </option>
@@ -2767,7 +2732,7 @@ export default function Purchases() {
                 text-slate-800
               "
             >
-              2. Select Brand
+              1. Select Brand
             </h2>
 
             <p
@@ -2777,8 +2742,8 @@ export default function Purchases() {
                 text-slate-500
               "
             >
-              Select a brand supplied by the
-              selected supplier.
+              Select a brand to
+              open its products.
             </p>
 
           </div>
@@ -2813,11 +2778,22 @@ export default function Purchases() {
 
         </div>
 
+        {!selectedSupplierId && (
+          <div className="mb-4 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm font-semibold text-orange-800">
+            Select a supplier first. Brands and products are connected to the selected supplier.
+          </div>
+        )}
+
+        {selectedSupplierId && supplierBrands.length === 0 && (
+          <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
+            No brands/products are linked to this supplier yet. Open Suppliers → Supplier Products and assign products.
+          </div>
+        )}
+
         <select
           value={
             selectedBrandId
           }
-          disabled={!selectedSupplierId}
           onChange={(e) =>
             handleBrandChange(
               e.target.value
@@ -2838,9 +2814,7 @@ export default function Purchases() {
         >
 
           <option value="">
-            {selectedSupplierId
-              ? "Select Brand"
-              : "Select Supplier First"}
+            Select Brand
           </option>
 
           {supplierBrands.map(
@@ -2848,17 +2822,9 @@ export default function Purchases() {
 
               const count =
                 products.filter(
-                  (
-                    product
-                  ) =>
-                    String(
-                      product.brand_id
-                    ) ===
-                    String(
-                      brand.id
-                    ) &&
-                    String(product.supplier_id) ===
-                    String(selectedSupplierId)
+                  (product) =>
+                    String(product.brand_id) === String(brand.id) &&
+                    allowedProductIds.has(String(product.id))
                 ).length;
 
               return (
@@ -2892,7 +2858,7 @@ export default function Purchases() {
           PRODUCT SELECTION
       ================================================== */}
 
-      {selectedSupplierId && selectedBrandId && (
+      {selectedBrandId && (
 
         <div
           className="
@@ -2913,7 +2879,7 @@ export default function Purchases() {
                 text-slate-800
               "
             >
-              3. Select Product
+              2. Select Product
             </h2>
 
             <p
@@ -2954,8 +2920,8 @@ export default function Purchases() {
               "
             >
 
-              No products found for this
-              supplier and brand.
+              No products found
+              for this brand.
 
               <br />
 

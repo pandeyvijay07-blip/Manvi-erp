@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "../lib/supabase";
 
 type Sale = {
@@ -47,6 +48,13 @@ export default function Invoice() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [items, setItems] = useState<SaleItem[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [businessUpiId] = useState(() => {
+    try {
+      return window.localStorage.getItem("manvi_upi_id") || "";
+    } catch {
+      return "";
+    }
+  });
 
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -202,6 +210,15 @@ export default function Invoice() {
   const billPrefix =
     settings?.bill_prefix || "INV";
 
+  const upiPaymentUrl = businessUpiId && Number(sale.balance_amount || 0) > 0
+    ? `upi://pay?${new URLSearchParams({
+        pa: businessUpiId,
+        pn: settings?.business_name || "MANVI MILK AGENCIES",
+        am: Number(sale.balance_amount || 0).toFixed(2),
+        cu: "INR",
+      }).toString()}`
+    : "";
+
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6 bg-white">
 
@@ -327,15 +344,7 @@ export default function Invoice() {
                 </th>
 
                 <th className="border p-3">
-                  Pack
-                </th>
-
-                <th className="border p-3">
                   Qty
-                </th>
-
-                <th className="border p-3">
-                  Rate
                 </th>
 
                 <th className="border p-3">
@@ -352,7 +361,7 @@ export default function Invoice() {
                 <tr>
 
                   <td
-                    colSpan={5}
+                    colSpan={3}
                     className="border p-6 text-center text-gray-500"
                   >
                     No Products Found
@@ -371,16 +380,7 @@ export default function Invoice() {
                     </td>
 
                     <td className="border p-3 text-center">
-                      {item.products?.pack_size || "-"}
-                    </td>
-
-                    <td className="border p-3 text-center">
                       {Number(item.quantity)}
-                    </td>
-
-                    <td className="border p-3 text-right">
-                      {currency}{" "}
-                      {Number(item.rate).toFixed(2)}
                     </td>
 
                     <td className="border p-3 text-right">
@@ -454,6 +454,13 @@ export default function Invoice() {
           </div>
 
         </div>
+
+        {upiPaymentUrl && (
+          <div className="mt-8 flex flex-col items-center gap-2 border-t pt-6">
+            <p className="font-semibold">Scan to pay balance</p>
+            <QRCodeSVG value={upiPaymentUrl} size={160} includeMargin />
+          </div>
+        )}
 
         {/* Footer */}
 
