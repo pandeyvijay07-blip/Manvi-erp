@@ -1983,59 +1983,56 @@ GET OLD SALE ITEMS
     throw saleUpdateError;
   }
 
-  const {
-    error:
-      deleteItemsError,
-  } = await supabase
-    .from("sale_items")
-    .delete()
-    .eq(
-      "sale_id",
-      saleId
-    );
-
-  if (deleteItemsError) {
-    throw deleteItemsError;
-  }
-
   /* =====================================================
-     INSERT NEW ITEMS
+     UPDATE EXISTING ITEMS / INSERT NEW ITEMS
      ===================================================== */
 
-  const itemsToInsert =
-    saleItems.map(
-      (item) => ({
-        sale_id:
-          saleId,
+  const existingItemsByProduct = new Map(
+    (oldItems || []).map((item: any) => [item.product_id, item])
+  );
+  const currentProductIds = new Set<string>();
 
-        product_id:
-          item.product_id,
+  for (const item of saleItems) {
+    currentProductIds.add(item.product_id);
 
-        quantity:
-          item.quantity,
+    const itemValues = {
+      sale_id: saleId,
+      product_id: item.product_id,
+      quantity: item.quantity,
+      rate: item.rate,
+      amount: item.amount,
+      cost_rate: Number(item.purchase_rate || 0),
+    };
+    const existingItem = existingItemsByProduct.get(item.product_id);
 
-        rate:
-          item.rate,
+    const { error: itemSaveError } = existingItem
+      ? await supabase
+          .from("sale_items")
+          .update(itemValues)
+          .eq("id", existingItem.id)
+      : await supabase
+          .from("sale_items")
+          .insert(itemValues);
 
-        amount:
-          item.amount,
+    if (itemSaveError) {
+      throw itemSaveError;
+    }
+  }
 
-        cost_rate:
-          Number(item.purchase_rate || 0),
-      })
-    );
+  const removedItemIds = (oldItems || [])
+    .filter((item: any) => !currentProductIds.has(item.product_id))
+    .map((item: any) => item.id)
+    .filter(Boolean);
 
-  const {
-    error:
-      insertItemsError,
-  } = await supabase
-    .from("sale_items")
-    .insert(
-      itemsToInsert
-    );
+  if (removedItemIds.length > 0) {
+    const { error: deleteItemsError } = await supabase
+      .from("sale_items")
+      .delete()
+      .in("id", removedItemIds);
 
-  if (insertItemsError) {
-    throw insertItemsError;
+    if (deleteItemsError) {
+      throw deleteItemsError;
+    }
   }
 
   const { data: verifiedItems, error: verificationError } = await supabase
