@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { jsPDF } from "jspdf";
 import { supabase } from "../lib/supabase";
 import CustomerRouteSearch from "../components/CustomerRouteSearch";
@@ -297,6 +298,30 @@ cu: "INR",
 });
 
 return `upi://pay?${params.toString()}`;
+}
+
+function getSavedUpiPaymentUrl(sale: { balance_amount?: number | null }) {
+  const savedBalance = Math.max(0, Number(sale.balance_amount) || 0);
+  if (!businessUpiId.trim() || savedBalance <= 0) return "";
+
+  const params = new URLSearchParams({
+    pa: businessUpiId.trim(),
+    pn: "MANVI MILK AGENCIES",
+    am: savedBalance.toFixed(2),
+    cu: "INR",
+  });
+
+  return `upi://pay?${params.toString()}`;
+}
+
+function getUpiQrDataUrl(value: string) {
+  if (!value) return "";
+
+  const svg = renderToStaticMarkup(
+    <QRCodeSVG value={value} size={240} includeMargin />
+  );
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 /* =========================================================
@@ -920,23 +945,6 @@ if (!customer || !product) {
 return null;
 }
 
-async function saveCustomerRates(items: SaleItem[]) {
-  if (!customerId || items.length === 0) return;
-
-  const { error } = await supabase
-    .from("customer_prices")
-    .upsert(
-      items.map((item) => ({
-        customer_id: customerId,
-        product_id: item.product_id,
-        selling_rate: Number(item.rate),
-      })),
-      { onConflict: "customer_id,product_id" }
-    );
-
-  if (error) throw error;
-}
-
 try {
   const {
     data,
@@ -981,6 +989,23 @@ try {
   return null;
 }
 
+}
+
+async function saveCustomerRates(items: SaleItem[]) {
+  if (!customerId || items.length === 0) return;
+
+  const { error } = await supabase
+    .from("customer_prices")
+    .upsert(
+      items.map((item) => ({
+        customer_id: customerId,
+        product_id: item.product_id,
+        selling_rate: Number(item.rate),
+      })),
+      { onConflict: "customer_id,product_id" }
+    );
+
+  if (error) throw error;
 }
 
 /* =========================================================
@@ -2461,6 +2486,16 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
     y += 7;
     doc.text(`BALANCE: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}`, right, y, { align: "right" });
     y += 14;
+
+    const savedUpiUrl = getSavedUpiPaymentUrl(sale);
+    if (savedUpiUrl) {
+      const qrDataUrl = getUpiQrDataUrl(savedUpiUrl);
+      doc.setFont("helvetica", "bold");
+      doc.text("Scan to pay balance", left, y);
+      doc.addImage(qrDataUrl, "SVG", left, y + 3, 35, 35);
+      y += 42;
+    }
+
     doc.setFontSize(9);
     const footerLines = doc.splitTextToSize(footer, pageWidth - left * 2);
     doc.text(footerLines, pageWidth / 2, y, { align: "center" });
@@ -2561,6 +2596,10 @@ async function printSavedBill(saleId: string) {
     const splitHtml = method === "Split"
       ? `<div>Cash: ₹ ${Number(sale.cash_amount || 0).toFixed(2)} &nbsp; | &nbsp; UPI: ₹ ${Number(sale.upi_amount || 0).toFixed(2)}</div>`
       : "";
+    const savedUpiUrl = getSavedUpiPaymentUrl(sale);
+    const upiQrHtml = savedUpiUrl
+      ? `<div style="margin-top:18px;text-align:center"><strong>Scan to pay balance</strong><br><img src="${safe(getUpiQrDataUrl(savedUpiUrl))}" width="180" height="180" alt="UPI payment QR"></div>`
+      : "";
 
     const html = `<!doctype html><html><head><title>MANVI BILL</title>
       <style>
@@ -2574,6 +2613,7 @@ async function printSavedBill(saleId: string) {
       <div class="meta"><strong>Bill No:</strong> ${safe(billNo)}<br><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
       <table><thead><tr><th>#</th><th>Product</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="totals"><div>Total: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ${currency} ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
+      ${upiQrHtml}
       <div class="footer">${safe(footer)}</div>
       <script>window.onload=function(){window.print();}</script></body></html>`;
 
