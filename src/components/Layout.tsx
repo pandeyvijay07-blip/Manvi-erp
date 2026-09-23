@@ -22,7 +22,6 @@ import {
   FiCalendar,
   FiTag,
   FiUserCheck,
-  FiSettings,
 } from "react-icons/fi";
 
 import Header from "./Header";
@@ -65,12 +64,14 @@ const menu = [
     name: "Purchases",
     path: "/purchases",
     icon: <FiTruck />,
+    ownerOnly: true,
   },
 
   {
     name: "Suppliers",
     path: "/suppliers",
     icon: <FiUsers />,
+    ownerOnly: true,
   },
 
   {
@@ -113,6 +114,7 @@ const menu = [
     name: "Expenses",
     path: "/expenses",
     icon: <FiCreditCard />,
+    ownerOnly: true,
   },
 
   {
@@ -125,6 +127,7 @@ const menu = [
     name: "Reports",
     path: "/reports",
     icon: <FiBarChart2 />,
+    ownerOnly: true,
   },
 
   {
@@ -137,6 +140,7 @@ const menu = [
     name: "Daily Closing",
     path: "/daily-closing",
     icon: <FiCalendar />,
+    ownerOnly: true,
   },
 
   // ==========================================
@@ -148,12 +152,6 @@ const menu = [
     path: "/user-management",
     icon: <FiUserCheck />,
     ownerOnly: true,
-  },
-
-  {
-    name: "Settings",
-    path: "/settings",
-    icon: <FiSettings />,
   },
 ];
 

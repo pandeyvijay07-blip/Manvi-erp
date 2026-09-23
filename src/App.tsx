@@ -6,6 +6,7 @@ import {
 } from "react-router-dom";
 
 import {
+  ReactNode,
   useEffect,
   useState,
 } from "react";
@@ -57,6 +58,30 @@ type CurrentUser = {
   role: string;
   active: boolean;
 };
+
+type RoleGuardProps = {
+  allowedForEmployee?: boolean;
+  isOwner: boolean;
+  children: ReactNode;
+};
+
+function RoleGuard({
+  allowedForEmployee = false,
+  isOwner,
+  children,
+}: RoleGuardProps) {
+  if (isOwner || allowedForEmployee) {
+    return <>{children}</>;
+  }
+
+  return (
+    <Navigate
+      to="/"
+      replace
+    />
+  );
+}
+
 
 // =====================================================
 // PROTECTED APP
@@ -483,12 +508,20 @@ function ProtectedApp() {
 
         <Route
           path="/purchases"
-          element={<Purchases />}
+          element={
+            <RoleGuard isOwner={isOwner}>
+              <Purchases />
+            </RoleGuard>
+          }
         />
 
         <Route
           path="/suppliers"
-          element={<Suppliers />}
+          element={
+            <RoleGuard isOwner={isOwner}>
+              <Suppliers />
+            </RoleGuard>
+          }
         />
 
         <Route
@@ -508,7 +541,11 @@ function ProtectedApp() {
 
         <Route
           path="/expenses"
-          element={<Expenses />}
+          element={
+            <RoleGuard isOwner={isOwner}>
+              <Expenses />
+            </RoleGuard>
+          }
         />
 
         {/* ============================================
@@ -517,7 +554,11 @@ function ProtectedApp() {
 
         <Route
           path="/reports"
-          element={<Reports />}
+          element={
+            <RoleGuard isOwner={isOwner}>
+              <Reports />
+            </RoleGuard>
+          }
         />
 
         <Route
@@ -527,7 +568,11 @@ function ProtectedApp() {
 
         <Route
           path="/daily-closing"
-          element={<DailyClosing />}
+          element={
+            <RoleGuard isOwner={isOwner}>
+              <DailyClosing />
+            </RoleGuard>
+          }
         />
 
         {/* ============================================
