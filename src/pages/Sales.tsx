@@ -3808,6 +3808,16 @@ return (
                       <button
                         type="button"
                         disabled={loading}
+                        onClick={() => void printSavedBill(sale.id)}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        🖨️ Print Bill
+                      </button>
+
+
+                      <button
+                        type="button"
+                        disabled={loading}
                         onClick={() => void shareSavedBillPdf(sale.id)}
                         className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
                       >
