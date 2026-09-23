@@ -27,6 +27,9 @@ type SupplierPayment = {
   payment_date: string;
   amount: number;
   payment_method: string;
+  cash_amount?: number;
+  upi_amount?: number;
+  bank_amount?: number;
   reference: string;
   remarks: string;
   supplier_name: string;
@@ -91,6 +94,9 @@ export default function Suppliers() {
   const [paymentSupplierId, setPaymentSupplierId] = useState("");
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [paymentCashAmount, setPaymentCashAmount] = useState("");
+  const [paymentUpiAmount, setPaymentUpiAmount] = useState("");
+  const [paymentBankAmount, setPaymentBankAmount] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentRemarks, setPaymentRemarks] = useState("");
 
@@ -197,6 +203,9 @@ export default function Suppliers() {
           payment_date,
           amount,
           payment_method,
+          cash_amount,
+          upi_amount,
+          bank_amount,
           reference,
           remarks,
           suppliers ( supplier_name )
@@ -212,6 +221,9 @@ export default function Suppliers() {
         payment_date: String(row.payment_date || "").slice(0, 10),
         amount: Number(row.amount || 0),
         payment_method: text(row.payment_method) || "Cash",
+        cash_amount: Number(row.cash_amount || 0),
+        upi_amount: Number(row.upi_amount || 0),
+        bank_amount: Number(row.bank_amount || 0),
         reference: text(row.reference),
         remarks: text(row.remarks),
         supplier_name: text(row.suppliers?.supplier_name) || "Unknown Supplier",
@@ -342,6 +354,9 @@ export default function Suppliers() {
     setPaymentSupplierId("");
     setPaymentAmount("");
     setPaymentMethod("Cash");
+    setPaymentCashAmount("");
+    setPaymentUpiAmount("");
+    setPaymentBankAmount("");
     setPaymentReference("");
     setPaymentRemarks("");
   }
@@ -352,6 +367,9 @@ export default function Suppliers() {
     setPaymentSupplierId(payment.supplier_id);
     setPaymentAmount(String(payment.amount));
     setPaymentMethod(payment.payment_method || "Cash");
+    setPaymentCashAmount(String(Number(payment.cash_amount || 0)));
+    setPaymentUpiAmount(String(Number(payment.upi_amount || 0)));
+    setPaymentBankAmount(String(Number(payment.bank_amount || 0)));
     setPaymentReference(payment.reference);
     setPaymentRemarks(payment.remarks);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -367,9 +385,22 @@ export default function Suppliers() {
       return;
     }
 
-    const amount = Number(paymentAmount);
+    const cashPart = Math.round(Number(paymentCashAmount || 0));
+    const upiPart = Math.round(Number(paymentUpiAmount || 0));
+    const bankPart = Math.round(Number(paymentBankAmount || 0));
+
+    const amount =
+      paymentMethod === "Split"
+        ? cashPart + upiPart + bankPart
+        : Math.round(Number(paymentAmount || 0));
+
     if (!Number.isFinite(amount) || amount <= 0) {
       alert("Please enter a valid payment amount.");
+      return;
+    }
+
+    if (paymentMethod === "Split" && (cashPart < 0 || upiPart < 0 || bankPart < 0)) {
+      alert("Split payment amounts cannot be negative.");
       return;
     }
 
@@ -403,6 +434,24 @@ export default function Suppliers() {
         payment_date: paymentDate,
         amount: Math.round(amount),
         payment_method: paymentMethod,
+        cash_amount:
+          paymentMethod === "Split"
+            ? cashPart
+            : paymentMethod === "Cash"
+            ? Math.round(amount)
+            : 0,
+        upi_amount:
+          paymentMethod === "Split"
+            ? upiPart
+            : paymentMethod === "UPI"
+            ? Math.round(amount)
+            : 0,
+        bank_amount:
+          paymentMethod === "Split"
+            ? bankPart
+            : paymentMethod === "Bank"
+            ? Math.round(amount)
+            : 0,
         reference: paymentReference.trim() || null,
         remarks: paymentRemarks.trim() || null,
       };
@@ -566,12 +615,81 @@ export default function Suppliers() {
 
           <div>
             <label className="mb-1 block text-sm font-semibold text-slate-600">Payment Mode</label>
-            <select className="w-full rounded-lg border p-3" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+            <select
+              className="w-full rounded-lg border p-3"
+              value={paymentMethod}
+              onChange={(e) => {
+                const value = e.target.value;
+                setPaymentMethod(value);
+                if (value !== "Split") {
+                  setPaymentCashAmount("");
+                  setPaymentUpiAmount("");
+                  setPaymentBankAmount("");
+                }
+              }}
+            >
               <option value="Cash">Cash</option>
               <option value="UPI">UPI</option>
               <option value="Bank">Bank</option>
+              <option value="Split">Split Payment</option>
             </select>
           </div>
+
+          {paymentMethod === "Split" && (
+            <div className="md:col-span-2 rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <div className="mb-3 font-bold text-blue-900">Split Payment</div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-slate-600">Cash</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="w-full rounded-lg border p-3"
+                    value={paymentCashAmount}
+                    onChange={(e) => setPaymentCashAmount(e.target.value)}
+                    placeholder="Cash amount"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-slate-600">UPI</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="w-full rounded-lg border p-3"
+                    value={paymentUpiAmount}
+                    onChange={(e) => setPaymentUpiAmount(e.target.value)}
+                    placeholder="UPI amount"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-slate-600">Bank</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="w-full rounded-lg border p-3"
+                    value={paymentBankAmount}
+                    onChange={(e) => setPaymentBankAmount(e.target.value)}
+                    placeholder="Bank amount"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-lg bg-white p-3 font-bold text-slate-800">
+                Split Total: ₹{" "}
+                {(
+                  Number(paymentCashAmount || 0) +
+                  Number(paymentUpiAmount || 0) +
+                  Number(paymentBankAmount || 0)
+                ).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="mb-1 block text-sm font-semibold text-slate-600">Reference</label>
