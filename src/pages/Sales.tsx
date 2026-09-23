@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { jsPDF } from "jspdf";
@@ -90,12 +90,6 @@ function formatTypingDate(value: string) {
 function normalizeSaleDate(value: string | null | undefined) {
   if (!value) return getLocalDateString();
   return String(value).slice(0, 10);
-}
-
-function getPreviousDate(value: string) {
-  const date = new Date(`${value}T00:00:00`);
-  date.setDate(date.getDate() - 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 type Brand = {
@@ -225,7 +219,7 @@ upiValue: number = 0
 const itemLines = items
 .map((item, index) => {
 const pack = item.pack_size ? ` (${getPackDisplay(item.pack_size)})` : "";
-return `${index + 1}. ${item.product_name}${pack}\n   Qty: ${item.quantity}  Amount: ₹${item.amount.toFixed(2)}`;
+return `${index + 1}. ${item.product_name}${pack}\n   Qty: ${item.quantity}  Rate: ₹${item.rate.toFixed(2)}  Amount: ₹${item.amount.toFixed(2)}`;
 })
 .join("\n");
 
@@ -300,30 +294,6 @@ cu: "INR",
 return `upi://pay?${params.toString()}`;
 }
 
-function getSavedUpiPaymentUrl(sale: { balance_amount?: number | null }) {
-  const savedBalance = Math.max(0, Number(sale.balance_amount) || 0);
-  if (!businessUpiId.trim() || savedBalance <= 0) return "";
-
-  const params = new URLSearchParams({
-    pa: businessUpiId.trim(),
-    pn: "MANVI MILK AGENCIES",
-    am: savedBalance.toFixed(2),
-    cu: "INR",
-  });
-
-  return `upi://pay?${params.toString()}`;
-}
-
-function getUpiQrDataUrl(value: string) {
-  if (!value) return "";
-
-  const svg = renderToStaticMarkup(
-    <QRCodeSVG value={value} size={240} includeMargin />
-  );
-
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
-
 /* =========================================================
 PRODUCT ENTRY
 ========================================================= */
@@ -369,21 +339,13 @@ const [recentSales, setRecentSales] =
 useState<RecentSale[]>([]);
 
 /* =========================================================
-MISSED / LEFT-BEHIND CUSTOMERS
-Customers who do not have any saved sale for the
-currently selected sale date are shown here.
-========================================================= */
-const [missedCustomers, setMissedCustomers] =
-useState<Customer[]>([]);
-
-const [loadingMissedCustomers, setLoadingMissedCustomers] =
-useState(false);
-
-/* =========================================================
 LOADING
 ========================================================= */
 
 const [loading, setLoading] = useState(false);
+
+// Prevent a fast double-click from running the same save twice.
+const saveInProgressRef = useRef(false);
 
 const [loadingData, setLoadingData] =
 useState(true);
@@ -594,67 +556,6 @@ ascending: false,
 }
 
 /* =========================================================
-LOAD MISSED / LEFT-BEHIND CUSTOMERS
-
-A customer is considered missed when there is no saved
-sale for that customer on the selected sale date.
-Walk-in sales do not affect this list because they have
-no customer_id.
-========================================================= */
-async function loadMissedCustomers() {
-  if (!saleDate || customers.length === 0) {
-    setMissedCustomers([]);
-    return;
-  }
-
-  try {
-    setLoadingMissedCustomers(true);
-
-    const {
-      data: salesForDate,
-      error,
-    } = await supabase
-      .from("sales")
-      .select("customer_id")
-      .eq("sale_date", saleDate);
-
-    if (error) {
-      throw error;
-    }
-
-    const soldCustomerIds = new Set(
-      (salesForDate || [])
-        .map((sale: any) => String(sale.customer_id || ""))
-        .filter(Boolean)
-    );
-
-    const leftBehind = customers.filter(
-      (customer) => !soldCustomerIds.has(String(customer.id))
-    );
-
-    setMissedCustomers(leftBehind);
-  } catch (error: any) {
-    console.error(
-      "Missed customers error:",
-      error
-    );
-
-    setMissedCustomers([]);
-  } finally {
-    setLoadingMissedCustomers(false);
-  }
-}
-
-function selectMissedCustomer(customerIdToSelect: string) {
-  setCustomerId(customerIdToSelect);
-
-  window.scrollTo({
-    top: 0,
-    behavior: "smooth",
-  });
-}
-
-/* =========================================================
 INITIAL LOAD
 ========================================================= */
 
@@ -668,16 +569,6 @@ loadRecentSales();
 }
 }, [
 customers,
-loadingData,
-]);
-
-useEffect(() => {
-if (!loadingData) {
-loadMissedCustomers();
-}
-}, [
-customers,
-saleDate,
 loadingData,
 ]);
 
@@ -723,7 +614,7 @@ async function punchTodaysSale() {
         paid_amount
       `)
       .eq("customer_id", customerId)
-      .eq("sale_date", getPreviousDate(saleDate))
+      .lt("sale_date", saleDate)
       .order("sale_date", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -813,7 +704,9 @@ async function punchTodaysSale() {
       return;
     }
 
-    setSaleItems(validItems);
+    const uniqueItems = getUniqueSaleItems(validItems);
+
+    setSaleItems(uniqueItems);
     setPaymentMethod(previousSale.payment_method || "Cash");
     setPaidAmount("0");
     setCashAmount("0");
@@ -831,7 +724,7 @@ async function punchTodaysSale() {
     });
 
     alert(
-      `Yesterday's sale copied from ${formatDisplayDate(
+      `Today's sale prepared from ${formatDisplayDate(
         previousSale.sale_date
       )}.\n\nPlease check the quantities and press Save Sale.`
     );
@@ -951,7 +844,7 @@ try {
     error,
   } = await supabase
     .from("customer_prices")
-    .select("selling_rate")
+    .select("rate")
     .eq(
       "customer_id",
       customer
@@ -975,7 +868,9 @@ try {
     return null;
   }
 
-  const rate = Number(data.selling_rate);
+  const rate = Number(
+    data.rate
+  );
 
   if (
     !Number.isFinite(rate)
@@ -991,21 +886,23 @@ try {
 
 }
 
-async function saveCustomerRates(items: SaleItem[]) {
-  if (!customerId || items.length === 0) return;
+/* =========================================================
+ENSURE ONE LINE PER PRODUCT
+A sale must never contain the same product twice.
+This also protects "Punch Today's Sale" if an older
+sale already contains duplicate product rows.
+========================================================= */
 
-  const { error } = await supabase
-    .from("customer_prices")
-    .upsert(
-      items.map((item) => ({
-        customer_id: customerId,
-        product_id: item.product_id,
-        selling_rate: Number(item.rate),
-      })),
-      { onConflict: "customer_id,product_id" }
-    );
+function getUniqueSaleItems(items: SaleItem[]) {
+  const byProduct = new Map<string, SaleItem>();
 
-  if (error) throw error;
+  for (const item of items) {
+    if (!byProduct.has(item.product_id)) {
+      byProduct.set(item.product_id, item);
+    }
+  }
+
+  return Array.from(byProduct.values());
 }
 
 /* =========================================================
@@ -1489,6 +1386,10 @@ SAVE NEW SALE
 ========================================================= */
 
 async function saveSale() {
+if (saveInProgressRef.current) {
+  return;
+}
+
 if (
 saleItems.length === 0
 ) {
@@ -1505,48 +1406,45 @@ if (!customerId) {
   return;
 }
 
-if (totalSale <= 0) {
-  alert(
-    "Sale total must be greater than zero."
-  );
-  return;
-}
-
-if (paid < 0) {
-  alert(
-    "Paid amount cannot be negative."
-  );
-  return;
-}
-
-if (paid > totalSale) {
-  alert(
-    "Paid amount cannot be greater than total sale."
-  );
-  return;
-}
-
-const productQuantities = new Map<string, number>();
-for (const item of saleItems) {
-  if (productQuantities.has(item.product_id)) {
-    alert(`Duplicate product in sale: ${item.product_name}`);
-    return;
-  }
-  productQuantities.set(item.product_id, Number(item.quantity));
-}
-
-if (paymentMethod === "Split" && cashPaid < 0) {
-  alert("Cash amount cannot be negative.");
-  return;
-}
-
-if (paymentMethod === "Split" && upiPaid < 0) {
-  alert("UPI amount cannot be negative.");
-  return;
-}
-
 try {
+  saveInProgressRef.current = true;
   setLoading(true);
+
+  /* =====================================================
+     NORMALIZE SALE ITEMS
+     Same product is allowed only once in a sale.
+     This also protects "Punch Today's Sale" when an
+     older sale contains duplicate product rows.
+     ===================================================== */
+
+  const uniqueSaleItems = getUniqueSaleItems(saleItems);
+
+  if (uniqueSaleItems.length !== saleItems.length) {
+    setSaleItems(uniqueSaleItems);
+  }
+
+  const saleTotalForSave = uniqueSaleItems.reduce(
+    (sum, item) => sum + Number(item.amount || 0),
+    0
+  );
+
+  const salePaidForSave =
+    paymentMethod === "Split"
+      ? cashPaid + upiPaid
+      : Math.max(0, Number(paidAmount) || 0);
+
+  const saleBalanceForSave = Math.max(
+    0,
+    saleTotalForSave - salePaidForSave
+  );
+
+  if (saleTotalForSave <= 0) {
+    throw new Error("Sale total must be greater than zero.");
+  }
+
+  if (salePaidForSave > saleTotalForSave) {
+    throw new Error("Paid amount cannot be greater than total sale.");
+  }
 
   /* =====================================================
      IF EDITING SAVED SALE
@@ -1565,7 +1463,7 @@ try {
      ===================================================== */
 
   for (
-    const item of saleItems
+    const item of uniqueSaleItems
   ) {
     const product =
       products.find(
@@ -1596,8 +1494,6 @@ try {
     }
   }
 
-  await saveCustomerRates(saleItems);
-
   /* =====================================================
      INSERT SALE HEADER
      ===================================================== */
@@ -1618,19 +1514,19 @@ try {
         paymentMethod,
 
       total_amount:
-        totalSale,
+        saleTotalForSave,
 
       paid_amount:
-        paid,
+        salePaidForSave,
 
       balance_amount:
-        balance,
+        saleBalanceForSave,
 
       cash_amount:
-        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? salePaidForSave : 0,
 
       upi_amount:
-        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
+        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? salePaidForSave : 0,
     })
     .select()
     .single();
@@ -1650,7 +1546,7 @@ try {
      ===================================================== */
 
   const itemsToInsert =
-    saleItems.map(
+    uniqueSaleItems.map(
       (item) => ({
         sale_id:
           sale.id,
@@ -1682,6 +1578,14 @@ try {
 
   if (itemError) {
     await supabase
+      .from("sale_items")
+      .delete()
+      .eq(
+        "sale_id",
+        sale.id
+      );
+
+    await supabase
       .from("sales")
       .delete()
       .eq(
@@ -1692,29 +1596,114 @@ try {
     throw itemError;
   }
 
-  const { data: savedItems, error: verificationError } = await supabase
-    .from("sale_items")
-    .select("product_id, quantity, rate, amount")
-    .eq("sale_id", sale.id);
+  /* =====================================================
+     VERIFY INSERTED ITEMS
+     Never update stock unless the database contains exactly
+     the same number of unique product lines that we intended
+     to save. This protects against duplicate sale_items.
+     ===================================================== */
 
-  if (verificationError) throw verificationError;
+  const {
+    data: savedItems,
+    error: verifyItemsError,
+  } = await supabase
+    .from("sale_items")
+    .select("id, product_id, quantity, amount")
+    .eq(
+      "sale_id",
+      sale.id
+    );
+
+  if (verifyItemsError) {
+    await supabase
+      .from("sale_items")
+      .delete()
+      .eq(
+        "sale_id",
+        sale.id
+      );
+
+    await supabase
+      .from("sales")
+      .delete()
+      .eq(
+        "id",
+        sale.id
+      );
+
+    throw verifyItemsError;
+  }
+
+  const expectedItemCount =
+    uniqueSaleItems.length;
+
+  const actualItemCount =
+    (savedItems || []).length;
+
+  const actualProductIds =
+    new Set(
+      (savedItems || []).map(
+        (item: any) =>
+          String(item.product_id)
+      )
+    );
+
+  const expectedAmount =
+    saleTotalForSave;
+
+  const actualAmount =
+    (savedItems || []).reduce(
+      (sum: number, item: any) =>
+        sum + Number(item.amount || 0),
+      0
+    );
+
+  const amountsMatch =
+    Math.abs(
+      actualAmount -
+        expectedAmount
+    ) < 0.01;
 
   if (
-    savedItems?.length !== saleItems.length ||
-    new Set(savedItems.map((item: any) => item.product_id)).size !== saleItems.length
+    actualItemCount !==
+      expectedItemCount ||
+    actualProductIds.size !==
+      expectedItemCount ||
+    !amountsMatch
   ) {
-    throw new Error("Sale items verification failed. Duplicate or missing items were detected.");
+    await supabase
+      .from("sale_items")
+      .delete()
+      .eq(
+        "sale_id",
+        sale.id
+      );
+
+    await supabase
+      .from("sales")
+      .delete()
+      .eq(
+        "id",
+        sale.id
+      );
+
+    throw new Error(
+      `Sale item verification failed. Expected ${expectedItemCount} item(s) totaling ₹${expectedAmount.toFixed(2)}, but database contains ${actualItemCount} item(s) totaling ₹${actualAmount.toFixed(2)}. Sale was cancelled and stock was not changed.`
+    );
   }
 
   /* =====================================================
      UPDATE STOCK
      ===================================================== */
 
-  for (const [productId, quantityToDeduct] of productQuantities) {
+  for (
+    const item of uniqueSaleItems
+  ) {
     const product =
       products.find(
         (p) =>
-          p.id === productId
+          p.id ===
+          item.product_id
       );
 
     if (!product) {
@@ -1726,13 +1715,17 @@ try {
         product.stock_qty
       ) || 0;
 
-    const newStock = oldStock - quantityToDeduct;
+    const newStock =
+      oldStock -
+      Number(
+        item.quantity
+      );
 
     if (
       newStock < 0
     ) {
       throw new Error(
-        `Insufficient stock for ${product.product_name}.`
+        `Insufficient stock for ${item.product_name}.`
       );
     }
 
@@ -1747,7 +1740,7 @@ try {
       })
       .eq(
         "id",
-        productId
+        item.product_id
       );
 
     if (stockError) {
@@ -1764,7 +1757,6 @@ try {
   await loadData();
 
   await loadRecentSales();
-  await loadMissedCustomers();
 } catch (error: any) {
   console.error(
     "Save sale error:",
@@ -1777,6 +1769,7 @@ try {
         "Unable to save sale.")
   );
 } finally {
+  saveInProgressRef.current = false;
   setLoading(false);
 }
 
@@ -1810,14 +1803,6 @@ GET OLD SALE ITEMS
 
   if (oldItemsError) {
     throw oldItemsError;
-  }
-
-  const editedProductIds = new Set<string>();
-  for (const item of saleItems) {
-    if (editedProductIds.has(item.product_id)) {
-      throw new Error(`Duplicate product in sale: ${item.product_name}`);
-    }
-    editedProductIds.add(item.product_id);
   }
 
   /* =====================================================
@@ -1919,50 +1904,37 @@ GET OLD SALE ITEMS
     }
   }
 
-  const { data: existingSale, error: existingSaleError } = await supabase
-    .from("sales")
-    .select("sale_date, sale_no")
-    .eq("id", saleId)
-    .single();
+  /* =====================================================
+     UPDATE STOCK
+     ===================================================== */
 
-  if (existingSaleError) {
-    throw existingSaleError;
-  }
+  /*
+   * First restore old stock in database.
+   */
+  for (
+    const [
+      productId,
+      restoredStock,
+    ] of stockMap
+  ) {
+    const {
+      error:
+        restoreError,
+    } = await supabase
+      .from("products")
+      .update({
+        stock_qty:
+          restoredStock,
+      })
+      .eq(
+        "id",
+        productId
+      );
 
-  const headerUpdate: Record<string, unknown> = {
-    sale_date: saleDate,
-    customer_id: customerId,
-    payment_method: paymentMethod,
-    total_amount: totalSale,
-    paid_amount: paid,
-    balance_amount: balance,
-    cash_amount: paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
-    upi_amount: paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
-  };
-
-  if (normalizeSaleDate(existingSale.sale_date) !== saleDate) {
-    const { data: salesOnTargetDate, error: targetDateError } = await supabase
-      .from("sales")
-      .select("sale_no")
-      .eq("sale_date", saleDate)
-      .neq("id", saleId);
-
-    if (targetDateError) {
-      throw targetDateError;
+    if (restoreError) {
+      throw restoreError;
     }
-
-    const highestSaleNo = (salesOnTargetDate || []).reduce(
-      (highest: number, sale: any) => {
-        const saleNo = Number(sale.sale_no);
-        return Number.isFinite(saleNo) ? Math.max(highest, saleNo) : highest;
-      },
-      0
-    );
-
-    headerUpdate.sale_no = highestSaleNo + 1;
   }
-
-  await saveCustomerRates(saleItems);
 
   /* =====================================================
      UPDATE SALE HEADER
@@ -1973,7 +1945,31 @@ GET OLD SALE ITEMS
       saleUpdateError,
   } = await supabase
     .from("sales")
-    .update(headerUpdate)
+    .update({
+      sale_date:
+        saleDate,
+
+      customer_id:
+        customerId,
+
+      payment_method:
+        paymentMethod,
+
+      total_amount:
+        totalSale,
+
+      paid_amount:
+        paid,
+
+      balance_amount:
+        balance,
+
+      cash_amount:
+        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
+
+      upi_amount:
+        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
+    })
     .eq(
       "id",
       saleId
@@ -1984,73 +1980,67 @@ GET OLD SALE ITEMS
   }
 
   /* =====================================================
-     UPDATE EXISTING ITEMS / INSERT NEW ITEMS
+     DELETE OLD ITEMS
      ===================================================== */
 
-  const existingItemsByProduct = new Map(
-    (oldItems || []).map((item: any) => [item.product_id, item])
-  );
-  const currentProductIds = new Set<string>();
-
-  for (const item of saleItems) {
-    currentProductIds.add(item.product_id);
-
-    const itemValues = {
-      sale_id: saleId,
-      product_id: item.product_id,
-      quantity: item.quantity,
-      rate: item.rate,
-      amount: item.amount,
-      cost_rate: Number(item.purchase_rate || 0),
-    };
-    const existingItem = existingItemsByProduct.get(item.product_id);
-
-    const { error: itemSaveError } = existingItem
-      ? await supabase
-          .from("sale_items")
-          .update(itemValues)
-          .eq("id", existingItem.id)
-      : await supabase
-          .from("sale_items")
-          .insert(itemValues);
-
-    if (itemSaveError) {
-      throw itemSaveError;
-    }
-  }
-
-  const removedItemIds = (oldItems || [])
-    .filter((item: any) => !currentProductIds.has(item.product_id))
-    .map((item: any) => item.id)
-    .filter(Boolean);
-
-  if (removedItemIds.length > 0) {
-    const { error: deleteItemsError } = await supabase
-      .from("sale_items")
-      .delete()
-      .in("id", removedItemIds);
-
-    if (deleteItemsError) {
-      throw deleteItemsError;
-    }
-  }
-
-  const { data: verifiedItems, error: verificationError } = await supabase
+  const {
+    error:
+      deleteItemsError,
+  } = await supabase
     .from("sale_items")
-    .select("product_id")
-    .eq("sale_id", saleId);
+    .delete()
+    .eq(
+      "sale_id",
+      saleId
+    );
 
-  if (verificationError) throw verificationError;
-  if (
-    verifiedItems?.length !== saleItems.length ||
-    new Set(verifiedItems.map((item: any) => item.product_id)).size !== saleItems.length
-  ) {
-    throw new Error("Sale items verification failed. Duplicate or missing items were detected.");
+  if (deleteItemsError) {
+    throw deleteItemsError;
   }
 
-    /* =====================================================
-      APPLY FINAL STOCK ONCE PER PRODUCT
-      ===================================================== */
+  /* =====================================================
+     INSERT NEW ITEMS
+     ===================================================== */
+
+  const itemsToInsert =
+    saleItems.map(
+      (item) => ({
+        sale_id:
+          saleId,
+
+        product_id:
+          item.product_id,
+
+        quantity:
+          item.quantity,
+
+        rate:
+          item.rate,
+
+        amount:
+          item.amount,
+
+        cost_rate:
+          Number(item.purchase_rate || 0),
+      })
+    );
+
+  const {
+    error:
+      insertItemsError,
+  } = await supabase
+    .from("sale_items")
+    .insert(
+      itemsToInsert
+    );
+
+  if (insertItemsError) {
+    throw insertItemsError;
+  }
+
+  /* =====================================================
+     APPLY NEW STOCK
+     ===================================================== */
 
   for (
     const [
@@ -2103,7 +2093,6 @@ GET OLD SALE ITEMS
   await loadData();
 
   await loadRecentSales();
-  await loadMissedCustomers();
 } catch (error: any) {
   console.error(
     "Update sale error:",
@@ -2301,7 +2290,7 @@ setLoading(true);
     );
 
   setSaleItems(
-    convertedItems
+    getUniqueSaleItems(convertedItems)
   );
 
   setEditingItemIndex(
@@ -2330,60 +2319,17 @@ setLoading(true);
 }
 
 /* =========================================================
-BILL SETTINGS
-The information saved in Settings is loaded every time a bill
-is generated/printed so the latest business details appear on
-the bill automatically.
-========================================================= */
-async function loadBillSettings() {
-  const { data, error } = await supabase
-    .from("settings")
-    .select("*")
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Bill settings error:", error);
-    // Bills can still be generated with the business-name fallback.
-    return null;
-  }
-
-  return (data || null) as any;
-}
-
-function getBillSetting(settings: any, keys: string[], fallback = "") {
-  for (const key of keys) {
-    const value = settings?.[key];
-    if (value !== null && value !== undefined && String(value).trim() !== "") {
-      return String(value).trim();
-    }
-  }
-  return fallback;
-}
-
-function getBillCurrencySymbol(currency: string) {
-  const value = String(currency || "").trim();
-  if (!value) return "₹";
-  // jsPDF's built-in Helvetica font does not reliably render the ₹ glyph.
-  // Use the printable ASCII form on PDF bills so amounts stay aligned.
-  if (value.includes("₹") || value.toUpperCase() === "INR" || value.toUpperCase().includes("INDIAN RUPEE")) {
-    return "Rs.";
-  }
-  return value;
-}
-
-/* =========================================================
 GENERATE SAVED BILL PDF
 ========================================================= */
 async function generateSavedBillPdf(saleId: string): Promise<File | null> {
   try {
     setLoading(true);
 
-    const [{ data: sale, error: saleError }, { data: items, error: itemsError }, settings] =
+    const [{ data: sale, error: saleError }, { data: items, error: itemsError }] =
       await Promise.all([
         supabase
           .from("sales")
-          .select("id, sale_no, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
+          .select("id, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
           .eq("id", saleId)
           .single(),
         supabase
@@ -2391,7 +2337,6 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
           .select("product_id, quantity, rate, amount")
           .eq("sale_id", saleId)
           .order("id", { ascending: true }),
-        loadBillSettings(),
       ]);
 
     if (saleError) throw saleError;
@@ -2400,65 +2345,34 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
 
     const customer = customers.find((c) => c.id === sale.customer_id);
     const customerName = customer?.customer_name || "Walk-in";
-
-    const businessName = getBillSetting(settings, ["business_name", "businessName", "name"], "MANVI MILK AGENCIES");
-    const mobile = getBillSetting(settings, ["mobile", "phone", "business_mobile", "whatsapp_number", "whatsappNumber"]);
-    const email = getBillSetting(settings, ["email", "business_email"]);
-    const address = getBillSetting(settings, ["business_address", "address", "businessAddress"]);
-    const billPrefix = getBillSetting(settings, ["bill_prefix", "invoice_prefix", "billPrefix", "invoicePrefix"], "INV");
-    const currency = getBillCurrencySymbol(getBillSetting(settings, ["currency"], "INR"));
-    const footer = getBillSetting(settings, ["invoice_footer", "bill_footer", "footer"], "Thank you for your business.");
-    const billNo = String(sale.sale_no || `${billPrefix}${String(sale.id).slice(0, 8).toUpperCase()}`);
-
     const doc = new jsPDF({ unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
-    const left = 15;
-    const right = pageWidth - left;
+    const left = 14;
     let y = 16;
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
-    doc.text(businessName, pageWidth / 2, y, { align: "center" });
-    y += 7;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    if (mobile) {
-      doc.text(`Mobile: ${mobile}`, pageWidth / 2, y, { align: "center" });
-      y += 5;
-    }
-    if (email) {
-      doc.text(`Email: ${email}`, pageWidth / 2, y, { align: "center" });
-      y += 5;
-    }
-    if (address) {
-      const addressLines = doc.splitTextToSize(address, pageWidth - left * 2);
-      doc.text(addressLines, pageWidth / 2, y, { align: "center" });
-      y += Math.max(5, addressLines.length * 4);
-    }
-
-    doc.setFont("helvetica", "bold");
+    doc.text("MANVI MILK AGENCIES", pageWidth / 2, y, { align: "center" });
+    y += 8;
     doc.setFontSize(12);
-    doc.text("BILL", pageWidth / 2, y + 2, { align: "center" });
+    doc.text("BILL", pageWidth / 2, y, { align: "center" });
     y += 10;
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.text(`Bill No: ${billNo}`, left, y);
-    doc.text(`Date: ${formatDisplayDate(sale.sale_date)}`, right, y, { align: "right" });
-    y += 7;
     doc.text(`Customer: ${customerName}`, left, y);
+    doc.text(`Date: ${formatDisplayDate(sale.sale_date)}`, pageWidth - left, y, { align: "right" });
     y += 7;
 
     const method = String(sale.payment_method || "Cash");
     doc.text(`Payment: ${method}`, left, y);
     y += 7;
     if (method === "Split") {
-      doc.text(`${currency} Cash: ${Number(sale.cash_amount || 0).toFixed(2)}    ${currency} UPI: ${Number(sale.upi_amount || 0).toFixed(2)}`, left, y);
+      doc.text(`Cash: Rs. ${Number(sale.cash_amount || 0).toFixed(2)}    UPI: Rs. ${Number(sale.upi_amount || 0).toFixed(2)}`, left, y);
       y += 7;
     }
 
-    const cols = [left, 28, 145, right];
+    const cols = [left, 25, 125, 196];
     const headers = ["#", "Product", "Qty", "Amount"];
     doc.setFillColor(235, 242, 255);
     doc.rect(left, y - 5, pageWidth - left * 2, 8, "F");
@@ -2475,7 +2389,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
       const product = products.find((p) => p.id === item.product_id);
       const name = String(product?.product_name || "Product");
       const pack = product?.pack_size ? ` (${String(product.pack_size)})` : "";
-      const lines = doc.splitTextToSize(name + pack, 108);
+      const lines = doc.splitTextToSize(name + pack, 75);
       if (y > 270) {
         doc.addPage();
         y = 18;
@@ -2483,7 +2397,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
       doc.text(String(i + 1), cols[0], y);
       doc.text(lines, cols[1], y);
       doc.text(Number(item.quantity || 0).toFixed(2).replace(/\.00$/, ""), cols[2], y, { align: "right" });
-      doc.text(`${currency} ${Number(item.amount || 0).toFixed(2)}`, cols[3], y, { align: "right" });
+      doc.text(`Rs. ${Number(item.amount || 0).toFixed(2)}`, cols[3], y, { align: "right" });
       y += Math.max(6, lines.length * 5);
     }
 
@@ -2491,26 +2405,15 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
     doc.line(left, y, pageWidth - left, y);
     y += 8;
     doc.setFont("helvetica", "bold");
-    doc.text(`TOTAL: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}`, right, y, { align: "right" });
+    doc.text(`TOTAL: Rs. ${Number(sale.total_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
     y += 7;
     doc.setFont("helvetica", "normal");
-    doc.text(`PAID: ${currency} ${Number(sale.paid_amount || 0).toFixed(2)}`, right, y, { align: "right" });
+    doc.text(`PAID: Rs. ${Number(sale.paid_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
     y += 7;
-    doc.text(`BALANCE: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}`, right, y, { align: "right" });
+    doc.text(`BALANCE: Rs. ${Number(sale.balance_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
     y += 14;
-
-    const savedUpiUrl = getSavedUpiPaymentUrl(sale);
-    if (savedUpiUrl) {
-      const qrDataUrl = getUpiQrDataUrl(savedUpiUrl);
-      doc.setFont("helvetica", "bold");
-      doc.text("Scan to pay balance", left, y);
-      doc.addImage(qrDataUrl, "SVG", left, y + 3, 35, 35);
-      y += 42;
-    }
-
     doc.setFontSize(9);
-    const footerLines = doc.splitTextToSize(footer, pageWidth - left * 2);
-    doc.text(footerLines, pageWidth / 2, y, { align: "center" });
+    doc.text("Thank you for your business.", pageWidth / 2, y, { align: "center" });
 
     const safeCustomer = customerName.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "") || "Customer";
     const fileName = `MANVI_BILL_${safeCustomer}_${String(sale.sale_date).slice(0, 10)}.pdf`;
@@ -2552,14 +2455,33 @@ async function shareSavedBillPdf(saleId: string) {
 PRINT SAVED BILL
 ========================================================= */
 async function printSavedBill(saleId: string) {
+  let printWindow: Window | null = null;
+
   try {
+    /*
+     * Open the print window immediately on the user's click.
+     * This prevents the browser from treating it as a blocked popup
+     * after the Supabase requests finish.
+     */
+    printWindow = window.open("", "_blank");
+
+    if (!printWindow) {
+      throw new Error("Popup blocked. Please allow popups for MANVI ERP.");
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(
+      `<!doctype html><html><head><title>MANVI BILL</title></head><body style="font-family:Arial;padding:24px"><p>Preparing bill...</p></body></html>`
+    );
+    printWindow.document.close();
+
     setLoading(true);
 
     const [{ data: sale, error: saleError }, { data: items, error: itemsError }] =
       await Promise.all([
         supabase
           .from("sales")
-          .select("id, sale_no, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
+          .select("id, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
           .eq("id", saleId)
           .single(),
         supabase
@@ -2573,17 +2495,8 @@ async function printSavedBill(saleId: string) {
     if (itemsError) throw itemsError;
     if (!sale) throw new Error("Sale not found.");
 
-    const settings = await loadBillSettings();
     const customer = customers.find((c) => c.id === sale.customer_id);
     const customerName = customer?.customer_name || "Walk-in";
-    const businessName = getBillSetting(settings, ["business_name", "businessName", "name"], "MANVI MILK AGENCIES");
-    const mobile = getBillSetting(settings, ["mobile", "phone", "business_mobile", "whatsapp_number", "whatsappNumber"]);
-    const email = getBillSetting(settings, ["email", "business_email"]);
-    const address = getBillSetting(settings, ["business_address", "address", "businessAddress"]);
-    const billPrefix = getBillSetting(settings, ["bill_prefix", "invoice_prefix", "billPrefix", "invoicePrefix"], "INV");
-    const currency = getBillCurrencySymbol(getBillSetting(settings, ["currency"], "INR"));
-    const footer = getBillSetting(settings, ["invoice_footer", "bill_footer", "footer"], "Thank you for your business.");
-    const billNo = String(sale.sale_no || `${billPrefix}${String(sale.id).slice(0, 8).toUpperCase()}`);
     const safe = (value: unknown) =>
       String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -2608,34 +2521,88 @@ async function printSavedBill(saleId: string) {
     const splitHtml = method === "Split"
       ? `<div>Cash: ₹ ${Number(sale.cash_amount || 0).toFixed(2)} &nbsp; | &nbsp; UPI: ₹ ${Number(sale.upi_amount || 0).toFixed(2)}</div>`
       : "";
-    const savedUpiUrl = getSavedUpiPaymentUrl(sale);
-    const upiQrHtml = savedUpiUrl
-      ? `<div style="margin-top:18px;text-align:center"><strong>Scan to pay balance</strong><br><img src="${safe(getUpiQrDataUrl(savedUpiUrl))}" width="180" height="180" alt="UPI payment QR"></div>`
+
+    /* =====================================================
+       BILL UPI QR
+       The QR is generated as inline SVG, so it is embedded in
+       the printed bill and does not depend on an external image.
+       It uses the outstanding balance of this saved sale.
+       ===================================================== */
+    const billBalance = Number(sale.balance_amount || 0);
+    let printQrSvg = "";
+
+    if (businessUpiId.trim() && billBalance > 0) {
+      const billUpiUrl = `upi://pay?${new URLSearchParams({
+        pa: businessUpiId.trim(),
+        pn: "MANVI MILK AGENCIES",
+        am: billBalance.toFixed(2),
+        cu: "INR",
+      }).toString()}`;
+
+      printQrSvg = renderToStaticMarkup(
+        <QRCodeSVG
+          value={billUpiUrl}
+          size={180}
+          includeMargin
+        />
+      );
+    }
+
+    const upiHtml = printQrSvg
+      ? `<div class="upi">
+          <div><strong>SCAN &amp; PAY VIA UPI</strong></div>
+          <div class="qr">${printQrSvg}</div>
+          <div>UPI ID: ${safe(businessUpiId)}</div>
+          <div>Amount: ₹ ${billBalance.toFixed(2)}</div>
+        </div>`
       : "";
 
     const html = `<!doctype html><html><head><title>MANVI BILL</title>
       <style>
-        body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{text-align:center;margin:0 0 4px}h2{text-align:center;margin:0 0 18px;font-size:16px} .meta{margin-bottom:16px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#f1f5f9}td:nth-child(1),td:nth-child(4){text-align:center}td:nth-child(5){text-align:right}.totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}.grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}.footer{text-align:center;margin-top:28px;font-size:13px;color:#555}@media print{body{padding:8px}}
+        body{font-family:Arial,sans-serif;padding:24px;color:#111}
+        h1{text-align:center;margin:0 0 4px}
+        h2{text-align:center;margin:0 0 18px;font-size:16px}
+        .meta{margin-bottom:16px;line-height:1.7}
+        table{width:100%;border-collapse:collapse}
+        th,td{border:1px solid #ccc;padding:8px;text-align:left}
+        th{background:#f1f5f9}
+        td:nth-child(1),td:nth-child(3){text-align:center}
+        td:nth-child(4){text-align:right}
+        .totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}
+        .grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}
+        .upi{text-align:center;margin-top:22px;border-top:1px solid #ccc;padding-top:16px}
+        .qr{margin:10px auto;width:180px;height:180px;display:flex;align-items:center;justify-content:center}
+        .qr svg{width:180px;height:180px}
+        .footer{text-align:center;margin-top:28px;font-size:13px;color:#555}
+        @media print{body{padding:8px}}
       </style></head><body>
-      <h1>${safe(businessName)}</h1>
-      ${mobile ? `<div style="text-align:center">Mobile: ${safe(mobile)}</div>` : ""}
-      ${email ? `<div style="text-align:center">Email: ${safe(email)}</div>` : ""}
-      ${address ? `<div style="text-align:center;margin-bottom:8px">${safe(address)}</div>` : ""}
-      <h2>BILL</h2>
-      <div class="meta"><strong>Bill No:</strong> ${safe(billNo)}<br><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
+      <h1>MANVI MILK AGENCIES</h1><h2>BILL</h2>
+      <div class="meta"><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
       <table><thead><tr><th>#</th><th>Product</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="totals"><div>Total: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ${currency} ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ${currency} ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ${currency} ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
-      ${upiQrHtml}
-      <div class="footer">${safe(footer)}</div>
-      <script>window.onload=function(){window.print();}</script></body></html>`;
+      <div class="totals">
+        <div>Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div>
+        <div>Paid: ₹ ${Number(sale.paid_amount || 0).toFixed(2)}</div>
+        <div>Balance: ₹ ${Number(sale.balance_amount || 0).toFixed(2)}</div>
+        <div class="grand">Net Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div>
+      </div>
+      ${upiHtml}
+      <div class="footer">Thank you for your business.</div>
+      <script>
+        window.onload=function(){
+          setTimeout(function(){ window.print(); }, 150);
+        };
+      </script></body></html>`;
 
-    const printWindow = window.open("", "_blank", "noopener,noreferrer");
-    if (!printWindow) throw new Error("Popup blocked. Please allow popups for MANVI ERP.");
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
   } catch (error: any) {
     console.error("Print bill error:", error);
+
+    if (printWindow && !printWindow.closed) {
+      printWindow.close();
+    }
+
     alert("Unable to open bill:\n" + (error?.message || "Unknown error"));
   } finally {
     setLoading(false);
@@ -2802,7 +2769,6 @@ try {
   await loadData();
 
   await loadRecentSales();
-  await loadMissedCustomers();
 } catch (error: any) {
   console.error(
     "Delete sale error:",
@@ -2932,11 +2898,11 @@ return (
             onClick={punchTodaysSale}
             className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
           >
-            Copy Yesterday's Sale
+            ⚡ Punch Today's Sale
           </button>
 
           <p className="mt-2 text-sm text-gray-500">
-            Copies this customer's sale from the day before the selected date. Check quantities before saving.
+            Loads the customer's last sale for today's entry. Check quantities before saving.
           </p>
         </div>
       )}
@@ -3702,103 +3668,6 @@ return (
   </div>
 
   {/* =====================================================
-      MISSED / LEFT-BEHIND CUSTOMERS
-  ===================================================== */}
-
-  <div className="bg-white rounded-2xl shadow p-6">
-
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-5">
-
-      <div>
-        <h2 className="text-2xl font-bold text-red-600">
-          Customers Left Behind
-        </h2>
-
-        <p className="text-gray-500 mt-1">
-          Customers with no saved sale for {formatDisplayDate(saleDate)}.
-        </p>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <span className="rounded-full bg-red-100 px-4 py-2 font-bold text-red-700">
-          {missedCustomers.length} Missed
-        </span>
-
-        <button
-          type="button"
-          onClick={loadMissedCustomers}
-          disabled={loadingMissedCustomers || loadingData}
-          className="rounded-lg bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700 disabled:bg-gray-400"
-        >
-          {loadingMissedCustomers ? "Checking..." : "Refresh"}
-        </button>
-      </div>
-
-    </div>
-
-    {loadingMissedCustomers ? (
-      <div className="rounded-xl bg-gray-50 p-6 text-center text-gray-500">
-        Checking customers for this date...
-      </div>
-    ) : missedCustomers.length === 0 ? (
-      <div className="rounded-xl border border-green-200 bg-green-50 p-6 text-center">
-        <div className="text-lg font-bold text-green-700">
-          ✓ No customer left behind
-        </div>
-        <p className="mt-1 text-green-600">
-          Every customer has a saved sale for {formatDisplayDate(saleDate)}.
-        </p>
-      </div>
-    ) : (
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {missedCustomers.map((customer) => (
-          <div
-            key={customer.id}
-            className="rounded-xl border-2 border-red-100 bg-red-50 p-4"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-bold text-gray-900 truncate">
-                  {customer.customer_name}
-                </div>
-
-                {customer.route ? (
-                  <div className="mt-1 text-sm font-medium text-blue-700">
-                    Route: {customer.route}
-                  </div>
-                ) : (
-                  <div className="mt-1 text-sm text-gray-500">
-                    Route: Not set
-                  </div>
-                )}
-
-                {customer.mobile ? (
-                  <div className="mt-1 text-sm text-gray-600">
-                    Mobile: {customer.mobile}
-                  </div>
-                ) : null}
-              </div>
-
-              <span className="shrink-0 rounded-full bg-red-600 px-2 py-1 text-xs font-bold text-white">
-                MISSED
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => selectMissedCustomer(customer.id)}
-              className="mt-4 w-full rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700"
-            >
-              Select Customer / Punch Sale
-            </button>
-          </div>
-        ))}
-      </div>
-    )}
-
-  </div>
-
-  {/* =====================================================
       RECENT SALES
   ===================================================== */}
 
@@ -3939,29 +3808,12 @@ return (
                       <button
                         type="button"
                         disabled={loading}
-                        onClick={() => void generateSavedBillPdf(sale.id)}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
-                      >
-                        📄 Generate Bill
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={loading}
                         onClick={() => void shareSavedBillPdf(sale.id)}
                         className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
                       >
                         📲 WhatsApp PDF
                       </button>
 
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => void printSavedBill(sale.id)}
-                        className="bg-gray-700 hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
-                      >
-                        🖨️ Print
-                      </button>
 
                       <button
                         type="button"
