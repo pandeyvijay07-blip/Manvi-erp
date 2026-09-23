@@ -6,7 +6,6 @@ import {
 } from "react-router-dom";
 
 import {
-  ReactNode,
   useEffect,
   useState,
 } from "react";
@@ -32,6 +31,7 @@ import WalkInSales from "./pages/WalkInSales";
 
 import Collections from "./pages/Collections";
 import Expenses from "./pages/Expenses";
+import PersonalExpenses from "./pages/PersonalExpenses";
 
 import Reports from "./pages/Reports";
 import CustomerLedger from "./pages/CustomerLedger";
@@ -58,30 +58,6 @@ type CurrentUser = {
   role: string;
   active: boolean;
 };
-
-type RoleGuardProps = {
-  allowedForEmployee?: boolean;
-  isOwner: boolean;
-  children: ReactNode;
-};
-
-function RoleGuard({
-  allowedForEmployee = false,
-  isOwner,
-  children,
-}: RoleGuardProps) {
-  if (isOwner || allowedForEmployee) {
-    return <>{children}</>;
-  }
-
-  return (
-    <Navigate
-      to="/"
-      replace
-    />
-  );
-}
-
 
 // =====================================================
 // PROTECTED APP
@@ -508,20 +484,12 @@ function ProtectedApp() {
 
         <Route
           path="/purchases"
-          element={
-            <RoleGuard isOwner={isOwner}>
-              <Purchases />
-            </RoleGuard>
-          }
+          element={<Purchases />}
         />
 
         <Route
           path="/suppliers"
-          element={
-            <RoleGuard isOwner={isOwner}>
-              <Suppliers />
-            </RoleGuard>
-          }
+          element={<Suppliers />}
         />
 
         <Route
@@ -541,11 +509,12 @@ function ProtectedApp() {
 
         <Route
           path="/expenses"
-          element={
-            <RoleGuard isOwner={isOwner}>
-              <Expenses />
-            </RoleGuard>
-          }
+          element={<Expenses />}
+        />
+
+        <Route
+          path="/personal-expenses"
+          element={<PersonalExpenses />}
         />
 
         {/* ============================================
@@ -554,11 +523,7 @@ function ProtectedApp() {
 
         <Route
           path="/reports"
-          element={
-            <RoleGuard isOwner={isOwner}>
-              <Reports />
-            </RoleGuard>
-          }
+          element={<Reports />}
         />
 
         <Route
@@ -568,11 +533,7 @@ function ProtectedApp() {
 
         <Route
           path="/daily-closing"
-          element={
-            <RoleGuard isOwner={isOwner}>
-              <DailyClosing />
-            </RoleGuard>
-          }
+          element={<DailyClosing />}
         />
 
         {/* ============================================
