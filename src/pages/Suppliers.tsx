@@ -21,6 +21,7 @@ type PurchaseRow = {
   total_amount: number | string | null;
   paid_amount: number | string | null;
   balance_amount: number | string | null;
+  created_at?: string | null;
 };
 
 type SupplierPayment = {
@@ -35,6 +36,7 @@ type SupplierPayment = {
   reference: string;
   remarks: string;
   supplier_name: string;
+  created_at?: string | null;
 };
 
 function money(value: number | string | null | undefined) {
@@ -109,12 +111,14 @@ export default function Suppliers() {
   }, []);
 
   async function loadAll() {
-    // Payments must load first because supplier balances depend on them.
-    await loadPayments();
-    await loadSuppliers();
+    // IMPORTANT: React state updates are asynchronous. Pass the freshly
+    // loaded payment rows directly into loadSuppliers so supplier balances
+    // never calculate from stale/empty payment state.
+    const loadedPayments = await loadPayments();
+    await loadSuppliers(loadedPayments);
   }
 
-  async function loadSuppliers() {
+  async function loadSuppliers(paymentRows?: SupplierPayment[]) {
     setLoading(true);
     setLoadWarning("");
     try {
@@ -127,7 +131,7 @@ export default function Suppliers() {
 
       const { data: purchaseData, error: purchaseError } = await supabase
         .from("purchases")
-        .select(`purchase_date, invoice_no, supplier_name, total_amount, paid_amount, balance_amount`);
+        .select(`purchase_date, invoice_no, supplier_name, total_amount, paid_amount, balance_amount, created_at`);
 
       if (purchaseError) {
         setLoadWarning(
@@ -163,7 +167,8 @@ export default function Suppliers() {
       });
 
       const paymentMap = new Map<string, number>();
-      payments.forEach((payment) => {
+      const balancePayments = paymentRows ?? payments;
+      balancePayments.forEach((payment) => {
         const key = String(payment.supplier_id);
         paymentMap.set(key, (paymentMap.get(key) || 0) + Number(payment.amount || 0));
       });
@@ -187,9 +192,11 @@ export default function Suppliers() {
           purchase_paid: purchaseSummary.paid,
           purchase_outstanding: purchaseSummary.balance,
           supplier_payments: supplierPayments,
-          // Current supplier position:
-          // Opening payable + unpaid purchases - separate supplier payments.
+          // TRUE running-ledger closing position:
+          // Opening payable + unpaid purchase value - supplier payments.
           // Positive = payable. Negative = supplier credit.
+          // `balance_amount` from purchases is intentionally ignored because
+          // it may be stale; unpaid purchase = total_amount - paid_amount.
           outstanding: opening + purchaseSummary.balance - supplierPayments,
         };
       });
@@ -204,7 +211,7 @@ export default function Suppliers() {
     }
   }
 
-  async function loadPayments() {
+  async function loadPayments(): Promise<SupplierPayment[]> {
     try {
       const { data, error } = await supabase
         .from("supplier_payments")
@@ -219,6 +226,7 @@ export default function Suppliers() {
           bank_amount,
           reference,
           remarks,
+          created_at,
           suppliers ( supplier_name )
         `)
         .order("payment_date", { ascending: false })
@@ -238,9 +246,11 @@ export default function Suppliers() {
         reference: text(row.reference),
         remarks: text(row.remarks),
         supplier_name: text(row.suppliers?.supplier_name) || "Unknown Supplier",
+        created_at: row.created_at ? String(row.created_at) : null,
       }));
 
       setPayments(rows);
+      return rows;
     } catch (error: any) {
       console.error("SUPPLIER PAYMENT LOAD ERROR:", error);
       setPayments([]);
@@ -250,12 +260,13 @@ export default function Suppliers() {
           "Unknown payment query error."
         )}`
       );
+      return [];
     }
   }
 
   async function refreshData() {
-    await loadPayments();
-    await loadSuppliers();
+    const loadedPayments = await loadPayments();
+    await loadSuppliers(loadedPayments);
   }
 
   async function saveSupplier() {
@@ -903,7 +914,7 @@ export default function Suppliers() {
           <div>
             <h2 className="text-xl font-bold text-slate-800">Running Supplier Ledger</h2>
             <p className="text-sm text-slate-500">
-              Purchase increases payable. Payment reduces payable. Excess payment becomes supplier credit.
+              Every date continues from the previous running balance. Milk received increases payable; payment increases supplier credit.
             </p>
           </div>
           <select
