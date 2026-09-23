@@ -79,6 +79,13 @@ type Supplier = {
   opening_balance: number | string | null;
 };
 
+type SupplierPayment = {
+  id: string;
+  supplier_id: string;
+  payment_date: string | null;
+  amount: number | string | null;
+};
+
 function getLocalDateISO(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
     2,
@@ -124,6 +131,7 @@ export default function Dashboard() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>([]);
   const [dailyClosings, setDailyClosings] = useState<DailyClosing[]>([]);
 
   const today = getLocalDateISO();
@@ -153,6 +161,7 @@ export default function Dashboard() {
         customersResult,
         purchasesResult,
         suppliersResult,
+        supplierPaymentsResult,
         dailyClosingsResult,
       ] = await Promise.all([
         supabase
@@ -225,6 +234,7 @@ export default function Dashboard() {
         customersResult.error,
         purchasesResult.error,
         suppliersResult.error,
+        supplierPaymentsResult.error,
         dailyClosingsResult.error,
       ].filter(Boolean);
 
@@ -278,6 +288,12 @@ export default function Dashboard() {
         errors.includes(suppliersResult.error)
           ? []
           : ((suppliersResult.data || []) as Supplier[])
+      );
+
+      setSupplierPayments(
+        errors.includes(supplierPaymentsResult.error)
+          ? []
+          : ((supplierPaymentsResult.data || []) as SupplierPayment[])
       );
 
       setDailyClosings(
@@ -597,81 +613,59 @@ export default function Dashboard() {
     return total;
   }, [sales, customers]);
 
-  const supplierOutstanding =
-    useMemo(() => {
-      const purchaseBalanceByName =
-        new Map<string, number>();
+  const supplierOutstanding = useMemo(() => {
+    // Supplier balance follows the MANVI ERP supplier ledger model:
+    // Opening balance + all milk purchases - actual supplier payments.
+    // Purchase-level paid_amount/balance_amount are NOT used here because
+    // actual payments are recorded in supplier_payments. This prevents the
+    // same payment from being counted twice.
+    const paymentsBySupplier = new Map<string, number>();
 
-      purchases.forEach((purchase) => {
-        const key = String(
-          purchase.supplier_name || ""
-        )
-          .trim()
-          .toLowerCase();
+    supplierPayments.forEach((payment) => {
+      const supplierId = String(payment.supplier_id || "");
+      if (!supplierId) return;
 
-        if (!key) {
-          return;
-        }
-
-        const current =
-          purchaseBalanceByName.get(
-            key
-          ) || 0;
-
-        const savedBalance =
-          Number(
-            purchase.balance_amount
-          );
-
-        const fallback =
-          Math.max(
-            numberValue(
-              purchase.total_amount
-            ) -
-              numberValue(
-                purchase.paid_amount
-              ),
-            0
-          );
-
-        purchaseBalanceByName.set(
-          key,
-          current +
-            (Number.isFinite(
-              savedBalance
-            )
-              ? Math.max(
-                  savedBalance,
-                  0
-                )
-              : fallback)
-        );
-      });
-
-      return suppliers.reduce(
-        (sum, supplier) => {
-          const key = String(
-            supplier.supplier_name || ""
-          )
-            .trim()
-            .toLowerCase();
-
-          return (
-            sum +
-            Math.max(
-              numberValue(
-                supplier.opening_balance
-              ),
-              0
-            ) +
-            (purchaseBalanceByName.get(
-              key
-            ) || 0)
-          );
-        },
-        0
+      paymentsBySupplier.set(
+        supplierId,
+        (paymentsBySupplier.get(supplierId) || 0) +
+          numberValue(payment.amount)
       );
-    }, [purchases, suppliers]);
+    });
+
+    const purchasesBySupplier = new Map<string, number>();
+
+    purchases.forEach((purchase) => {
+      const name = String(purchase.supplier_name || "")
+        .trim()
+        .toLowerCase();
+      if (!name) return;
+
+      purchasesBySupplier.set(
+        name,
+        (purchasesBySupplier.get(name) || 0) +
+          numberValue(purchase.total_amount)
+      );
+    });
+
+    return suppliers.reduce((sum, supplier) => {
+      const name = String(supplier.supplier_name || "")
+        .trim()
+        .toLowerCase();
+
+      const opening = numberValue(supplier.opening_balance);
+      const purchaseTotal = purchasesBySupplier.get(name) || 0;
+      const paymentsTotal = paymentsBySupplier.get(String(supplier.id)) || 0;
+
+      return sum + opening + purchaseTotal - paymentsTotal;
+    }, 0);
+  }, [purchases, suppliers, supplierPayments]);
+
+  const supplierOutstandingLabel =
+    supplierOutstanding > 0.005
+      ? `Payable ${money(supplierOutstanding)}`
+      : supplierOutstanding < -0.005
+      ? `Credit ${money(Math.abs(supplierOutstanding))}`
+      : "Settled ₹ 0.00";
 
   const productCostMap = useMemo(
     () =>
@@ -1013,9 +1007,7 @@ export default function Dashboard() {
 
         <SmallCard
           title="Supplier Outstanding"
-          value={money(
-            supplierOutstanding
-          )}
+          value={supplierOutstandingLabel}
         />
       </div>
 
