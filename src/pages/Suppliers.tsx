@@ -15,6 +15,8 @@ type SupplierRow = {
 };
 
 type PurchaseRow = {
+  purchase_date?: string | null;
+  invoice_no?: string | null;
   supplier_name: string | null;
   total_amount: number | string | null;
   paid_amount: number | string | null;
@@ -75,6 +77,8 @@ function getErrorMessage(error: unknown, fallback: string) {
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
+  const [purchaseTransactions, setPurchaseTransactions] = useState<PurchaseRow[]>([]);
+  const [ledgerSupplierId, setLedgerSupplierId] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [paymentSaving, setPaymentSaving] = useState(false);
@@ -123,7 +127,7 @@ export default function Suppliers() {
 
       const { data: purchaseData, error: purchaseError } = await supabase
         .from("purchases")
-        .select(`supplier_name, total_amount, paid_amount, balance_amount`);
+        .select(`purchase_date, invoice_no, supplier_name, total_amount, paid_amount, balance_amount`);
 
       if (purchaseError) {
         setLoadWarning(
@@ -133,6 +137,8 @@ export default function Suppliers() {
           )}`
         );
       }
+
+      setPurchaseTransactions((purchaseData || []) as PurchaseRow[]);
 
       const purchaseMap = new Map<
         string,
@@ -181,10 +187,12 @@ export default function Suppliers() {
           purchase_paid: purchaseSummary.paid,
           purchase_outstanding: purchaseSummary.balance,
           supplier_payments: supplierPayments,
-          // Signed supplier balance:
-          // positive = we still have to pay the supplier
-          // negative = supplier credit / excess payment available for future purchases
-          outstanding: opening + purchaseSummary.balance - supplierPayments,
+          // Supplier ledger balance:
+          // positive = payable to supplier
+          // negative = supplier credit available for future milk purchases.
+          // Supplier payments are separate ledger transactions and can be
+          // greater than current purchases.
+          outstanding: opening + purchaseSummary.total - supplierPayments,
         };
       });
 
@@ -526,6 +534,89 @@ export default function Suppliers() {
     [payments]
   );
 
+  const ledgerSupplier = suppliers.find((item) => item.id === ledgerSupplierId) || null;
+
+  const ledgerRows = useMemo(() => {
+    if (!ledgerSupplier) return [];
+
+    type LedgerItem = {
+      date: string;
+      sortType: number;
+      type: "Opening" | "Purchase" | "Payment";
+      reference: string;
+      debit: number;
+      credit: number;
+      running: number;
+      mode?: string;
+    };
+
+    const items: Array<Omit<LedgerItem, "running">> = [];
+
+    const opening = Number(ledgerSupplier.opening_balance || 0);
+    if (opening !== 0) {
+      items.push({
+        date: "0000-00-00",
+        sortType: 0,
+        type: "Opening",
+        reference: "Opening supplier balance",
+        debit: opening,
+        credit: 0,
+      });
+    }
+
+    purchaseTransactions.forEach((purchase) => {
+      if (
+        String(purchase.supplier_name || "").trim().toLowerCase() !==
+        ledgerSupplier.name.trim().toLowerCase()
+      ) {
+        return;
+      }
+
+      const amount = Math.round(Number(purchase.total_amount || 0));
+      if (amount <= 0) return;
+
+      items.push({
+        date: String(purchase.purchase_date || "9999-12-31").slice(0, 10),
+        sortType: 1,
+        type: "Purchase",
+        reference: purchase.invoice_no
+          ? `Purchase • ${purchase.invoice_no}`
+          : "Milk purchase",
+        debit: amount,
+        credit: 0,
+      });
+    });
+
+    payments.forEach((payment) => {
+      if (payment.supplier_id !== ledgerSupplier.id) return;
+
+      const amount = Math.round(Number(payment.amount || 0));
+      if (amount <= 0) return;
+
+      items.push({
+        date: String(payment.payment_date || "9999-12-31").slice(0, 10),
+        sortType: 2,
+        type: "Payment",
+        reference: payment.reference || "Supplier payment",
+        debit: 0,
+        credit: amount,
+        mode: payment.payment_method,
+      });
+    });
+
+    items.sort((a, b) => {
+      const dateCompare = a.date.localeCompare(b.date);
+      if (dateCompare !== 0) return dateCompare;
+      return a.sortType - b.sortType;
+    });
+
+    let running = 0;
+    return items.map((item) => {
+      running += item.debit - item.credit;
+      return { ...item, running };
+    });
+  }, [ledgerSupplier, purchaseTransactions, payments]);
+
   return (
     <div className="mx-auto max-w-7xl pb-10">
       <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-600 p-6 text-white shadow-lg">
@@ -777,6 +868,7 @@ export default function Suppliers() {
                     </td>
                     <td className="p-3">
                       <div className="flex justify-center gap-2">
+                        <button type="button" onClick={() => setLedgerSupplierId(supplier.id)} className="rounded bg-blue-600 px-3 py-1 text-sm font-semibold text-white">Ledger</button>
                         <button type="button" onClick={() => editSupplier(supplier)} className="rounded bg-yellow-500 px-3 py-1 text-sm font-semibold text-white">Edit</button>
                         <button type="button" onClick={() => void deleteSupplier(supplier.id)} className="rounded bg-red-600 px-3 py-1 text-sm font-semibold text-white">Delete</button>
                       </div>
@@ -787,6 +879,107 @@ export default function Suppliers() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* RUNNING SUPPLIER LEDGER */}
+      <div className="mb-6 rounded-2xl bg-white p-6 shadow-lg">
+        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">Running Supplier Ledger</h2>
+            <p className="text-sm text-slate-500">
+              Purchase increases payable. Payment reduces payable. Excess payment becomes supplier credit.
+            </p>
+          </div>
+          <select
+            className="rounded-lg border p-3 md:w-96"
+            value={ledgerSupplierId}
+            onChange={(e) => setLedgerSupplierId(e.target.value)}
+          >
+            <option value="">Select supplier for ledger</option>
+            {suppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {ledgerSupplier ? (
+          <>
+            <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="rounded-xl bg-slate-50 p-4">
+                <p className="text-sm text-slate-500">Supplier</p>
+                <p className="text-lg font-bold">{ledgerSupplier.name}</p>
+              </div>
+              <div className="rounded-xl bg-purple-50 p-4">
+                <p className="text-sm text-slate-500">Total Purchases</p>
+                <p className="text-lg font-bold text-purple-700">{money(ledgerSupplier.total_purchases)}</p>
+              </div>
+              <div className={`rounded-xl p-4 ${ledgerSupplier.outstanding > 0 ? "bg-red-50" : ledgerSupplier.outstanding < 0 ? "bg-blue-50" : "bg-green-50"}`}>
+                <p className="text-sm text-slate-500">Current Position</p>
+                <p className={`text-lg font-bold ${ledgerSupplier.outstanding > 0 ? "text-red-700" : ledgerSupplier.outstanding < 0 ? "text-blue-700" : "text-green-700"}`}>
+                  {ledgerSupplier.outstanding > 0
+                    ? `Payable ${money(ledgerSupplier.outstanding)}`
+                    : ledgerSupplier.outstanding < 0
+                    ? `Credit ${money(Math.abs(ledgerSupplier.outstanding))}`
+                    : "Settled ₹ 0"}
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border">
+              <table className="w-full min-w-[850px]">
+                <thead className="bg-slate-800 text-white">
+                  <tr>
+                    <th className="p-3 text-left">Date</th>
+                    <th className="p-3 text-left">Transaction</th>
+                    <th className="p-3 text-left">Reference</th>
+                    <th className="p-3 text-right">Purchase / Debit</th>
+                    <th className="p-3 text-right">Payment / Credit</th>
+                    <th className="p-3 text-right">Running Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledgerRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-slate-500">
+                        No ledger transactions found.
+                      </td>
+                    </tr>
+                  ) : (
+                    ledgerRows.map((row, index) => (
+                      <tr key={`${row.date}-${row.type}-${row.reference}-${index}`} className="border-b hover:bg-slate-50">
+                        <td className="p-3">{row.date === "0000-00-00" ? "Opening" : formatDate(row.date)}</td>
+                        <td className="p-3 font-semibold">{row.type}</td>
+                        <td className="p-3">
+                          {row.reference}
+                          {row.mode ? ` • ${row.mode}` : ""}
+                        </td>
+                        <td className="p-3 text-right font-semibold text-purple-700">
+                          {row.debit > 0 ? money(row.debit) : "-"}
+                        </td>
+                        <td className="p-3 text-right font-semibold text-green-700">
+                          {row.credit > 0 ? money(row.credit) : "-"}
+                        </td>
+                        <td className={`p-3 text-right font-bold ${row.running > 0 ? "text-red-600" : row.running < 0 ? "text-blue-600" : "text-green-600"}`}>
+                          {row.running > 0
+                            ? `Payable ${money(row.running)}`
+                            : row.running < 0
+                            ? `Credit ${money(Math.abs(row.running))}`
+                            : "Settled ₹ 0"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">
+            Select a supplier to view the complete running ledger.
+          </div>
+        )}
       </div>
 
       {/* PAYMENT HISTORY */}
