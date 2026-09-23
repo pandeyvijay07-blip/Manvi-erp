@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
 import { QRCodeSVG } from "qrcode.react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { jsPDF } from "jspdf";
 import { supabase } from "../lib/supabase";
 import CustomerRouteSearch from "../components/CustomerRouteSearch";
@@ -92,6 +92,13 @@ function normalizeSaleDate(value: string | null | undefined) {
   return String(value).slice(0, 10);
 }
 
+function getPreviousDateString(value: string) {
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() - 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 type Brand = {
 id: string;
 brand_name: string;
@@ -176,6 +183,9 @@ useState("0");
 const [upiAmount, setUpiAmount] =
 useState("0");
 
+const [customerAdvanceBalance, setCustomerAdvanceBalance] =
+useState(0);
+
 /* =========================================================
 UPI / WHATSAPP BILL
 ========================================================= */
@@ -218,8 +228,7 @@ upiValue: number = 0
 ) {
 const itemLines = items
 .map((item, index) => {
-const pack = item.pack_size ? ` (${getPackDisplay(item.pack_size)})` : "";
-return `${index + 1}. ${item.product_name}${pack}\n   Qty: ${item.quantity}  Rate: ₹${item.rate.toFixed(2)}  Amount: ₹${item.amount.toFixed(2)}`;
+return `${index + 1}. ${item.product_name}\n   Qty: ${item.quantity}  Amount: ₹${item.amount.toFixed(2)}`;
 })
 .join("\n");
 
@@ -248,37 +257,79 @@ paymentLines,
 "Thank you for your business.",
 ].join("\n");
 }
-function openWhatsAppBill() {
-if (!selectedCustomer) {
-alert("Please select a customer first.");
-return;
-}
+async function openWhatsAppBill() {
+  if (!selectedCustomer) {
+    alert("Please select a customer first.");
+    return;
+  }
 
-if (saleItems.length === 0) {
-alert("Please add at least one product before sending the bill.");
-return;
-}
+  if (saleItems.length === 0) {
+    alert("Please add at least one product before sending the bill.");
+    return;
+  }
 
-const phone = getWhatsAppNumber(selectedCustomer.mobile);
-if (!phone) {
-alert("This customer does not have a valid mobile number. Add the mobile number in Customers first.");
-return;
-}
+  const phone = getWhatsAppNumber(selectedCustomer.mobile);
+  if (!phone) {
+    alert("This customer does not have a valid mobile number. Add the mobile number in Customers first.");
+    return;
+  }
 
-const message = buildWhatsAppBillMessage(
-selectedCustomer.customer_name,
-saleDate,
-saleItems,
-totalSale,
-paid,
-balance,
-paymentMethod,
-Number(cashAmount) || 0,
-Number(upiAmount) || 0
-);
+  if (!businessUpiId.trim()) {
+    alert("Please enter the business UPI ID first.");
+    return;
+  }
 
-const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
-window.open(url, "_blank", "noopener,noreferrer");
+  const message = buildWhatsAppBillMessage(
+    selectedCustomer.customer_name,
+    saleDate,
+    saleItems,
+    totalSale,
+    paid,
+    balance,
+    paymentMethod,
+    Number(cashAmount) || 0,
+    Number(upiAmount) || 0
+  );
+
+  try {
+    setLoading(true);
+
+    const { data, error } = await supabase.functions.invoke("send-whatsapp", {
+      body: {
+        customer_id: selectedCustomer.id,
+        customer_name: selectedCustomer.customer_name,
+        customer_mobile: phone,
+        message,
+        message_type: "sale",
+        reference_id: editingSaleId || null,
+        upi_id: businessUpiId.trim(),
+        upi_amount: balance > 0 ? balance : 0,
+      },
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data?.sent) {
+      if (data?.skipped) {
+        alert(data?.reason || "WhatsApp bill was skipped.");
+      } else {
+        alert(data?.error || data?.reason || "WhatsApp bill could not be sent.");
+      }
+      return;
+    }
+
+    alert("WhatsApp bill sent successfully with UPI QR code.");
+  } catch (error: any) {
+    console.error("WhatsApp bill error:", error);
+    alert(
+      "Unable to send WhatsApp bill:\n" +
+        (error?.message || "Unknown error")
+    );
+  } finally {
+    setLoading(false);
+  }
 }
 
 function getUpiPaymentUrl() {
@@ -586,11 +637,44 @@ customers,
 customerId,
 ]);
 
+useEffect(() => {
+  let cancelled = false;
+
+  async function loadCustomerAdvance() {
+    if (!customerId) {
+      setCustomerAdvanceBalance(0);
+      return;
+    }
+
+    const { data, error } = await supabase.rpc(
+      "get_customer_advance_balance",
+      { p_customer_id: customerId }
+    );
+
+    if (cancelled) return;
+
+    if (error) {
+      console.error("Customer advance load error:", error);
+      setCustomerAdvanceBalance(0);
+      return;
+    }
+
+    setCustomerAdvanceBalance(Number(data) || 0);
+  }
+
+  void loadCustomerAdvance();
+
+  return () => {
+    cancelled = true;
+  };
+}, [customerId]);
+
 /* =========================================================
-PUNCH TODAY'S SALE
-Loads the customer's latest previous sale and prepares
-the same products/quantities as today's draft.
-It does NOT save until Save Sale is pressed.
+COPY YESTERDAY'S SALE
+Loads the customer's sale from exactly one calendar day
+before the selected sale date, including all products,
+quantities and the saved sale rates. It does NOT save
+until Save Sale is pressed.
 ========================================================= */
 async function punchTodaysSale() {
   if (!customerId) {
@@ -614,8 +698,7 @@ async function punchTodaysSale() {
         paid_amount
       `)
       .eq("customer_id", customerId)
-      .lt("sale_date", saleDate)
-      .order("sale_date", { ascending: false })
+      .eq("sale_date", getPreviousDateString(saleDate))
       .limit(1)
       .maybeSingle();
 
@@ -624,7 +707,7 @@ async function punchTodaysSale() {
     }
 
     if (!previousSale) {
-      alert("No previous sale found for this customer.");
+      alert(`No sale found for this customer on ${formatDisplayDate(getPreviousDateString(saleDate))}.`);
       return;
     }
 
@@ -666,15 +749,12 @@ async function punchTodaysSale() {
           (b) => b.id === product.brand_id
         );
 
-        const customerRate = await getCustomerPrice(
-          customerId,
-          product.id
+        // Copy the exact saved rate from yesterday's sale.
+        // Customer-specific rates are also kept in customer_prices
+        // whenever a sale is saved/changed.
+        const rate = Number(
+          item.rate ?? product.selling_rate ?? 0
         );
-
-        const rate =
-          customerRate !== null
-            ? customerRate
-            : Number(product.selling_rate || item.rate || 0);
 
         const qty = Number(item.quantity) || 0;
 
@@ -724,9 +804,9 @@ async function punchTodaysSale() {
     });
 
     alert(
-      `Today's sale prepared from ${formatDisplayDate(
+      `Sale prepared from ${formatDisplayDate(
         previousSale.sale_date
-      )}.\n\nPlease check the quantities and press Save Sale.`
+      )}.\n\nAll products, quantities and saved rates were copied. Please check and press Save Sale.`
     );
   } catch (error: any) {
     console.error("Punch today's sale error:", error);
@@ -884,6 +964,33 @@ try {
   return null;
 }
 
+}
+
+/* =========================================================
+SYNC CUSTOMER PRICES
+Whenever a sale is saved, the entered customer/product
+rate becomes the current saved customer price.
+========================================================= */
+async function syncCustomerPrices(items: SaleItem[]) {
+  if (!customerId || items.length === 0) return;
+
+  const rows = getUniqueSaleItems(items)
+    .filter((item) => Number.isFinite(Number(item.rate)) && Number(item.rate) >= 0)
+    .map((item) => ({
+      customer_id: customerId,
+      product_id: item.product_id,
+      rate: Number(item.rate),
+    }));
+
+  if (rows.length === 0) return;
+
+  const { error } = await supabase
+    .from("customer_prices")
+    .upsert(rows, {
+      onConflict: "customer_id,product_id",
+    });
+
+  if (error) throw error;
 }
 
 /* =========================================================
@@ -1382,6 +1489,27 @@ setSaleDateDisplay(formatDateInput(today));
 }
 
 /* =========================================================
+CUSTOMER PAYMENT ENGINE
+Every sale/collection payment is rebuilt through the same
+customer payment engine. Extra money becomes customer advance
+and can be automatically used on a later bill.
+========================================================= */
+async function rebuildCustomerPaymentState(customerValue: string) {
+  if (!customerValue) return;
+
+  const { data, error } = await supabase.rpc(
+    "rebuild_customer_payment_state",
+    { p_customer_id: customerValue }
+  );
+
+  if (error) {
+    throw error;
+  }
+
+  console.log("MANVI CUSTOMER PAYMENT STATE", data);
+}
+
+/* =========================================================
 SAVE NEW SALE
 ========================================================= */
 
@@ -1442,9 +1570,6 @@ try {
     throw new Error("Sale total must be greater than zero.");
   }
 
-  if (salePaidForSave > saleTotalForSave) {
-    throw new Error("Paid amount cannot be greater than total sale.");
-  }
 
   /* =====================================================
      IF EDITING SAVED SALE
@@ -1748,8 +1873,22 @@ try {
     }
   }
 
+  let customerPriceWarning = "";
+  try {
+    await syncCustomerPrices(uniqueSaleItems);
+  } catch (priceError: any) {
+    console.error("Customer price sync error:", priceError);
+    customerPriceWarning = "\n\nWarning: sale was saved, but customer price could not be updated. Please retry the rate in the next sale.";
+  }
+
+  // Rebuild customer payment state so any extra payment is stored
+  // as advance and any older advance is applied to this bill.
+  await rebuildCustomerPaymentState(customerId);
+
   alert(
-    "Sale saved successfully."
+    salePaidForSave > saleTotalForSave
+      ? "Sale saved successfully. Extra payment has been carried forward as customer advance." + customerPriceWarning
+      : "Sale saved successfully." + customerPriceWarning
   );
 
   clearSaleForm();
@@ -1804,6 +1943,21 @@ GET OLD SALE ITEMS
   if (oldItemsError) {
     throw oldItemsError;
   }
+
+  const {
+    data: oldSaleHeader,
+    error: oldSaleHeaderError,
+  } = await supabase
+    .from("sales")
+    .select("id, customer_id")
+    .eq("id", saleId)
+    .single();
+
+  if (oldSaleHeaderError) {
+    throw oldSaleHeaderError;
+  }
+
+  const oldCustomerId = oldSaleHeader?.customer_id || null;
 
   /* =====================================================
      CALCULATE STOCK AFTER RESTORING OLD SALE
@@ -2084,8 +2238,24 @@ GET OLD SALE ITEMS
     }
   }
 
+  let customerPriceWarning = "";
+  try {
+    await syncCustomerPrices(saleItems);
+  } catch (priceError: any) {
+    console.error("Customer price sync error during sale update:", priceError);
+    customerPriceWarning = "\n\nWarning: sale was updated, but customer price could not be updated.";
+  }
+
+  if (oldCustomerId && oldCustomerId !== customerId) {
+    await rebuildCustomerPaymentState(oldCustomerId);
+  }
+
+  await rebuildCustomerPaymentState(customerId);
+
   alert(
-    "Sale updated successfully."
+    paid > totalSale
+      ? "Sale updated successfully. Extra payment has been carried forward as customer advance." + customerPriceWarning
+      : "Sale updated successfully." + customerPriceWarning
   );
 
   clearSaleForm();
@@ -2319,6 +2489,86 @@ setLoading(true);
 }
 
 /* =========================================================
+BILL QR HELPERS
+========================================================= */
+async function createUpiQrDataUrl(value: string, size = 180): Promise<string | null> {
+  if (!value) return null;
+
+  const host = document.createElement("div");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "-10000px";
+  host.style.width = `${size}px`;
+  host.style.height = `${size}px`;
+  host.style.background = "#ffffff";
+  document.body.appendChild(host);
+
+  const root = createRoot(host);
+
+  try {
+    await new Promise<void>((resolve) => {
+      root.render(
+        <QRCodeSVG
+          value={value}
+          size={size}
+          includeMargin
+          bgColor="#ffffff"
+          fgColor="#000000"
+        />
+      );
+      window.setTimeout(resolve, 50);
+    });
+
+    const svg = host.querySelector("svg");
+    if (!svg) return null;
+
+    const svgText = new XMLSerializer().serializeToString(svg);
+    const svgBlob = new Blob([svgText], {
+      type: "image/svg+xml;charset=utf-8",
+    });
+    const objectUrl = URL.createObjectURL(svgBlob);
+
+    try {
+      const image = new Image();
+      image.src = objectUrl;
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("Unable to prepare UPI QR."));
+      });
+
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, size, size);
+      context.drawImage(image, 0, 0, size, size);
+      return canvas.toDataURL("image/png");
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  } finally {
+    root.unmount();
+    host.remove();
+  }
+}
+
+function buildUpiPaymentUrl(upiId: string, amount: number) {
+  if (!upiId.trim() || amount <= 0) return "";
+
+  const params = new URLSearchParams({
+    pa: upiId.trim(),
+    pn: "MANVI MILK AGENCIES",
+    am: amount.toFixed(2),
+    cu: "INR",
+  });
+
+  return `upi://pay?${params.toString()}`;
+}
+
+/* =========================================================
 GENERATE SAVED BILL PDF
 ========================================================= */
 async function generateSavedBillPdf(saleId: string): Promise<File | null> {
@@ -2388,8 +2638,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
       const item: any = items![i];
       const product = products.find((p) => p.id === item.product_id);
       const name = String(product?.product_name || "Product");
-      const pack = product?.pack_size ? ` (${String(product.pack_size)})` : "";
-      const lines = doc.splitTextToSize(name + pack, 75);
+      const lines = doc.splitTextToSize(name, 75);
       if (y > 270) {
         doc.addPage();
         y = 18;
@@ -2411,7 +2660,25 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
     doc.text(`PAID: Rs. ${Number(sale.paid_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
     y += 7;
     doc.text(`BALANCE: Rs. ${Number(sale.balance_amount || 0).toFixed(2)}`, pageWidth - left, y, { align: "right" });
-    y += 14;
+    y += 12;
+
+    const pdfBalance = Number(sale.balance_amount || 0);
+    const pdfUpiUrl = buildUpiPaymentUrl(businessUpiId, pdfBalance);
+    if (pdfUpiUrl) {
+      const qrDataUrl = await createUpiQrDataUrl(pdfUpiUrl, 170);
+      if (qrDataUrl) {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text("SCAN & PAY VIA UPI", pageWidth / 2, y, { align: "center" });
+        y += 5;
+        doc.addImage(qrDataUrl, "PNG", pageWidth / 2 - 25, y, 50, 50);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.text(`UPI ID: ${businessUpiId.trim()}`, pageWidth / 2, y + 55, { align: "center" });
+        y += 68;
+      }
+    }
+
     doc.setFontSize(9);
     doc.text("Thank you for your business.", pageWidth / 2, y, { align: "center" });
 
@@ -2455,26 +2722,7 @@ async function shareSavedBillPdf(saleId: string) {
 PRINT SAVED BILL
 ========================================================= */
 async function printSavedBill(saleId: string) {
-  let printWindow: Window | null = null;
-
   try {
-    /*
-     * Open the print window immediately on the user's click.
-     * This prevents the browser from treating it as a blocked popup
-     * after the Supabase requests finish.
-     */
-    printWindow = window.open("", "_blank");
-
-    if (!printWindow) {
-      throw new Error("Popup blocked. Please allow popups for MANVI ERP.");
-    }
-
-    printWindow.document.open();
-    printWindow.document.write(
-      `<!doctype html><html><head><title>MANVI BILL</title></head><body style="font-family:Arial;padding:24px"><p>Preparing bill...</p></body></html>`
-    );
-    printWindow.document.close();
-
     setLoading(true);
 
     const [{ data: sale, error: saleError }, { data: items, error: itemsError }] =
@@ -2522,87 +2770,31 @@ async function printSavedBill(saleId: string) {
       ? `<div>Cash: ₹ ${Number(sale.cash_amount || 0).toFixed(2)} &nbsp; | &nbsp; UPI: ₹ ${Number(sale.upi_amount || 0).toFixed(2)}</div>`
       : "";
 
-    /* =====================================================
-       BILL UPI QR
-       The QR is generated as inline SVG, so it is embedded in
-       the printed bill and does not depend on an external image.
-       It uses the outstanding balance of this saved sale.
-       ===================================================== */
-    const billBalance = Number(sale.balance_amount || 0);
-    let printQrSvg = "";
-
-    if (businessUpiId.trim() && billBalance > 0) {
-      const billUpiUrl = `upi://pay?${new URLSearchParams({
-        pa: businessUpiId.trim(),
-        pn: "MANVI MILK AGENCIES",
-        am: billBalance.toFixed(2),
-        cu: "INR",
-      }).toString()}`;
-
-      printQrSvg = renderToStaticMarkup(
-        <QRCodeSVG
-          value={billUpiUrl}
-          size={180}
-          includeMargin
-        />
-      );
-    }
-
-    const upiHtml = printQrSvg
-      ? `<div class="upi">
-          <div><strong>SCAN &amp; PAY VIA UPI</strong></div>
-          <div class="qr">${printQrSvg}</div>
-          <div>UPI ID: ${safe(businessUpiId)}</div>
-          <div>Amount: ₹ ${billBalance.toFixed(2)}</div>
-        </div>`
-      : "";
+    const printBalance = Number(sale.balance_amount || 0);
+    const printUpiUrl = buildUpiPaymentUrl(businessUpiId, printBalance);
+    const printQrDataUrl = printUpiUrl
+      ? await createUpiQrDataUrl(printUpiUrl, 180)
+      : null;
 
     const html = `<!doctype html><html><head><title>MANVI BILL</title>
       <style>
-        body{font-family:Arial,sans-serif;padding:24px;color:#111}
-        h1{text-align:center;margin:0 0 4px}
-        h2{text-align:center;margin:0 0 18px;font-size:16px}
-        .meta{margin-bottom:16px;line-height:1.7}
-        table{width:100%;border-collapse:collapse}
-        th,td{border:1px solid #ccc;padding:8px;text-align:left}
-        th{background:#f1f5f9}
-        td:nth-child(1),td:nth-child(3){text-align:center}
-        td:nth-child(4){text-align:right}
-        .totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}
-        .grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}
-        .upi{text-align:center;margin-top:22px;border-top:1px solid #ccc;padding-top:16px}
-        .qr{margin:10px auto;width:180px;height:180px;display:flex;align-items:center;justify-content:center}
-        .qr svg{width:180px;height:180px}
-        .footer{text-align:center;margin-top:28px;font-size:13px;color:#555}
-        @media print{body{padding:8px}}
+        body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{text-align:center;margin:0 0 4px}h2{text-align:center;margin:0 0 18px;font-size:16px}.meta{margin-bottom:16px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#f1f5f9}td:nth-child(1),td:nth-child(3){text-align:center}td:nth-child(4){text-align:right}.totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}.grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}.upi{text-align:center;margin-top:22px;border-top:1px solid #ccc;padding-top:16px}.upi img{width:150px;height:150px;display:block;margin:10px auto}.footer{text-align:center;margin-top:28px;font-size:13px;color:#555}@media print{body{padding:8px}}
       </style></head><body>
       <h1>MANVI MILK AGENCIES</h1><h2>BILL</h2>
       <div class="meta"><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
       <table><thead><tr><th>#</th><th>Product</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="totals">
-        <div>Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div>
-        <div>Paid: ₹ ${Number(sale.paid_amount || 0).toFixed(2)}</div>
-        <div>Balance: ₹ ${Number(sale.balance_amount || 0).toFixed(2)}</div>
-        <div class="grand">Net Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div>
-      </div>
-      ${upiHtml}
+      <div class="totals"><div>Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ₹ ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ₹ ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
+      ${printQrDataUrl ? `<div class="upi"><div><strong>SCAN &amp; PAY VIA UPI</strong></div><img src="${printQrDataUrl}" alt="UPI QR"/><div>UPI ID: ${safe(businessUpiId)}</div></div>` : ""}
       <div class="footer">Thank you for your business.</div>
-      <script>
-        window.onload=function(){
-          setTimeout(function(){ window.print(); }, 150);
-        };
-      </script></body></html>`;
+      <script>window.onload=function(){window.print();}</script></body></html>`;
 
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) throw new Error("Popup blocked. Please allow popups for MANVI ERP.");
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
   } catch (error: any) {
     console.error("Print bill error:", error);
-
-    if (printWindow && !printWindow.closed) {
-      printWindow.close();
-    }
-
     alert("Unable to open bill:\n" + (error?.message || "Unknown error"));
   } finally {
     setLoading(false);
@@ -2649,6 +2841,21 @@ try {
   if (itemsError) {
     throw itemsError;
   }
+
+  const {
+    data: deletedSaleHeader,
+    error: deletedSaleHeaderError,
+  } = await supabase
+    .from("sales")
+    .select("id, customer_id")
+    .eq("id", saleId)
+    .single();
+
+  if (deletedSaleHeaderError) {
+    throw deletedSaleHeaderError;
+  }
+
+  const deletedSaleCustomerId = deletedSaleHeader?.customer_id || null;
 
   /* =====================================================
      RESTORE STOCK
@@ -2762,8 +2969,12 @@ try {
     throw deleteSaleError;
   }
 
+  if (deletedSaleCustomerId) {
+    await rebuildCustomerPaymentState(deletedSaleCustomerId);
+  }
+
   alert(
-    "Sale deleted successfully."
+    "Sale deleted successfully. Customer advances and bill allocations were recalculated."
   );
 
   await loadData();
@@ -2898,11 +3109,11 @@ return (
             onClick={punchTodaysSale}
             className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-4 text-lg shadow transition disabled:bg-gray-400"
           >
-            ⚡ Punch Today's Sale
+            ⚡ Copy Yesterday's Sale
           </button>
 
           <p className="mt-2 text-sm text-gray-500">
-            Loads the customer's last sale for today's entry. Check quantities before saving.
+            Copies the customer's exact previous-day sale for the selected date, including products, quantities and rates. Check before saving.
           </p>
         </div>
       )}
@@ -3012,8 +3223,24 @@ return (
           <div><span className="text-gray-600">Total Paid:</span> <strong>₹ {paid.toFixed(2)}</strong></div>
         </div>
         {paid > totalSale && (
-          <p className="mt-2 text-sm font-semibold text-red-600">Cash + UPI cannot exceed the sale total.</p>
+          <p className="mt-2 text-sm font-semibold text-blue-700">
+            Extra payment ₹{(paid - totalSale).toFixed(2)} will be saved as customer advance and automatically adjusted against a future bill.
+          </p>
         )}
+      </div>
+    )}
+
+    {selectedCustomer && customerAdvanceBalance > 0 && (
+      <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4">
+        <p className="text-sm text-green-700 font-semibold">
+          Available Customer Advance
+        </p>
+        <p className="text-xl font-bold text-green-800">
+          ₹{customerAdvanceBalance.toFixed(2)}
+        </p>
+        <p className="mt-1 text-xs text-green-700">
+          This amount will automatically reduce the next eligible bill.
+        </p>
       </div>
     )}
 
@@ -3804,16 +4031,6 @@ return (
                   <td className="p-3">
 
                     <div className="flex justify-center gap-2">
-
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => void printSavedBill(sale.id)}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
-                      >
-                        🖨️ Print Bill
-                      </button>
-
 
                       <button
                         type="button"
