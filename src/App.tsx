@@ -36,12 +36,6 @@ import Reports from "./pages/Reports";
 import CustomerLedger from "./pages/CustomerLedger";
 import DailyClosing from "./pages/DailyClosing";
 
-// ============================================
-// CASH BOOK
-// ============================================
-
-import CashBook from "./pages/CashBook";
-
 import Invoice from "./pages/Invoice";
 
 import Profile from "./pages/Profile";
@@ -456,7 +450,7 @@ function ProtectedApp() {
 
         <Route
           path="/"
-          element={<Dashboard />}
+          element={<Dashboard employeeOnly={!isOwner} />}
         />
 
         {/* ============================================
@@ -515,15 +509,6 @@ function ProtectedApp() {
         <Route
           path="/expenses"
           element={<Expenses />}
-        />
-
-        {/* ============================================
-            CASH BOOK
-        ============================================ */}
-
-        <Route
-          path="/cash-book"
-          element={<CashBook />}
         />
 
         {/* ============================================
@@ -645,6 +630,5 @@ export default function App() {
       </Routes>
 
     </BrowserRouter>
-
   );
 }
