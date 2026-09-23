@@ -1481,7 +1481,11 @@ export default function Purchases() {
       setInvoiceNo(purchase.invoice_no || "");
       setSupplierName(purchase.supplier_name || "");
       setPaymentMethod(purchase.payment_method || "Credit");
-      setPaidAmount(String(Number(purchase.paid_amount || 0)));
+      setPaidAmount(
+        purchase.paid_amount == null
+          ? "0"
+          : String(Number(purchase.paid_amount))
+      );
       setPurchaseRows(rows);
       setSelectedBrandId("");
       setSelectedProductId("");
@@ -1615,8 +1619,15 @@ export default function Purchases() {
       return;
     }
 
-    const finalPaid = Number(paidAmount);
-    if (!Number.isFinite(finalPaid) || finalPaid < 0 || finalPaid > totalPurchaseAmount) {
+    // Paid amount can contain formatting commas. Treat a blank field as 0.
+    const paidText = String(paidAmount ?? "").trim().replace(/,/g, "");
+    const finalPaid = paidText === "" ? 0 : Number(paidText);
+
+    if (
+      !Number.isFinite(finalPaid) ||
+      finalPaid < 0 ||
+      finalPaid > totalPurchaseAmount
+    ) {
       alert("Please enter a valid paid amount.");
       return;
     }
@@ -1629,6 +1640,9 @@ export default function Purchases() {
     setSaving(true);
 
     try {
+      // --------------------------------------------------
+      // LOAD OLD PURCHASE QUANTITIES
+      // --------------------------------------------------
       const { data: oldItems, error: oldItemsError } = await supabase
         .from("purchase_items")
         .select("product_id, quantity")
@@ -1638,35 +1652,83 @@ export default function Purchases() {
 
       const oldMap = new Map<string, number>();
       (oldItems || []).forEach((item: any) => {
-        const key = String(item.product_id);
-        oldMap.set(key, (oldMap.get(key) || 0) + Number(item.quantity || 0));
+        const productId = String(item.product_id);
+        const quantity = Number(item.quantity || 0);
+        oldMap.set(productId, (oldMap.get(productId) || 0) + quantity);
       });
 
-      // Restore the old purchase quantities first.
-      for (const [productId, oldQty] of oldMap) {
+      // --------------------------------------------------
+      // BUILD NEW QUANTITY MAP
+      // --------------------------------------------------
+      const newMap = new Map<string, number>();
+      purchaseRows.forEach((row) => {
+        const productId = String(row.product_id);
+        const quantity = Number(row.quantity || 0);
+        newMap.set(productId, (newMap.get(productId) || 0) + quantity);
+      });
+
+      // --------------------------------------------------
+      // IMPORTANT STOCK RULE
+      // Current stock already includes the old purchase.
+      // Therefore:
+      //     New Stock = Current Stock - Old Qty + New Qty
+      // Do NOT subtract the complete old quantity first and reject
+      // just because Current Stock < Old Qty.
+      // --------------------------------------------------
+      const productIds = new Set<string>([
+        ...Array.from(oldMap.keys()),
+        ...Array.from(newMap.keys()),
+      ]);
+
+      const stockChanges: Array<{
+        productId: string;
+        currentStock: number;
+        oldQty: number;
+        newQty: number;
+        finalStock: number;
+        newRate: number | null;
+      }> = [];
+
+      // Validate every affected product BEFORE changing any database row.
+      for (const productId of productIds) {
         const { data: product, error: productError } = await supabase
           .from("products")
-          .select("id, stock_qty")
+          .select("id, product_name, stock_qty, purchase_rate")
           .eq("id", productId)
           .single();
 
         if (productError) throw productError;
 
-        const restored = Number(product?.stock_qty || 0) - oldQty;
-        if (restored < 0) {
+        const currentStock = Number(product?.stock_qty || 0);
+        const oldQty = Number(oldMap.get(productId) || 0);
+        const newQty = Number(newMap.get(productId) || 0);
+        const finalStock = currentStock - oldQty + newQty;
+
+        if (!Number.isFinite(finalStock) || finalStock < 0) {
           throw new Error(
-            `Cannot update purchase because stock for product ${productId} is already lower than the old purchase quantity.`
+            `Cannot update purchase for ${
+              product?.product_name || productId
+            }.\n\nCurrent Stock: ${currentStock}\nOld Purchase: ${oldQty}\nNew Purchase: ${newQty}\nResulting Stock: ${finalStock}`
           );
         }
 
-        const { error: stockError } = await supabase
-          .from("products")
-          .update({ stock_qty: restored })
-          .eq("id", productId);
+        const newRow = purchaseRows.find(
+          (row) => String(row.product_id) === productId
+        );
 
-        if (stockError) throw stockError;
+        stockChanges.push({
+          productId,
+          currentStock,
+          oldQty,
+          newQty,
+          finalStock,
+          newRate: newRow ? Number(newRow.rate || 0) : null,
+        });
       }
 
+      // --------------------------------------------------
+      // UPDATE PURCHASE HEADER
+      // --------------------------------------------------
       const { error: headerError } = await supabase
         .from("purchases")
         .update({
@@ -1682,6 +1744,9 @@ export default function Purchases() {
 
       if (headerError) throw headerError;
 
+      // --------------------------------------------------
+      // REPLACE PURCHASE ITEMS
+      // --------------------------------------------------
       const { error: deleteItemsError } = await supabase
         .from("purchase_items")
         .delete()
@@ -1703,22 +1768,22 @@ export default function Purchases() {
 
       if (insertItemsError) throw insertItemsError;
 
-      // Apply the new purchase quantities.
-      for (const row of purchaseRows) {
-        const { data: product, error: productError } = await supabase
-          .from("products")
-          .select("id, stock_qty")
-          .eq("id", row.product_id)
-          .single();
+      // --------------------------------------------------
+      // APPLY NET STOCK CHANGE ONCE PER PRODUCT
+      // --------------------------------------------------
+      for (const change of stockChanges) {
+        const stockPayload: Record<string, number> = {
+          stock_qty: change.finalStock,
+        };
 
-        if (productError) throw productError;
-
-        const newStock = Number(product?.stock_qty || 0) + Number(row.quantity || 0);
+        if (change.newRate !== null) {
+          stockPayload.purchase_rate = change.newRate;
+        }
 
         const { error: stockError } = await supabase
           .from("products")
-          .update({ stock_qty: newStock, purchase_rate: row.rate })
-          .eq("id", row.product_id);
+          .update(stockPayload)
+          .eq("id", change.productId);
 
         if (stockError) throw stockError;
       }
