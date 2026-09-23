@@ -152,10 +152,10 @@ export default function Suppliers() {
         const current = purchaseMap.get(key) || { total: 0, paid: 0, balance: 0 };
         const total = Number(purchase.total_amount || 0);
         const paid = Number(purchase.paid_amount || 0);
-        const savedBalance = Number(purchase.balance_amount);
-        const balance = Number.isFinite(savedBalance)
-          ? Math.max(savedBalance, 0)
-          : Math.max(total - paid, 0);
+        // Always calculate unpaid purchase from the source amounts.
+        // Do NOT trust a stale/incorrect balance_amount saved on the purchase.
+        // This prevents a fully paid purchase from appearing payable again.
+        const balance = Math.max(total - paid, 0);
         if (Number.isFinite(total)) current.total += total;
         if (Number.isFinite(paid)) current.paid += paid;
         if (Number.isFinite(balance)) current.balance += balance;
@@ -187,12 +187,10 @@ export default function Suppliers() {
           purchase_paid: purchaseSummary.paid,
           purchase_outstanding: purchaseSummary.balance,
           supplier_payments: supplierPayments,
-          // Supplier ledger balance:
-          // positive = payable to supplier
-          // negative = supplier credit available for future milk purchases.
-          // Supplier payments are separate ledger transactions and can be
-          // greater than current purchases.
-          outstanding: opening + purchaseSummary.total - supplierPayments,
+          // Current supplier position:
+          // Opening payable + unpaid purchases - separate supplier payments.
+          // Positive = payable. Negative = supplier credit.
+          outstanding: opening + purchaseSummary.balance - supplierPayments,
         };
       });
 
@@ -542,7 +540,7 @@ export default function Suppliers() {
     type LedgerItem = {
       date: string;
       sortType: number;
-      type: "Opening" | "Purchase" | "Payment";
+      type: "Opening" | "Purchase" | "Paid in Purchase" | "Payment";
       reference: string;
       debit: number;
       credit: number;
@@ -573,18 +571,36 @@ export default function Suppliers() {
       }
 
       const amount = Math.round(Number(purchase.total_amount || 0));
+      const paidInPurchase = Math.round(Number(purchase.paid_amount || 0));
       if (amount <= 0) return;
 
+      const purchaseDate = String(purchase.purchase_date || "9999-12-31").slice(0, 10);
+      const purchaseReference = purchase.invoice_no
+        ? `Purchase • ${purchase.invoice_no}`
+        : "Milk purchase";
+
+      // Show the purchase at full value, then show any amount already paid
+      // inside the purchase entry as a separate credit. This keeps the
+      // running supplier balance correct without double-counting it.
       items.push({
-        date: String(purchase.purchase_date || "9999-12-31").slice(0, 10),
+        date: purchaseDate,
         sortType: 1,
         type: "Purchase",
-        reference: purchase.invoice_no
-          ? `Purchase • ${purchase.invoice_no}`
-          : "Milk purchase",
+        reference: purchaseReference,
         debit: amount,
         credit: 0,
       });
+
+      if (paidInPurchase > 0) {
+        items.push({
+          date: purchaseDate,
+          sortType: 2,
+          type: "Paid in Purchase",
+          reference: `Against ${purchaseReference}`,
+          debit: 0,
+          credit: Math.min(paidInPurchase, amount),
+        });
+      }
     });
 
     payments.forEach((payment) => {
@@ -595,7 +611,7 @@ export default function Suppliers() {
 
       items.push({
         date: String(payment.payment_date || "9999-12-31").slice(0, 10),
-        sortType: 2,
+        sortType: 3,
         type: "Payment",
         reference: payment.reference || "Supplier payment",
         debit: 0,
@@ -826,7 +842,7 @@ export default function Suppliers() {
         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-800">Supplier Ledger Balance</h2>
-            <p className="text-sm text-slate-500">Opening + unpaid purchases − supplier payments. Credit means excess payment available for future milk purchases.</p>
+            <p className="text-sm text-slate-500">Opening + (Purchases − Paid in Purchase) − Supplier Payments. Credit means excess payment available for future milk purchases.</p>
           </div>
           <input className="rounded-lg border p-3 md:w-80" placeholder="Search supplier..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
