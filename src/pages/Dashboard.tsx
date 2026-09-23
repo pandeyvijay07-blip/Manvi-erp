@@ -122,7 +122,11 @@ function isToday(
   return !!value && String(value).slice(0, 10) === today;
 }
 
-export default function Dashboard() {
+export default function Dashboard({
+  employeeOnly = false,
+}: {
+  employeeOnly?: boolean;
+}) {
   const [sales, setSales] = useState<Sale[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -231,16 +235,16 @@ export default function Dashboard() {
       ]);
 
       const errors = [
-        salesResult?.error,
-        collectionsResult?.error,
-        expensesResult?.error,
-        itemsResult?.error,
-        productsResult?.error,
-        customersResult?.error,
-        purchasesResult?.error,
-        suppliersResult?.error,
-        supplierPaymentsResult?.error,
-        dailyClosingsResult?.error,
+        salesResult.error,
+        collectionsResult.error,
+        expensesResult.error,
+        itemsResult.error,
+        productsResult.error,
+        customersResult.error,
+        purchasesResult.error,
+        suppliersResult.error,
+        supplierPaymentsResult.error,
+        dailyClosingsResult.error,
       ].filter(Boolean);
 
       /*
@@ -248,63 +252,63 @@ export default function Dashboard() {
        * Any query errors are shown in one compact warning.
        */
       setSales(
-        Boolean(salesResult?.error)
+        errors.includes(salesResult.error)
           ? []
-          : ((salesResult?.data || []) as Sale[])
+          : ((salesResult.data || []) as Sale[])
       );
 
       setCollections(
-        Boolean(collectionsResult?.error)
+        errors.includes(collectionsResult.error)
           ? []
-          : ((collectionsResult?.data || []) as Collection[])
+          : ((collectionsResult.data || []) as Collection[])
       );
 
       setExpenses(
-        Boolean(expensesResult?.error)
+        errors.includes(expensesResult.error)
           ? []
-          : ((expensesResult?.data || []) as Expense[])
+          : ((expensesResult.data || []) as Expense[])
       );
 
       setSaleItems(
-        Boolean(itemsResult?.error)
+        errors.includes(itemsResult.error)
           ? []
-          : ((itemsResult?.data || []) as SaleItem[])
+          : ((itemsResult.data || []) as SaleItem[])
       );
 
       setProducts(
-        Boolean(productsResult?.error)
+        errors.includes(productsResult.error)
           ? []
-          : ((productsResult?.data || []) as Product[])
+          : ((productsResult.data || []) as Product[])
       );
 
       setCustomers(
-        Boolean(customersResult?.error)
+        errors.includes(customersResult.error)
           ? []
-          : ((customersResult?.data || []) as Customer[])
+          : ((customersResult.data || []) as Customer[])
       );
 
       setPurchases(
-        Boolean(purchasesResult?.error)
+        errors.includes(purchasesResult.error)
           ? []
-          : ((purchasesResult?.data || []) as Purchase[])
+          : ((purchasesResult.data || []) as Purchase[])
       );
 
       setSuppliers(
-        Boolean(suppliersResult?.error)
+        errors.includes(suppliersResult.error)
           ? []
-          : ((suppliersResult?.data || []) as Supplier[])
+          : ((suppliersResult.data || []) as Supplier[])
       );
 
       setSupplierPayments(
-        Boolean(supplierPaymentsResult?.error)
+        errors.includes(supplierPaymentsResult.error)
           ? []
-          : ((supplierPaymentsResult?.data || []) as SupplierPayment[])
+          : ((supplierPaymentsResult.data || []) as SupplierPayment[])
       );
 
       setDailyClosings(
-        Boolean(dailyClosingsResult?.error)
+        errors.includes(dailyClosingsResult.error)
           ? []
-          : ((dailyClosingsResult?.data || []) as DailyClosing[])
+          : ((dailyClosingsResult.data || []) as DailyClosing[])
       );
 
       if (errors.length > 0) {
@@ -618,6 +622,15 @@ export default function Dashboard() {
     return total;
   }, [sales, customers]);
 
+  const totalCurrentStock = useMemo(
+    () =>
+      products.reduce(
+        (sum, product) => sum + numberValue(product.stock_qty),
+        0
+      ),
+    [products]
+  );
+
   const supplierOutstanding = useMemo(() => {
     // Supplier balance follows the MANVI ERP supplier ledger model:
     // Opening balance + all milk purchases - actual supplier payments.
@@ -802,6 +815,137 @@ export default function Dashboard() {
     cashCollections -
     cashPurchasePayments -
     totalExpenses;
+
+  // Employee dashboard shows only operational sales, collections, customer outstanding, and stock.
+  if (employeeOnly) {
+    return (
+      <div className="min-h-full bg-slate-50 p-4 md:p-6">
+        <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-600 p-6 text-white shadow-lg">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-blue-100">MANVI MILK AGENCIES</p>
+              <h1 className="mt-1 text-3xl font-bold">Dashboard</h1>
+              <p className="mt-2 text-sm text-blue-100">Sales & Collections for {formatDDMMYYYY(selectedDate)}</p>
+              {lastUpdated && <p className="mt-1 text-xs text-blue-100">Updated at {lastUpdated}</p>}
+            </div>
+            <button type="button" onClick={loadDashboard} disabled={loading} className="rounded-xl bg-white px-5 py-3 font-bold text-blue-700 shadow hover:bg-blue-50 disabled:opacity-60">
+              {loading ? "Loading..." : "↻ Refresh"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-6 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setSelectedDate(getLocalDateISO(new Date(new Date(selectedDate + "T00:00:00").getTime() - 86400000)))} className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700">← Previous</button>
+              <button type="button" onClick={() => setSelectedDate(today)} className="rounded-xl bg-blue-600 px-4 py-2 font-bold text-white">Today</button>
+              <button type="button" onClick={() => setSelectedDate(getLocalDateISO(new Date(new Date(selectedDate + "T00:00:00").getTime() + 86400000)))} className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700">Next →</button>
+            </div>
+            <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-semibold text-slate-700 outline-none focus:border-blue-500 md:w-auto" />
+          </div>
+          <div className="mt-3 rounded-xl bg-blue-50 px-3 py-2 text-center text-sm font-bold text-blue-800">
+            Showing: {formatDDMMYYYY(selectedDate)}{selectedDate === today ? " • Today" : ""}
+          </div>
+        </div>
+
+        {errorMessage && (
+          <div className="mb-6 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm font-semibold text-orange-800">
+            <p>Some dashboard data could not be loaded.</p>
+            <p className="mt-1 break-words font-normal">{errorMessage}</p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            title={selectedDate === today ? "Today's Sales" : "Selected Date Sales"}
+            value={money(totalSales)}
+            subtitle={`${todaySales.length} sale entries`}
+          />
+
+          <MetricCard
+            title={selectedDate === today ? "Today's Collections" : "Selected Date Collections"}
+            value={money(totalCollections)}
+            subtitle={`${todayCollections.length} collection entries`}
+          />
+
+          <MetricCard
+            title="Customer Outstanding"
+            value={money(outstandingBalance)}
+            subtitle="Current pending customer balance"
+          />
+
+          <MetricCard
+            title="Current Stock"
+            value={money(totalCurrentStock)}
+            subtitle={`${products.length} products`}
+          />
+        </div>
+
+        <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-slate-800">Stock Status</h2>
+              <p className="text-sm text-slate-500">Current stock available in MANVI ERP</p>
+            </div>
+            <Link
+              to="/products"
+              className="font-semibold text-blue-600 hover:text-blue-800"
+            >
+              View Products
+            </Link>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {products.slice(0, 10).map((product) => (
+              <div
+                key={product.id}
+                className="rounded-xl border border-slate-200 bg-slate-50 p-4"
+              >
+                <p className="font-bold text-slate-800">{product.product_name}</p>
+                <p className="mt-1 text-sm font-semibold text-blue-700">
+                  Stock: {numberValue(product.stock_qty)}
+                </p>
+              </div>
+            ))}
+
+            {products.length === 0 && (
+              <div className="col-span-full rounded-xl bg-slate-50 p-5 text-center text-slate-500">
+                No products found.
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="min-w-0 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+            <div className="mb-4 flex items-center justify-between">
+              <div><h2 className="text-xl font-bold text-slate-800">{selectedDate === today ? "Today's Sales" : "Selected Date Sales"}</h2><p className="text-sm text-slate-500">{formatDDMMYYYY(selectedDate)}</p></div>
+              <Link to="/sales" className="font-semibold text-blue-600 hover:text-blue-800">View Sales</Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px]">
+                <thead><tr className="border-b bg-blue-600 text-left text-white"><th className="p-3">Date</th><th className="p-3">Customer</th><th className="p-3">Payment</th><th className="p-3 text-right">Total</th></tr></thead>
+                <tbody>{recentSales.length === 0 ? <tr><td colSpan={4} className="p-6 text-center text-slate-500">No sales for this date.</td></tr> : recentSales.map((sale) => <tr key={sale.id} className="border-b"><td className="p-3">{formatDDMMYYYY(sale.sale_date)}</td><td className="p-3 font-semibold">{customerMap.get(String(sale.customer_id)) || "Walk-in"}</td><td className="p-3">{sale.payment_method || "Cash"}</td><td className="p-3 text-right font-bold">{money(numberValue(sale.total_amount))}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="min-w-0 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+            <div className="mb-4 flex items-center justify-between">
+              <div><h2 className="text-xl font-bold text-slate-800">{selectedDate === today ? "Today's Collections" : "Selected Date Collections"}</h2><p className="text-sm text-slate-500">{formatDDMMYYYY(selectedDate)}</p></div>
+              <Link to="/collections" className="font-semibold text-blue-600 hover:text-blue-800">View Collections</Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px]">
+                <thead><tr className="border-b bg-emerald-600 text-left text-white"><th className="p-3">Date</th><th className="p-3">Customer</th><th className="p-3">Payment</th><th className="p-3 text-right">Amount</th></tr></thead>
+                <tbody>{recentCollections.length === 0 ? <tr><td colSpan={4} className="p-6 text-center text-slate-500">No collections for this date.</td></tr> : recentCollections.map((collection) => <tr key={collection.id} className="border-b"><td className="p-3">{formatDDMMYYYY(collection.collection_date)}</td><td className="p-3 font-semibold">{customerMap.get(String(collection.customer_id)) || "Unknown"}</td><td className="p-3">{collection.payment_method || "Cash"}</td><td className="p-3 text-right font-bold text-emerald-700">{money(numberValue(collection.amount))}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-full w-full min-w-0 max-w-full overflow-x-hidden bg-slate-50 p-3 sm:p-4 md:p-6">
