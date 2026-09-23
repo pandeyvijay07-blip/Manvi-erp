@@ -178,13 +178,12 @@ function formatDateDDMMYYYYInput(
 function money(
   value: number | string | null | undefined
 ) {
-  return `₹ ${Number(
-    value || 0
-  ).toLocaleString(
+  const roundedValue = Math.round(Number(value || 0));
+
+  return `₹ ${roundedValue.toLocaleString(
     "en-IN",
     {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 0,
     }
   )}`;
 }
