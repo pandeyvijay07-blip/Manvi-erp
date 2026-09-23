@@ -105,7 +105,9 @@ export default function Suppliers() {
   }, []);
 
   async function loadAll() {
-    await Promise.all([loadSuppliers(), loadPayments()]);
+    // Payments must load first because supplier balances depend on them.
+    await loadPayments();
+    await loadSuppliers();
   }
 
   async function loadSuppliers() {
@@ -179,7 +181,10 @@ export default function Suppliers() {
           purchase_paid: purchaseSummary.paid,
           purchase_outstanding: purchaseSummary.balance,
           supplier_payments: supplierPayments,
-          outstanding: Math.max(0, opening + purchaseSummary.balance - supplierPayments),
+          // Signed supplier balance:
+          // positive = we still have to pay the supplier
+          // negative = supplier credit / excess payment available for future purchases
+          outstanding: opening + purchaseSummary.balance - supplierPayments,
         };
       });
 
@@ -410,22 +415,9 @@ export default function Suppliers() {
       return;
     }
 
-    // Allow an edited payment to be reused against its own existing outstanding.
-    const existingPayment = paymentId
-      ? payments.find((item) => item.id === paymentId)
-      : null;
-    const availableOutstanding =
-      supplier.outstanding +
-      (existingPayment?.supplier_id === supplier.id ? Number(existingPayment.amount || 0) : 0);
-
-    if (amount > availableOutstanding + 0.0001) {
-      alert(
-        `Payment cannot exceed supplier outstanding.\n\nAvailable outstanding: ${money(
-          availableOutstanding
-        )}`
-      );
-      return;
-    }
+    // Supplier payments are ledger transactions.
+    // Do not block a payment just because the current purchase outstanding is lower.
+    // Any excess payment becomes supplier credit and will be consumed by future purchases.
 
     setPaymentSaving(true);
     try {
@@ -602,7 +594,7 @@ export default function Suppliers() {
               <option value="">Select supplier</option>
               {suppliers.map((supplier) => (
                 <option key={supplier.id} value={supplier.id}>
-                  {supplier.name} — Outstanding {money(supplier.outstanding)}
+                  {supplier.name} — Balance {supplier.outstanding > 0 ? `Payable ${money(supplier.outstanding)}` : supplier.outstanding < 0 ? `Credit ${money(Math.abs(supplier.outstanding))}` : "Settled ₹ 0"}
                 </option>
               ))}
             </select>
@@ -703,7 +695,7 @@ export default function Suppliers() {
 
         {paymentSupplierId && (
           <div className="mt-4 rounded-xl bg-blue-50 p-4">
-            <span className="text-sm text-slate-600">Current outstanding: </span>
+            <span className="text-sm text-slate-600">Current supplier balance: </span>
             <span className="font-bold text-red-700">
               {money(suppliers.find((item) => item.id === paymentSupplierId)?.outstanding || 0)}
             </span>
@@ -733,8 +725,8 @@ export default function Suppliers() {
           <p className="mt-1 text-2xl font-bold text-green-700">{money(totalPayments)}</p>
         </div>
         <div className="rounded-2xl bg-white p-5 shadow">
-          <p className="text-sm text-slate-500">Total Outstanding</p>
-          <p className="mt-1 text-2xl font-bold text-red-700">{money(totalOutstanding)}</p>
+          <p className="text-sm text-slate-500">Net Supplier Balance</p>
+          <p className={`mt-1 text-2xl font-bold ${totalOutstanding > 0 ? "text-red-700" : totalOutstanding < 0 ? "text-blue-700" : "text-green-700"}`}>{totalOutstanding > 0 ? `Payable ${money(totalOutstanding)}` : totalOutstanding < 0 ? `Credit ${money(Math.abs(totalOutstanding))}` : "Settled ₹ 0"}</p>
         </div>
       </div>
 
@@ -742,8 +734,8 @@ export default function Suppliers() {
       <div className="mb-6 rounded-2xl bg-white p-6 shadow-lg">
         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-xl font-bold text-slate-800">Supplier Outstanding</h2>
-            <p className="text-sm text-slate-500">Opening + unpaid purchases − supplier payments</p>
+            <h2 className="text-xl font-bold text-slate-800">Supplier Ledger Balance</h2>
+            <p className="text-sm text-slate-500">Opening + unpaid purchases − supplier payments. Credit means excess payment available for future milk purchases.</p>
           </div>
           <input className="rounded-lg border p-3 md:w-80" placeholder="Search supplier..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
@@ -758,7 +750,7 @@ export default function Suppliers() {
                 <th className="p-3 text-right">Purchases</th>
                 <th className="p-3 text-right">Paid in Purchase</th>
                 <th className="p-3 text-right">Supplier Payments</th>
-                <th className="p-3 text-right">Outstanding</th>
+                <th className="p-3 text-right">Balance</th>
                 <th className="p-3 text-center">Actions</th>
               </tr>
             </thead>
@@ -776,7 +768,13 @@ export default function Suppliers() {
                     <td className="p-3 text-right font-semibold text-purple-700">{money(supplier.total_purchases)}</td>
                     <td className="p-3 text-right text-green-700">{money(supplier.purchase_paid)}</td>
                     <td className="p-3 text-right font-semibold text-blue-700">{money(supplier.supplier_payments)}</td>
-                    <td className={`p-3 text-right font-bold ${supplier.outstanding > 0 ? "text-red-600" : "text-green-600"}`}>{money(supplier.outstanding)}</td>
+                    <td className={`p-3 text-right font-bold ${supplier.outstanding > 0 ? "text-red-600" : supplier.outstanding < 0 ? "text-blue-600" : "text-green-600"}`}>
+                      {supplier.outstanding > 0
+                        ? `Payable ${money(supplier.outstanding)}`
+                        : supplier.outstanding < 0
+                        ? `Credit ${money(Math.abs(supplier.outstanding))}`
+                        : "Settled ₹ 0"}
+                    </td>
                     <td className="p-3">
                       <div className="flex justify-center gap-2">
                         <button type="button" onClick={() => editSupplier(supplier)} className="rounded bg-yellow-500 px-3 py-1 text-sm font-semibold text-white">Edit</button>
