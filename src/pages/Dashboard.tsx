@@ -218,6 +218,11 @@ export default function Dashboard() {
           .order("supplier_name"),
 
         supabase
+          .from("supplier_payments")
+          .select("id, supplier_id, payment_date, amount")
+          .order("payment_date", { ascending: false }),
+
+        supabase
           .from("daily_closings")
           .select(
             "id, closing_date, opening_cash, cash_sales, upi_sales, credit_sales, collections, expenses, closing_cash"
@@ -226,16 +231,16 @@ export default function Dashboard() {
       ]);
 
       const errors = [
-        salesResult.error,
-        collectionsResult.error,
-        expensesResult.error,
-        itemsResult.error,
-        productsResult.error,
-        customersResult.error,
-        purchasesResult.error,
-        suppliersResult.error,
-        supplierPaymentsResult.error,
-        dailyClosingsResult.error,
+        salesResult?.error,
+        collectionsResult?.error,
+        expensesResult?.error,
+        itemsResult?.error,
+        productsResult?.error,
+        customersResult?.error,
+        purchasesResult?.error,
+        suppliersResult?.error,
+        supplierPaymentsResult?.error,
+        dailyClosingsResult?.error,
       ].filter(Boolean);
 
       /*
@@ -243,63 +248,63 @@ export default function Dashboard() {
        * Any query errors are shown in one compact warning.
        */
       setSales(
-        errors.includes(salesResult.error)
+        Boolean(salesResult?.error)
           ? []
-          : ((salesResult.data || []) as Sale[])
+          : ((salesResult?.data || []) as Sale[])
       );
 
       setCollections(
-        errors.includes(collectionsResult.error)
+        Boolean(collectionsResult?.error)
           ? []
-          : ((collectionsResult.data || []) as Collection[])
+          : ((collectionsResult?.data || []) as Collection[])
       );
 
       setExpenses(
-        errors.includes(expensesResult.error)
+        Boolean(expensesResult?.error)
           ? []
-          : ((expensesResult.data || []) as Expense[])
+          : ((expensesResult?.data || []) as Expense[])
       );
 
       setSaleItems(
-        errors.includes(itemsResult.error)
+        Boolean(itemsResult?.error)
           ? []
-          : ((itemsResult.data || []) as SaleItem[])
+          : ((itemsResult?.data || []) as SaleItem[])
       );
 
       setProducts(
-        errors.includes(productsResult.error)
+        Boolean(productsResult?.error)
           ? []
-          : ((productsResult.data || []) as Product[])
+          : ((productsResult?.data || []) as Product[])
       );
 
       setCustomers(
-        errors.includes(customersResult.error)
+        Boolean(customersResult?.error)
           ? []
-          : ((customersResult.data || []) as Customer[])
+          : ((customersResult?.data || []) as Customer[])
       );
 
       setPurchases(
-        errors.includes(purchasesResult.error)
+        Boolean(purchasesResult?.error)
           ? []
-          : ((purchasesResult.data || []) as Purchase[])
+          : ((purchasesResult?.data || []) as Purchase[])
       );
 
       setSuppliers(
-        errors.includes(suppliersResult.error)
+        Boolean(suppliersResult?.error)
           ? []
-          : ((suppliersResult.data || []) as Supplier[])
+          : ((suppliersResult?.data || []) as Supplier[])
       );
 
       setSupplierPayments(
-        errors.includes(supplierPaymentsResult.error)
+        Boolean(supplierPaymentsResult?.error)
           ? []
-          : ((supplierPaymentsResult.data || []) as SupplierPayment[])
+          : ((supplierPaymentsResult?.data || []) as SupplierPayment[])
       );
 
       setDailyClosings(
-        errors.includes(dailyClosingsResult.error)
+        Boolean(dailyClosingsResult?.error)
           ? []
-          : ((dailyClosingsResult.data || []) as DailyClosing[])
+          : ((dailyClosingsResult?.data || []) as DailyClosing[])
       );
 
       if (errors.length > 0) {
