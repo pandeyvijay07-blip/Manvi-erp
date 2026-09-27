@@ -1,5 +1,3 @@
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -7,7 +5,20 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-function json(data: unknown, status = 200) {
+type WhatsAppRequest = {
+  customer_id?: string | null;
+  customer_name?: string | null;
+  customer_mobile?: string | null;
+  message?: string | null;
+  message_type?: "sale" | "collection" | string | null;
+  reference_id?: string | null;
+
+  // Template variables in order:
+  // {{1}}, {{2}}, {{3}}, {{4}}, {{5}}, {{6}}
+  template_variables?: Array<string | number | null | undefined>;
+};
+
+function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -17,21 +28,37 @@ function json(data: unknown, status = 200) {
   });
 }
 
-function normalizeIndiaPhone(value: string) {
-  const digits = String(value || "").replace(/\D/g, "");
+function normalizeIndianWhatsAppNumber(
+  mobile: string | null | undefined
+): string | null {
+  if (!mobile) return null;
 
-  if (digits.length === 10) {
-    return `+91${digits}`;
-  }
+ const digits = String(mobile).replace(/\D/g, "");
 
+  // +91XXXXXXXXXX / 91XXXXXXXXXX
   if (digits.length === 12 && digits.startsWith("91")) {
-    return `+${digits}`;
+    return digits;
   }
 
-  return "";
+  // XXXXXXXXXX
+  if (digits.length === 10) {
+    return `91${digits}`;
+  }
+
+  return null;
 }
 
-serve(async (req: Request) => {
+function cleanTemplateVariable(
+  value: string | number | null | undefined
+): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value);
+}
+
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", {
       headers: corsHeaders,
@@ -39,178 +66,237 @@ serve(async (req: Request) => {
   }
 
   if (req.method !== "POST") {
-    return json(
+    return jsonResponse(
       {
+        success: false,
         sent: false,
-        error: "POST required.",
+        skipped: false,
+        error: "Only POST requests are allowed.",
       },
-      405,
+      405
     );
   }
 
   try {
     const enabled =
-      String(
-        Deno.env.get("MANVI_AUTO_WHATSAPP_ENABLED") || "false",
-      ).toLowerCase() === "true";
+      String(Deno.env.get("MANVI_AUTO_WHATSAPP_ENABLED") || "")
+        .trim()
+        .toLowerCase() === "true";
 
     if (!enabled) {
-      return json({
+      return jsonResponse({
+        success: true,
         sent: false,
         skipped: true,
         reason: "Automatic WhatsApp is disabled.",
       });
     }
 
-    const accountSid =
-      Deno.env.get("TWILIO_ACCOUNT_SID") || "";
+    const accessToken = Deno.env.get("META_WHATSAPP_ACCESS_TOKEN");
+    const phoneNumberId = Deno.env.get("META_WHATSAPP_PHONE_NUMBER_ID");
 
-    const authToken =
-      Deno.env.get("TWILIO_AUTH_TOKEN") || "";
+    const defaultTemplateName =
+      Deno.env.get("META_WHATSAPP_TEMPLATE_NAME") ||
+      "manvi_sale_bill";
 
-    const whatsappFrom =
-      Deno.env.get("TWILIO_WHATSAPP_FROM") || "";
+    const defaultTemplateLanguage =
+      Deno.env.get("META_WHATSAPP_TEMPLATE_LANGUAGE") ||
+      "en_US";
 
-    const contentSid =
-      Deno.env.get("TWILIO_WHATSAPP_CONTENT_SID") || "";
-
-    if (
-      !accountSid ||
-      !authToken ||
-      !whatsappFrom ||
-      !contentSid
-    ) {
-      return json({
-        sent: false,
-        skipped: true,
-        reason:
-          "Twilio WhatsApp credentials or ContentSid are not configured.",
-      });
-    }
-
-    const body = await req.json();
-
-    const customerId = String(
-      body.customer_id || "",
-    );
-
-    const customerName = String(
-      body.customer_name || "Customer",
-    );
-
-    const phone = normalizeIndiaPhone(
-      body.customer_mobile || "",
-    );
-
-    const messageType = String(
-      body.message_type || "sale",
-    );
-
-    const referenceId = body.reference_id
-      ? String(body.reference_id)
-      : null;
-
-    if (!customerId) {
-      return json({
-        sent: false,
-        skipped: true,
-        reason: "Customer ID is required.",
-      });
-    }
-
-    if (!phone) {
-      return json({
-        sent: false,
-        skipped: true,
-        reason: "Invalid Indian mobile number.",
-      });
-    }
-
-    const from = whatsappFrom.startsWith("whatsapp:")
-      ? whatsappFrom
-      : `whatsapp:${whatsappFrom}`;
-
-    const to = `whatsapp:${phone}`;
-
-    const form = new URLSearchParams();
-
-    form.set("To", to);
-    form.set("From", from);
-    form.set("ContentSid", contentSid);
-
-    const basicAuth = btoa(
-      `${accountSid}:${authToken}`,
-    );
-
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-
-        headers: {
-          Authorization: `Basic ${basicAuth}`,
-          "Content-Type":
-            "application/x-www-form-urlencoded",
+    if (!accessToken) {
+      return jsonResponse(
+        {
+          success: false,
+          sent: false,
+          skipped: false,
+          error: "META_WHATSAPP_ACCESS_TOKEN is not configured.",
         },
+        500
+      );
+    }
 
-        body: form.toString(),
+    if (!phoneNumberId) {
+      return jsonResponse(
+        {
+          success: false,
+          sent: false,
+          skipped: false,
+          error: "META_WHATSAPP_PHONE_NUMBER_ID is not configured.",
+        },
+        500
+      );
+    }
+
+    const body = (await req.json()) as WhatsAppRequest;
+
+    const customerId = body.customer_id || null;
+    const customerName = body.customer_name || "";
+    const customerMobile = body.customer_mobile || "";
+    const messageType = body.message_type || "sale";
+    const referenceId = body.reference_id || null;
+
+    const to = normalizeIndianWhatsAppNumber(customerMobile);
+
+    if (!to) {
+      return jsonResponse({
+        success: true,
+        sent: false,
+        skipped: true,
+        reason: "Customer does not have a valid Indian mobile number.",
+        customer_id: customerId,
+        customer_name: customerName,
+        customer_mobile: customerMobile,
+      });
+    }
+
+    /*
+     * For now the approved Meta template is:
+     *
+     * manvi_sale_bill
+     *
+     * Body:
+     *
+     * MANVI MILK AGENCIES
+     *
+     * SALE BILL
+     *
+     * Customer: {{1}}
+     * Date: {{2}}
+     *
+     * Previous Balance: ₹{{3}}
+     * Total Amount: ₹{{4}}
+     * Paid Amount: ₹{{5}}
+     * Balance Amount: ₹{{6}}
+     *
+     * Thank you for your business.
+     */
+
+    const templateVariables = Array.isArray(body.template_variables)
+      ? body.template_variables.map(cleanTemplateVariable)
+      : [];
+
+    const templateName =
+      defaultTemplateName.trim() || "manvi_sale_bill";
+
+    const templateLanguage =
+      defaultTemplateLanguage.trim() || "en_US";
+
+    const templatePayload: Record<string, unknown> = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to,
+      type: "template",
+      template: {
+        name: templateName,
+        language: {
+          code: templateLanguage,
+        },
       },
-    );
+    };
 
-    const result = await response.json();
+    /*
+     * Add body variables only when supplied.
+     *
+     * The approved MANVI template needs 6 variables.
+     */
+    if (templateVariables.length > 0) {
+      (
+        templatePayload.template as {
+          components?: unknown[];
+        }
+      ).components = [
+        {
+          type: "body",
+          parameters: templateVariables.map((value) => ({
+            type: "text",
+            text: value,
+          })),
+        },
+      ];
+    }
+
+    const graphUrl =
+      `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`;
+
+    console.log("Sending Meta WhatsApp message:", {
+      customer_id: customerId,
+      customer_name: customerName,
+      customer_mobile: to,
+      message_type: messageType,
+      reference_id: referenceId,
+      template_name: templateName,
+      template_language: templateLanguage,
+      template_variable_count: templateVariables.length,
+    });
+
+    const response = await fetch(graphUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(templatePayload),
+    });
+
+    const responseData = await response.json();
 
     if (!response.ok) {
       console.error(
-        "Twilio WhatsApp error:",
-        result,
+        "Meta WhatsApp API error:",
+        JSON.stringify(responseData)
       );
 
-      return json(
+      return jsonResponse(
         {
+          success: false,
           sent: false,
           skipped: false,
-          error:
-            result?.message ||
-            "Twilio WhatsApp message failed.",
-          code: result?.code || null,
+          error: "Meta WhatsApp API returned an error.",
+          meta_error: responseData,
+          customer_id: customerId,
+          customer_name: customerName,
+          customer_mobile: to,
+          message_type: messageType,
+          reference_id: referenceId,
         },
-        502,
+        response.status
       );
     }
 
     console.log(
-      "MANVI WhatsApp sent:",
-      {
-        customerName,
-        messageType,
-        referenceId,
-        sid: result.sid,
-        status: result.status,
-      },
+      "Meta WhatsApp message sent:",
+      JSON.stringify(responseData)
     );
 
-    return json({
+    return jsonResponse({
+      success: true,
       sent: true,
       skipped: false,
-      sid: result.sid || null,
-      status: result.status || null,
+      provider: "meta",
+      customer_id: customerId,
+      customer_name: customerName,
+      customer_mobile: to,
+      message_type: messageType,
+      reference_id: referenceId,
+      template_name: templateName,
+      template_language: templateLanguage,
+      template_variable_count: templateVariables.length,
+      meta_response: responseData,
     });
   } catch (error) {
-    console.error(
-      "send-whatsapp error:",
-      error,
-    );
+    console.error("send-whatsapp exception:", error);
 
-    return json(
+    return jsonResponse(
       {
+        success: false,
         sent: false,
         skipped: false,
         error:
           error instanceof Error
             ? error.message
-            : "Unknown WhatsApp error.",
+            : "Unexpected WhatsApp function error.",
       },
-      500,
+      500
     );
   }
 });

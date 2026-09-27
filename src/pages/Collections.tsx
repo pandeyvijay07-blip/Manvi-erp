@@ -20,6 +20,7 @@ type RecentCollection = {
   customer_id: string;
   customer_name: string;
   amount: number;
+  round_off?: number;
   payment_method: string;
   cash_amount: number;
   upi_amount: number;
@@ -160,6 +161,8 @@ export default function Collections() {
 
   const [amount, setAmount] = useState("");
 
+  const [roundOff, setRoundOff] = useState("0");
+
   const [paymentMethod, setPaymentMethod] =
     useState("Cash");
 
@@ -265,6 +268,7 @@ export default function Collections() {
             collection_date,
             customer_id,
             amount,
+            round_off,
             payment_method,
             cash_amount,
             upi_amount,
@@ -321,6 +325,7 @@ export default function Collections() {
           customer_name:
             customerMap.get(row.customer_id) || "Unknown",
           amount: Number(row.amount) || 0,
+          round_off: Number(row.round_off) || 0,
           payment_method: row.payment_method || "Cash",
           cash_amount: Number(row.cash_amount) || 0,
           upi_amount: Number(row.upi_amount) || 0,
@@ -524,10 +529,17 @@ export default function Collections() {
       ? Number(amount) || 0
       : 0;
 
-  const effectiveCollectionAmount =
+  const baseCollectionAmount =
     isSplitPayment
       ? cashPaid + upiPaid
       : Number(amount) || 0;
+
+  const roundOffAmount = Number(roundOff) || 0;
+
+  const effectiveCollectionAmount = Math.max(
+    0,
+    baseCollectionAmount + roundOffAmount
+  );
 
   /* =====================================================
      CUSTOMER CHANGE
@@ -696,6 +708,7 @@ export default function Collections() {
           customer_id: customerId,
           collection_date: normalizedDate,
           amount: collectionAmount,
+          round_off: roundOffAmount,
           payment_method: paymentMethod,
           cash_amount: cashPaid,
           upi_amount: upiPaid,
@@ -858,6 +871,7 @@ export default function Collections() {
           customer_id,
           collection_date,
           amount,
+          round_off,
           payment_method,
           remarks
           `
@@ -897,12 +911,21 @@ export default function Collections() {
         )
       );
 
+      const savedCollectionAmount =
+        Number(collection.amount) || 0;
+      const savedRoundOff =
+        Number((collection as any).round_off) || 0;
+
+      // Stored amount is the effective ledger collection.
+      // Show the original cash/UPI amount while editing.
       setAmount(
         String(
-          Number(
-            collection.amount
-          ) || 0
+          savedCollectionAmount - savedRoundOff
         )
+      );
+
+      setRoundOff(
+        String(Number((collection as any).round_off) || 0)
       );
 
       const editMethod =
@@ -1089,6 +1112,7 @@ export default function Collections() {
           customer_id: customerId,
           collection_date: normalizedDate,
           amount: collectionAmount,
+          round_off: roundOffAmount,
           payment_method: paymentMethod,
           cash_amount: cashPaid,
           upi_amount: upiPaid,
@@ -1154,6 +1178,7 @@ export default function Collections() {
     setAdvanceBalance(0);
 
     setAmount("");
+    setRoundOff("0");
 
     setPaymentMethod("Cash");
 
@@ -1604,6 +1629,47 @@ export default function Collections() {
             </div>
           )}
 
+          {/* ROUND OFF */}
+
+          <div className="md:col-span-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+              <div>
+                <label className="block font-semibold mb-2">
+                  Round-off (₹)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={roundOff}
+                  onChange={(e) => setRoundOff(e.target.value)}
+                  className="w-full border rounded-xl px-4 py-3"
+                  placeholder="0.00"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Accounting adjustment only; it is not an extra cash/UPI receipt.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={loading || baseCollectionAmount <= 0}
+                onClick={() =>
+                  setRoundOff((Math.round(baseCollectionAmount) - baseCollectionAmount).toFixed(2))
+                }
+                className="bg-amber-600 hover:bg-amber-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-bold"
+              >
+                Auto Round ₹1
+              </button>
+
+              <div className="rounded-xl bg-white border px-4 py-3">
+                <p className="text-xs text-gray-500">Effective Collection</p>
+                <p className="text-xl font-bold text-green-700">
+                  ₹{effectiveCollectionAmount.toFixed(2)}
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* REMARKS */}
 
           <div className="md:col-span-3">
@@ -1784,6 +1850,11 @@ export default function Collections() {
                         ₹
                         {collection.amount.toFixed(
                           2
+                        )}
+                        {Math.abs(Number(collection.round_off) || 0) >= 0.001 && (
+                          <span className="block text-xs text-amber-700 font-semibold">
+                            Round-off: {(Number(collection.round_off) || 0) >= 0 ? "+" : ""}{(Number(collection.round_off) || 0).toFixed(2)}
+                          </span>
                         )}
                       </td>
 

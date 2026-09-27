@@ -700,66 +700,6 @@ export default function Dashboard({ employeeOnly = false }: DashboardProps) {
     [sales]
   );
 
-  const todayCOGS = useMemo(
-    () =>
-      saleItems.reduce(
-        (sum, item) => {
-          const sale =
-            saleMap.get(
-              String(item.sale_id)
-            );
-
-          if (
-            !sale ||
-            !isToday(
-              sale.sale_date,
-              selectedDate
-            )
-          ) {
-            return sum;
-          }
-
-          const quantity =
-            numberValue(
-              item.quantity
-            );
-
-          const savedCost =
-            numberValue(
-              item.cost_rate
-            );
-
-          const effectiveCost =
-            savedCost > 0
-              ? savedCost
-              : productCostMap.get(
-                  String(
-                    item.product_id
-                  )
-                ) || 0;
-
-          return (
-            sum +
-            quantity *
-              effectiveCost
-          );
-        },
-        0
-      ),
-    [
-      saleItems,
-      saleMap,
-      productCostMap,
-      selectedDate,
-    ]
-  );
-
-  const grossProfit =
-    totalSales - todayCOGS;
-
-  const netProfit =
-    grossProfit - totalExpenses;
-
   const lowStockProducts =
     useMemo(
       () =>
@@ -1062,39 +1002,6 @@ export default function Dashboard({ employeeOnly = false }: DashboardProps) {
             nonCashCollections
           )}`}
         />
-      </div>
-
-        </>
-
-      )}
-
-      {!employeeOnly && (
-        <>
-          {/* PROFIT */}
-      <div className="mt-4 grid w-full min-w-0 max-w-full grid-cols-2 gap-2.5 sm:gap-3 md:mt-6 md:grid-cols-2 lg:grid-cols-3">
-        <ProfitCard
-          label="Gross Profit"
-          value={grossProfit}
-        />
-
-        <ProfitCard
-          label="Net Profit"
-          value={netProfit}
-        />
-
-        <div className="min-w-0 w-full max-w-full rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4 md:p-5">
-          <p className="text-sm font-semibold text-slate-500">
-            Cost of Goods Sold
-          </p>
-
-          <p className="mt-2 text-3xl font-bold text-slate-800">
-            {money(todayCOGS)}
-          </p>
-
-          <p className="mt-2 text-sm text-slate-500">
-            Historical sale cost where available
-          </p>
-        </div>
       </div>
 
         </>
@@ -1535,36 +1442,6 @@ function SmallCard({
           {footer}
         </p>
       )}
-    </div>
-  );
-}
-
-function ProfitCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: number;
-}) {
-  return (
-    <div className="min-w-0 w-full max-w-full rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4 md:p-5">
-      <p className="text-sm font-semibold text-slate-500">
-        {label}
-      </p>
-
-      <p
-        className={`mt-2 text-3xl font-bold ${
-          value >= 0
-            ? "text-green-600"
-            : "text-red-600"
-        }`}
-      >
-        {money(value)}
-      </p>
-
-      <p className="mt-2 text-sm text-slate-500">
-        Sales − COGS − expenses
-      </p>
     </div>
   );
 }

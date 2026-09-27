@@ -32,6 +32,7 @@ import WalkInSales from "./pages/WalkInSales";
 import Collections from "./pages/Collections";
 import Expenses from "./pages/Expenses";
 import PersonalExpenses from "./pages/PersonalExpenses";
+import CashBook from "./pages/CashBook";
 
 import Reports from "./pages/Reports";
 import CustomerLedger from "./pages/CustomerLedger";
@@ -515,6 +516,12 @@ function ProtectedApp() {
         <Route
           path="/personal-expenses"
           element={<PersonalExpenses />}
+        />
+
+        {/* CASH BOOK */}
+        <Route
+          path="/cash-book"
+          element={<CashBook />}
         />
 
         {/* ============================================

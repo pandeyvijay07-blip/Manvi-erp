@@ -939,12 +939,23 @@ export default function CashBook() {
             return;
           }
 
-          const referenceKey =
-            `${date}|${String(
-              expense.category || "Expense"
-            )
-              .trim()
-              .toLowerCase()}`;
+          const expenseCategory = String(
+            expense.category || "Expense"
+          )
+            .trim()
+            .toLowerCase();
+
+          const prefix =
+            expenseCategory === "employee salary"
+              ? "SAL"
+              : expenseCategory === "employee advance"
+              ? "ADV"
+              : "EXP";
+
+          // Sequence is per date + reference type:
+          // SAL-15/09/26-001, ADV-15/09/26-001,
+          // EXP-15/09/26-001 (all normal expenses share EXP numbering).
+          const referenceKey = `${date}|${prefix}`;
 
           const nextSequence =
             (expenseReferenceCounters.get(

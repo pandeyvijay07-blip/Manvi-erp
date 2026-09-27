@@ -86,6 +86,25 @@ export default function Products() {
     useState("0");
 
   // =====================================================
+  // STOCK ADJUSTMENT
+  // =====================================================
+
+  const [adjustingProductId, setAdjustingProductId] =
+    useState<string | null>(null);
+
+  const [adjustmentType, setAdjustmentType] =
+    useState<"add" | "reduce">("add");
+
+  const [adjustmentQty, setAdjustmentQty] =
+    useState("");
+
+  const [adjustmentReason, setAdjustmentReason] =
+    useState("Physical stock correction");
+
+  const [adjusting, setAdjusting] =
+    useState(false);
+
+  // =====================================================
   // SEARCH
   // =====================================================
 
@@ -552,6 +571,93 @@ export default function Products() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  // =====================================================
+  // ADJUST STOCK
+  // =====================================================
+
+  function openStockAdjustment(product: Product) {
+    setAdjustingProductId(product.id);
+    setAdjustmentType("add");
+    setAdjustmentQty("");
+    setAdjustmentReason("Physical stock correction");
+  }
+
+  function closeStockAdjustment() {
+    setAdjustingProductId(null);
+    setAdjustmentQty("");
+    setAdjustmentType("add");
+    setAdjustmentReason("Physical stock correction");
+  }
+
+  async function saveStockAdjustment(product: Product) {
+    const qty = Number(adjustmentQty);
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      alert("Please enter a valid adjustment quantity.");
+      return;
+    }
+
+    const currentStock = Number(product.stock_qty || 0);
+    const newStock =
+      adjustmentType === "add"
+        ? currentStock + qty
+        : currentStock - qty;
+
+    if (!Number.isFinite(newStock) || newStock < 0) {
+      alert(
+        `Stock cannot go below zero.\n\nCurrent Stock: ${currentStock}\nReduce Quantity: ${qty}`
+      );
+      return;
+    }
+
+    if (!adjustmentReason.trim()) {
+      alert("Please enter a reason for the stock adjustment.");
+      return;
+    }
+
+    setAdjusting(true);
+
+    try {
+      const { error } = await supabase
+        .from("products")
+        .update({
+          stock_qty: newStock,
+        })
+        .eq("id", product.id);
+
+      if (error) {
+        throw error;
+      }
+
+      setProducts((previous) =>
+        previous.map((item) =>
+          item.id === product.id
+            ? {
+                ...item,
+                stock_qty: newStock,
+              }
+            : item
+        )
+      );
+
+      alert(
+        `${product.product_name} stock adjusted successfully.\n\nPrevious Stock: ${currentStock}\nAdjustment: ${
+          adjustmentType === "add" ? "+" : "-"
+        }${qty}\nNew Stock: ${newStock}\nReason: ${adjustmentReason.trim()}`
+      );
+
+      closeStockAdjustment();
+    } catch (error: any) {
+      console.error("STOCK ADJUSTMENT ERROR:", error);
+      alert(
+        "Unable to adjust stock:\n\n" +
+          (error?.message || "Unknown error.")
+      );
+    } finally {
+      setAdjusting(false);
     }
   }
 
@@ -1498,14 +1604,146 @@ export default function Products() {
                     {/* STOCK */}
 
                     <td className="p-3 text-right font-bold text-green-700">
-                      {Number(
-                        product.stock_qty ||
-                          0
-                      )}{" "}
-                      {
-                        product.unit ||
-                          "Litre"
-                      }
+                      <div className="flex items-center justify-end gap-2">
+                        <span>
+                          {Number(
+                            product.stock_qty ||
+                              0
+                          )}{" "}
+                          {
+                            product.unit ||
+                              "Litre"
+                          }
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            adjustingProductId === product.id
+                              ? closeStockAdjustment()
+                              : openStockAdjustment(product)
+                          }
+                          disabled={
+                            saving ||
+                            deletingId !== null ||
+                            adjusting
+                          }
+                          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-semibold"
+                        >
+                          {adjustingProductId === product.id
+                            ? "Close"
+                            : "Adjust"}
+                        </button>
+                      </div>
+
+                      {adjustingProductId === product.id && (
+                        <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-left min-w-[250px]">
+                          <div className="text-xs font-semibold text-gray-600">
+                            Current Stock
+                          </div>
+
+                          <div className="text-lg font-bold text-blue-700 mb-2">
+                            {Number(product.stock_qty || 0)}{" "}
+                            {product.unit || "Litre"}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 mb-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAdjustmentType("add")
+                              }
+                              className={`px-3 py-2 rounded-lg font-semibold ${
+                                adjustmentType === "add"
+                                  ? "bg-green-600 text-white"
+                                  : "bg-white border border-gray-300 text-gray-700"
+                              }`}
+                            >
+                              + Add
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAdjustmentType("reduce")
+                              }
+                              className={`px-3 py-2 rounded-lg font-semibold ${
+                                adjustmentType === "reduce"
+                                  ? "bg-red-600 text-white"
+                                  : "bg-white border border-gray-300 text-gray-700"
+                              }`}
+                            >
+                              − Reduce
+                            </button>
+                          </div>
+
+                          <input
+                            type="number"
+                            min="0.001"
+                            step="0.001"
+                            value={adjustmentQty}
+                            onChange={(e) =>
+                              setAdjustmentQty(e.target.value)
+                            }
+                            placeholder="Adjustment quantity"
+                            className="w-full border border-gray-300 rounded-lg p-2 mb-2 bg-white"
+                          />
+
+                          <select
+                            value={adjustmentReason}
+                            onChange={(e) =>
+                              setAdjustmentReason(e.target.value)
+                            }
+                            className="w-full border border-gray-300 rounded-lg p-2 mb-2 bg-white"
+                          >
+                            <option>Physical stock correction</option>
+                            <option>Damaged</option>
+                            <option>Expired</option>
+                            <option>Leakage</option>
+                            <option>Counting correction</option>
+                            <option>Other</option>
+                          </select>
+
+                          <div className="text-sm font-bold text-gray-700 mb-2">
+                            New Stock:{" "}
+                            {adjustmentQty &&
+                            Number.isFinite(Number(adjustmentQty))
+                              ? Math.max(
+                                  0,
+                                  Number(product.stock_qty || 0) +
+                                    (adjustmentType === "add"
+                                      ? Number(adjustmentQty)
+                                      : -Number(adjustmentQty))
+                                )
+                              : Number(product.stock_qty || 0)}{" "}
+                            {product.unit || "Litre"}
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                closeStockAdjustment()
+                              }
+                              disabled={adjusting}
+                              className="flex-1 bg-gray-500 hover:bg-gray-600 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-sm"
+                            >
+                              Cancel
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void saveStockAdjustment(product)
+                              }
+                              disabled={adjusting}
+                              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-sm font-semibold"
+                            >
+                              {adjusting ? "Saving..." : "Save"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </td>
 
                     {/* ACTIONS */}

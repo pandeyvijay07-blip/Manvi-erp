@@ -13,6 +13,6 @@
     "jsx": "react-jsx",
     "strict": true
   },
-  "include": ["src"],
+  "include": ["src", "supabase/**/*.ts", "types/**/*.d.ts"],
   "references": []
 }

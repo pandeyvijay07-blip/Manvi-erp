@@ -9,39 +9,92 @@ export async function sendAutomaticWhatsApp(input: {
   message: string;
   messageType: AutomaticWhatsAppType;
   referenceId?: string;
+
+  // Meta WhatsApp approved-template variables.
+  // For manvi_sale_bill:
+  // {{1}} Customer
+  // {{2}} Date
+  // {{3}} Previous Balance
+  // {{4}} Total Amount
+  // {{5}} Paid Amount
+  // {{6}} Balance Amount
+  templateVariables?: Array<string | number | null | undefined>;
 }) {
   const phone = String(input.customerMobile || "").replace(/\D/g, "");
 
   if (!phone) {
-    return { sent: false, skipped: true, reason: "Customer has no mobile number." };
+    return {
+      sent: false,
+      skipped: true,
+      reason: "Customer has no mobile number.",
+    };
   }
 
-  if (phone.length !== 10 && !(phone.length === 12 && phone.startsWith("91"))) {
-    return { sent: false, skipped: true, reason: "Customer mobile number is not a valid Indian number." };
+  if (
+    phone.length !== 10 &&
+    !(phone.length === 12 && phone.startsWith("91"))
+  ) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "Customer mobile number is not a valid Indian number.",
+    };
   }
 
-  const normalizedPhone = phone.length === 10 ? `+91${phone}` : `+${phone}`;
+  const normalizedPhone =
+    phone.length === 10 ? `+91${phone}` : `+${phone}`;
 
   try {
-    const { data, error } = await supabase.functions.invoke("send-whatsapp", {
-      body: {
-        customer_id: input.customerId,
-        customer_name: input.customerName,
-        customer_mobile: normalizedPhone,
-        message: input.message,
-        message_type: input.messageType,
-        reference_id: input.referenceId || null,
-      },
-    });
+    const { data, error } = await supabase.functions.invoke(
+      "send-whatsapp",
+      {
+        body: {
+          customer_id: input.customerId,
+          customer_name: input.customerName,
+          customer_mobile: normalizedPhone,
+          message: input.message,
+          message_type: input.messageType,
+          reference_id: input.referenceId || null,
+
+          // Send approved Meta template variables.
+          template_variables:
+            input.templateVariables || [],
+        },
+      }
+    );
 
     if (error) {
-      console.error("Automatic WhatsApp error:", error);
-      return { sent: false, skipped: false, reason: error.message || "WhatsApp request failed." };
+      console.error(
+        "Automatic WhatsApp error:",
+        error
+      );
+
+      return {
+        sent: false,
+        skipped: false,
+        reason:
+          error.message ||
+          "WhatsApp request failed.",
+      };
     }
 
-    return data || { sent: true };
+    return (
+      data || {
+        sent: true,
+      }
+    );
   } catch (error: any) {
-    console.error("Automatic WhatsApp exception:", error);
-    return { sent: false, skipped: false, reason: error?.message || "WhatsApp request failed." };
+    console.error(
+      "Automatic WhatsApp exception:",
+      error
+    );
+
+    return {
+      sent: false,
+      skipped: false,
+      reason:
+        error?.message ||
+        "WhatsApp request failed.",
+    };
   }
 }

@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { jsPDF } from "jspdf";
 import { supabase } from "../lib/supabase";
 import CustomerRouteSearch from "../components/CustomerRouteSearch";
+import { sendAutomaticWhatsApp } from "../lib/whatsapp";
 
 // ---------------------------------------------------------
 // LOCAL BUSINESS DATE
@@ -144,6 +145,7 @@ payment_method: string;
 total_amount: number;
 paid_amount: number;
 balance_amount: number;
+  round_off?: number;
 cash_amount: number;
 upi_amount: number;
 };
@@ -176,6 +178,8 @@ useState("Cash");
 
 const [paidAmount, setPaidAmount] =
 useState("0");
+
+const [roundOff, setRoundOff] = useState("0");
 
 const [cashAmount, setCashAmount] =
 useState("0");
@@ -257,6 +261,147 @@ paymentLines,
 "Thank you for your business.",
 ].join("\n");
 }
+async function sendAutomaticSaleWhatsApp(saleId: string) {
+  if (!selectedCustomer?.mobile) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "Customer has no mobile number.",
+    };
+  }
+
+  try {
+    // Read the saved sale after the payment engine has finished so the
+    // WhatsApp values match the actual database values.
+    const {
+      data: savedSale,
+      error: savedSaleError,
+    } = await supabase
+      .from("sales")
+      .select(`
+        id,
+        sale_date,
+        customer_id,
+        total_amount,
+        paid_amount,
+        balance_amount
+      `)
+      .eq("id", saleId)
+      .single();
+
+    if (savedSaleError) {
+      throw savedSaleError;
+    }
+
+    if (!savedSale) {
+      throw new Error(
+        "Saved sale could not be found for WhatsApp."
+      );
+    }
+
+    // Calculate the customer's balance before this sale.
+    // The current sale is excluded from the outstanding-sales total.
+    const [
+      { data: customerRow, error: customerError },
+      { data: previousSales, error: previousSalesError },
+    ] = await Promise.all([
+      supabase
+        .from("customers")
+        .select("opening_balance")
+        .eq("id", selectedCustomer.id)
+        .single(),
+
+      supabase
+        .from("sales")
+        .select("id, balance_amount")
+        .eq("customer_id", selectedCustomer.id)
+        .neq("id", saleId),
+    ]);
+
+    if (customerError) {
+      throw customerError;
+    }
+
+    if (previousSalesError) {
+      throw previousSalesError;
+    }
+
+    const openingBalance =
+      Number(customerRow?.opening_balance) || 0;
+
+    const previousSalesOutstanding =
+      (previousSales || []).reduce(
+        (sum: number, row: any) =>
+          sum + (Number(row.balance_amount) || 0),
+        0
+      );
+
+    const previousBalance =
+      openingBalance + previousSalesOutstanding;
+
+    // Approved Meta template: manvi_sale_bill
+    // {{1}} Customer
+    // {{2}} Date
+    // {{3}} Previous Balance
+    // {{4}} Total Amount
+    // {{5}} Paid Amount
+    // {{6}} Balance Amount
+    const templateVariables = [
+      selectedCustomer.customer_name,
+      formatDisplayDate(String(savedSale.sale_date)),
+      previousBalance.toFixed(2),
+      Number(savedSale.total_amount || 0).toFixed(2),
+      Number(savedSale.paid_amount || 0).toFixed(2),
+      Number(savedSale.balance_amount || 0).toFixed(2),
+    ];
+
+    // Keep the existing message builder for compatibility/logging.
+    const message = buildWhatsAppBillMessage(
+      selectedCustomer.customer_name,
+      String(savedSale.sale_date),
+      saleItems,
+      Number(savedSale.total_amount) || 0,
+      Number(savedSale.paid_amount) || 0,
+      Number(savedSale.balance_amount) || 0,
+      paymentMethod,
+      cashPaid,
+      upiPaid
+    );
+
+    const result = await sendAutomaticWhatsApp({
+      customerId: selectedCustomer.id,
+      customerName: selectedCustomer.customer_name,
+      customerMobile: selectedCustomer.mobile,
+      message,
+      messageType: "sale",
+      referenceId: saleId,
+      templateVariables,
+    });
+
+    if (!result?.sent && !result?.skipped) {
+      console.warn(
+        "Sale saved, but automatic WhatsApp failed:",
+        result?.reason
+      );
+    }
+
+    return result;
+  } catch (error: any) {
+    console.error(
+      "Automatic sale WhatsApp exception:",
+      error
+    );
+
+    return {
+      sent: false,
+      skipped: false,
+      reason:
+        error?.message ||
+        "Automatic WhatsApp request failed.",
+    };
+  }
+}
+
 async function openWhatsAppBill() {
   if (!selectedCustomer) {
     alert("Please select a customer first.");
@@ -533,6 +678,7 @@ error,
           customer_id,
           payment_method,
           total_amount,
+          round_off,
           paid_amount,
           balance_amount,
           cash_amount,
@@ -577,6 +723,8 @@ ascending: false,
           Number(
             sale.total_amount
           ) || 0,
+        round_off:
+          Number(sale.round_off) || 0,
         paid_amount:
           Number(
             sale.paid_amount
@@ -1083,14 +1231,17 @@ setSellingRate(
 TOTAL SALE
 ========================================================= */
 
-const totalSale = useMemo(() => {
-return saleItems.reduce(
-(total, item) =>
-total +
-Number(item.amount || 0),
-0
-);
+const subtotalSale = useMemo(() => {
+  return saleItems.reduce(
+    (total: number, item: SaleItem) =>
+      total + Number(item.amount || 0),
+    0
+  );
 }, [saleItems]);
+
+const roundOffAmount = Number(roundOff) || 0;
+
+const totalSale = Math.max(0, subtotalSale + roundOffAmount);
 
 /* =========================================================
 PAID / BALANCE
@@ -1467,6 +1618,7 @@ setQuantity("1");
 setSellingRate("");
 
 setPaidAmount("0");
+setRoundOff("0");
 
 setCashAmount("0");
 
@@ -1551,9 +1703,15 @@ try {
     setSaleItems(uniqueSaleItems);
   }
 
-  const saleTotalForSave = uniqueSaleItems.reduce(
+  const saleSubtotalForSave = uniqueSaleItems.reduce(
     (sum, item) => sum + Number(item.amount || 0),
     0
+  );
+
+  const saleRoundOffForSave = Number(roundOff) || 0;
+  const saleTotalForSave = Math.max(
+    0,
+    saleSubtotalForSave + saleRoundOffForSave
   );
 
   const salePaidForSave =
@@ -1566,7 +1724,7 @@ try {
     saleTotalForSave - salePaidForSave
   );
 
-  if (saleTotalForSave <= 0) {
+  if (saleSubtotalForSave <= 0) {
     throw new Error("Sale total must be greater than zero.");
   }
 
@@ -1640,6 +1798,9 @@ try {
 
       total_amount:
         saleTotalForSave,
+
+      round_off:
+        saleRoundOffForSave,
 
       paid_amount:
         salePaidForSave,
@@ -1885,10 +2046,36 @@ try {
   // as advance and any older advance is applied to this bill.
   await rebuildCustomerPaymentState(customerId);
 
+  // Automatic WhatsApp is sent only after the sale, items, stock,
+  // customer prices and payment state have all been saved successfully.
+  const whatsappResult = await sendAutomaticSaleWhatsApp(sale.id);
+
+  let whatsappWarning = "";
+  if (!whatsappResult?.sent && !whatsappResult?.skipped) {
+    whatsappWarning =
+      "\n\nWhatsApp bill was not sent: " +
+      (whatsappResult?.reason || "Unknown WhatsApp error.");
+  }
+
+  if (whatsappResult?.skipped) {
+    console.log(
+      "Automatic WhatsApp skipped:",
+      whatsappResult.reason
+    );
+  }
+
   alert(
     salePaidForSave > saleTotalForSave
-      ? "Sale saved successfully. Extra payment has been carried forward as customer advance." + customerPriceWarning
-      : "Sale saved successfully." + customerPriceWarning
+      ? "Sale saved successfully. Extra payment has been carried forward as customer advance." +
+        customerPriceWarning +
+        (whatsappResult?.sent
+          ? "\n\nAutomatic WhatsApp bill sent successfully."
+          : whatsappWarning)
+      : "Sale saved successfully." +
+        customerPriceWarning +
+        (whatsappResult?.sent
+          ? "\n\nAutomatic WhatsApp bill sent successfully."
+          : whatsappWarning)
   );
 
   clearSaleForm();
@@ -1922,23 +2109,19 @@ async function updateExistingSale(
 saleId: string
 ) {
 try {
-/* =====================================================
-GET OLD SALE ITEMS
-===================================================== */
+  /* =====================================================
+     GET OLD SALE ITEMS + OLD CUSTOMER
+     ===================================================== */
 
   const {
     data: oldItems,
-    error:
-      oldItemsError,
+    error: oldItemsError,
   } = await supabase
     .from("sale_items")
     .select(
-      "id, product_id, quantity"
+      "id, product_id, quantity, rate, amount, cost_rate"
     )
-    .eq(
-      "sale_id",
-      saleId
-    );
+    .eq("sale_id", saleId);
 
   if (oldItemsError) {
     throw oldItemsError;
@@ -1960,291 +2143,357 @@ GET OLD SALE ITEMS
   const oldCustomerId = oldSaleHeader?.customer_id || null;
 
   /* =====================================================
-     CALCULATE STOCK AFTER RESTORING OLD SALE
+     NORMALIZE EDIT ITEMS
+     Never allow the same product twice in one sale.
      ===================================================== */
 
-  const stockMap =
-    new Map<
-      string,
-      number
-    >();
+  const uniqueSaleItems = getUniqueSaleItems(saleItems);
 
-  products.forEach(
-    (product) => {
-      stockMap.set(
-        product.id,
-        Number(
-          product.stock_qty
-        ) || 0
-      );
-    }
+  if (uniqueSaleItems.length === 0) {
+    throw new Error("A sale must contain at least one product.");
+  }
+
+  const editedSubtotal = uniqueSaleItems.reduce(
+    (sum, item) => sum + Number(item.amount || 0),
+    0
   );
 
-  /*
-   * Restore stock from old sale.
-   */
-  (oldItems || []).forEach(
-    (oldItem: any) => {
-      const current =
-        stockMap.get(
-          oldItem.product_id
-        ) || 0;
+  const editedRoundOff = Number(roundOff) || 0;
+  const editedTotal = Math.max(0, editedSubtotal + editedRoundOff);
 
-      stockMap.set(
-        oldItem.product_id,
-        current +
-          Number(
-            oldItem.quantity
-          )
-      );
-    }
-  );
+  const editedPaid =
+    paymentMethod === "Split"
+      ? Math.max(0, cashPaid + upiPaid)
+      : Math.max(0, Number(paid) || 0);
+
+  const editedBalance = Math.max(0, editedTotal - editedPaid);
+
+  if (editedSubtotal <= 0) {
+    throw new Error("Sale total must be greater than zero.");
+  }
 
   /* =====================================================
-     CHECK NEW STOCK
+     BUILD OLD/NEW PRODUCT QUANTITIES
+     We calculate stock by DELTA only.
+     We do NOT temporarily restore every product in the DB.
      ===================================================== */
 
-  const newQuantityMap =
-    new Map<
-      string,
-      number
-    >();
+  const oldQuantityMap = new Map<string, number>();
+  const oldItemByProduct = new Map<string, any>();
 
-  saleItems.forEach(
-    (item) => {
-      const current =
-        newQuantityMap.get(
-          item.product_id
-        ) || 0;
+  (oldItems || []).forEach((oldItem: any) => {
+    const productId = String(oldItem.product_id);
+    const current = oldQuantityMap.get(productId) || 0;
 
-      newQuantityMap.set(
-        item.product_id,
-        current +
-          Number(
-            item.quantity
-          )
+    oldQuantityMap.set(
+      productId,
+      current + (Number(oldItem.quantity) || 0)
+    );
+
+    // The unique constraint means there should be only one row per product.
+    // If an older bad sale somehow has duplicates, keep the first row for
+    // reconciliation and let the final verification catch the issue.
+    if (!oldItemByProduct.has(productId)) {
+      oldItemByProduct.set(productId, oldItem);
+    }
+  });
+
+  const newQuantityMap = new Map<string, number>();
+
+  uniqueSaleItems.forEach((item) => {
+    const productId = String(item.product_id);
+    const current = newQuantityMap.get(productId) || 0;
+
+    newQuantityMap.set(
+      productId,
+      current + (Number(item.quantity) || 0)
+    );
+  });
+
+  /* =====================================================
+     STOCK VALIDATION
+     Current stock already excludes the old sale.
+     Therefore available-for-edit = current stock + old qty.
+     ===================================================== */
+
+  const affectedProductIds = new Set<string>([
+    ...oldQuantityMap.keys(),
+    ...newQuantityMap.keys(),
+  ]);
+
+  const stockAfterEdit = new Map<string, number>();
+
+  for (const productId of affectedProductIds) {
+    const product = products.find(
+      (p) => p.id === productId
+    );
+
+    if (!product) {
+      throw new Error(`Product not found: ${productId}`);
+    }
+
+    const currentStock = Number(product.stock_qty) || 0;
+    const oldQty = oldQuantityMap.get(productId) || 0;
+    const newQty = newQuantityMap.get(productId) || 0;
+
+    const finalStock = currentStock + oldQty - newQty;
+
+    if (finalStock < 0) {
+      throw new Error(
+        `Insufficient stock for ${product.product_name}.\nAvailable after restoring old sale: ${currentStock + oldQty}\nRequired for edited sale: ${newQty}`
       );
     }
+
+    stockAfterEdit.set(productId, finalStock);
+  }
+
+  /* =====================================================
+     RECONCILE SALE ITEMS WITHOUT BLIND DELETE + INSERT
+
+     Existing product row -> UPDATE by its primary-key id.
+     New product row      -> INSERT.
+     Removed product row  -> DELETE and VERIFY.
+
+     This is the important fix for:
+     sale_items_sale_id_product_id_key
+
+     Previously the code attempted DELETE + INSERT. If DELETE was
+     blocked by RLS or affected zero rows, INSERT hit the unique key.
+     ===================================================== */
+
+  const oldProductIds = new Set<string>(
+    (oldItems || []).map((item: any) => String(item.product_id))
   );
 
-  for (
-    const [
-      productId,
-      requiredQty,
-    ] of newQuantityMap
-  ) {
-    const available =
-      stockMap.get(
-        productId
-      ) || 0;
+  const newProductIds = new Set<string>(
+    uniqueSaleItems.map((item) => String(item.product_id))
+  );
 
-    if (
-      requiredQty >
-      available
-    ) {
-      const product =
-        products.find(
-          (p) =>
-            p.id ===
-            productId
-        );
+  const productIdsToDelete = Array.from(oldProductIds).filter(
+    (productId) => !newProductIds.has(productId)
+  );
 
+  /* -----------------------------------------------------
+     DELETE ONLY PRODUCTS THAT WERE ACTUALLY REMOVED.
+     Verify the delete immediately before touching the
+     remaining rows.
+     ----------------------------------------------------- */
+
+  for (const productId of productIdsToDelete) {
+    const oldItem = oldItemByProduct.get(productId);
+
+    if (!oldItem?.id) {
+      continue;
+    }
+
+    const { error: deleteError } = await supabase
+      .from("sale_items")
+      .delete()
+      .eq("id", oldItem.id)
+      .eq("sale_id", saleId);
+
+    if (deleteError) {
       throw new Error(
-        `Insufficient stock for ${
-          product?.product_name ||
-          "product"
-        }.\nAvailable after restoring old sale: ${available}\nRequired: ${requiredQty}`
+        `Unable to remove the old product from this sale. ${deleteError.message}`
+      );
+    }
+
+    const {
+      data: deletedCheck,
+      error: deletedCheckError,
+    } = await supabase
+      .from("sale_items")
+      .select("id")
+      .eq("id", oldItem.id)
+      .maybeSingle();
+
+    if (deletedCheckError) {
+      throw deletedCheckError;
+    }
+
+    if (deletedCheck) {
+      throw new Error(
+        "Sale edit stopped because the old sale item could not be deleted. Check the sale_items DELETE RLS policy before editing/removing products. No new sale item was inserted."
       );
     }
   }
 
+  /* -----------------------------------------------------
+     UPDATE EXISTING PRODUCTS + INSERT NEW PRODUCTS.
+     Existing rows are updated by id, so the unique constraint
+     cannot be triggered merely by editing quantity/rate.
+     ----------------------------------------------------- */
+
+  for (const item of uniqueSaleItems) {
+    const productId = String(item.product_id);
+    const oldItem = oldItemByProduct.get(productId);
+
+    const itemPayload = {
+      sale_id: saleId,
+      product_id: item.product_id,
+      quantity: Number(item.quantity) || 0,
+      rate: Number(item.rate) || 0,
+      amount: Number(item.amount) || 0,
+      cost_rate: Number(item.purchase_rate || 0),
+    };
+
+    if (oldItem?.id) {
+      const { error: updateItemError } = await supabase
+        .from("sale_items")
+        .update(itemPayload)
+        .eq("id", oldItem.id)
+        .eq("sale_id", saleId);
+
+      if (updateItemError) {
+        throw updateItemError;
+      }
+    } else {
+      const { error: insertItemError } = await supabase
+        .from("sale_items")
+        .insert(itemPayload);
+
+      if (insertItemError) {
+        throw insertItemError;
+      }
+    }
+  }
+
   /* =====================================================
-     UPDATE STOCK
+     VERIFY FINAL SALE ITEMS BEFORE STOCK UPDATE
      ===================================================== */
 
-  /*
-   * First restore old stock in database.
-   */
-  for (
-    const [
-      productId,
-      restoredStock,
-    ] of stockMap
-  ) {
-    const {
-      error:
-        restoreError,
-    } = await supabase
-      .from("products")
-      .update({
-        stock_qty:
-          restoredStock,
-      })
-      .eq(
-        "id",
-        productId
-      );
+  const {
+    data: verifiedItems,
+    error: verifyItemsError,
+  } = await supabase
+    .from("sale_items")
+    .select("id, product_id, quantity, rate, amount, cost_rate")
+    .eq("sale_id", saleId);
 
-    if (restoreError) {
-      throw restoreError;
+  if (verifyItemsError) {
+    throw verifyItemsError;
+  }
+
+  const expectedProductIds = new Set(
+    uniqueSaleItems.map((item) => String(item.product_id))
+  );
+
+  const actualProductIds = new Set(
+    (verifiedItems || []).map((item: any) => String(item.product_id))
+  );
+
+  const duplicateProductIds = new Set<string>();
+  const seenProductIds = new Set<string>();
+
+  (verifiedItems || []).forEach((item: any) => {
+    const productId = String(item.product_id);
+    if (seenProductIds.has(productId)) {
+      duplicateProductIds.add(productId);
     }
+    seenProductIds.add(productId);
+  });
+
+  const actualAmount = (verifiedItems || []).reduce(
+    (sum: number, item: any) =>
+      sum + (Number(item.amount) || 0),
+    0
+  );
+
+  const missingProducts = Array.from(expectedProductIds).filter(
+    (id) => !actualProductIds.has(id)
+  );
+
+  const unexpectedProducts = Array.from(actualProductIds).filter(
+    (id) => !expectedProductIds.has(id)
+  );
+
+  if (
+    duplicateProductIds.size > 0 ||
+    missingProducts.length > 0 ||
+    unexpectedProducts.length > 0 ||
+    Math.abs(actualAmount - editedTotal) >= 0.01 ||
+    (verifiedItems || []).length !== uniqueSaleItems.length
+  ) {
+    throw new Error(
+      `Sale item verification failed. Expected ${uniqueSaleItems.length} product line(s) totaling ₹${editedSubtotal.toFixed(2)} before round-off, but database contains ${(verifiedItems || []).length} line(s) totaling ₹${actualAmount.toFixed(2)}. Please do not save again until the sale item data is checked.`
+    );
   }
 
   /* =====================================================
      UPDATE SALE HEADER
      ===================================================== */
 
-  const {
-    error:
-      saleUpdateError,
-  } = await supabase
+  const { error: saleUpdateError } = await supabase
     .from("sales")
     .update({
-      sale_date:
-        saleDate,
-
-      customer_id:
-        customerId,
-
-      payment_method:
-        paymentMethod,
-
-      total_amount:
-        totalSale,
-
-      paid_amount:
-        paid,
-
-      balance_amount:
-        balance,
-
+      sale_date: saleDate,
+      customer_id: customerId,
+      payment_method: paymentMethod,
+      total_amount: editedTotal,
+      round_off: editedRoundOff,
+      paid_amount: editedPaid,
+      balance_amount: editedBalance,
       cash_amount:
-        paymentMethod === "Split" ? cashPaid : paymentMethod === "Cash" ? paid : 0,
-
+        paymentMethod === "Split"
+          ? cashPaid
+          : paymentMethod === "Cash"
+          ? editedPaid
+          : 0,
       upi_amount:
-        paymentMethod === "Split" ? upiPaid : paymentMethod === "UPI" ? paid : 0,
+        paymentMethod === "Split"
+          ? upiPaid
+          : paymentMethod === "UPI"
+          ? editedPaid
+          : 0,
     })
-    .eq(
-      "id",
-      saleId
-    );
+    .eq("id", saleId);
 
   if (saleUpdateError) {
     throw saleUpdateError;
   }
 
   /* =====================================================
-     DELETE OLD ITEMS
+     APPLY STOCK DELTAS
+     Only affected products are changed.
      ===================================================== */
 
-  const {
-    error:
-      deleteItemsError,
-  } = await supabase
-    .from("sale_items")
-    .delete()
-    .eq(
-      "sale_id",
-      saleId
-    );
+  for (const productId of affectedProductIds) {
+    const finalStock = stockAfterEdit.get(productId);
 
-  if (deleteItemsError) {
-    throw deleteItemsError;
-  }
-
-  /* =====================================================
-     INSERT NEW ITEMS
-     ===================================================== */
-
-  const itemsToInsert =
-    saleItems.map(
-      (item) => ({
-        sale_id:
-          saleId,
-
-        product_id:
-          item.product_id,
-
-        quantity:
-          item.quantity,
-
-        rate:
-          item.rate,
-
-        amount:
-          item.amount,
-
-        cost_rate:
-          Number(item.purchase_rate || 0),
-      })
-    );
-
-  const {
-    error:
-      insertItemsError,
-  } = await supabase
-    .from("sale_items")
-    .insert(
-      itemsToInsert
-    );
-
-  if (insertItemsError) {
-    throw insertItemsError;
-  }
-
-  /* =====================================================
-     APPLY NEW STOCK
-     ===================================================== */
-
-  for (
-    const [
-      productId,
-      availableStock,
-    ] of stockMap
-  ) {
-    const used =
-      newQuantityMap.get(
-        productId
-      ) || 0;
-
-    const finalStock =
-      availableStock -
-      used;
-
-    if (
-      finalStock < 0
-    ) {
-      throw new Error(
-        "Stock cannot become negative."
-      );
+    if (finalStock === undefined) {
+      continue;
     }
 
-    const {
-      error:
-        stockError,
-    } = await supabase
+    const { error: stockError } = await supabase
       .from("products")
-      .update({
-        stock_qty:
-          finalStock,
-      })
-      .eq(
-        "id",
-        productId
-      );
+      .update({ stock_qty: finalStock })
+      .eq("id", productId);
 
     if (stockError) {
       throw stockError;
     }
   }
 
+  /* =====================================================
+     CUSTOMER PRICE SYNC
+     ===================================================== */
+
   let customerPriceWarning = "";
   try {
-    await syncCustomerPrices(saleItems);
+    await syncCustomerPrices(uniqueSaleItems);
   } catch (priceError: any) {
-    console.error("Customer price sync error during sale update:", priceError);
-    customerPriceWarning = "\n\nWarning: sale was updated, but customer price could not be updated.";
+    console.error(
+      "Customer price sync error during sale update:",
+      priceError
+    );
+
+    customerPriceWarning =
+      "\n\nWarning: sale was updated, but customer price could not be updated. Please retry the rate in the next sale.";
   }
+
+  /* =====================================================
+     CUSTOMER PAYMENT ENGINE
+     ===================================================== */
 
   if (oldCustomerId && oldCustomerId !== customerId) {
     await rebuildCustomerPaymentState(oldCustomerId);
@@ -2252,32 +2501,54 @@ GET OLD SALE ITEMS
 
   await rebuildCustomerPaymentState(customerId);
 
+  /* =====================================================
+     AUTOMATIC WHATSAPP
+     ===================================================== */
+
+  const whatsappResult = await sendAutomaticSaleWhatsApp(saleId);
+
+  let whatsappWarning = "";
+  if (!whatsappResult?.sent && !whatsappResult?.skipped) {
+    whatsappWarning =
+      "\n\nWhatsApp bill was not sent: " +
+      (whatsappResult?.reason || "Unknown WhatsApp error.");
+  }
+
+  if (whatsappResult?.skipped) {
+    console.log(
+      "Automatic WhatsApp skipped:",
+      whatsappResult.reason
+    );
+  }
+
   alert(
-    paid > totalSale
-      ? "Sale updated successfully. Extra payment has been carried forward as customer advance." + customerPriceWarning
-      : "Sale updated successfully." + customerPriceWarning
+    editedPaid > editedTotal
+      ? "Sale updated successfully. Extra payment has been carried forward as customer advance." +
+        customerPriceWarning +
+        (whatsappResult?.sent
+          ? "\n\nAutomatic WhatsApp bill sent successfully."
+          : whatsappWarning)
+      : "Sale updated successfully." +
+        customerPriceWarning +
+        (whatsappResult?.sent
+          ? "\n\nAutomatic WhatsApp bill sent successfully."
+          : whatsappWarning)
   );
 
   clearSaleForm();
 
   await loadData();
-
   await loadRecentSales();
 } catch (error: any) {
-  console.error(
-    "Update sale error:",
-    error
-  );
+  console.error("Update sale error:", error);
 
   alert(
     "Sale Update Error:\n" +
-      (error?.message ||
-        "Unable to update sale.")
+      (error?.message || "Unable to update sale.")
   );
 }
 
 }
-
 /* =========================================================
 EDIT SAVED SALE
 ========================================================= */
@@ -2305,6 +2576,7 @@ setLoading(true);
       customer_id,
       payment_method,
       total_amount,
+      round_off,
       paid_amount,
       balance_amount,
       cash_amount,
@@ -2366,6 +2638,10 @@ setLoading(true);
   setPaymentMethod(
     sale.payment_method ||
       "Cash"
+  );
+
+  setRoundOff(
+    String(Number((sale as any).round_off) || 0)
   );
 
   setPaidAmount(
@@ -2579,7 +2855,7 @@ async function generateSavedBillPdf(saleId: string): Promise<File | null> {
       await Promise.all([
         supabase
           .from("sales")
-          .select("id, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
+          .select("id, sale_date, customer_id, payment_method, total_amount, round_off, paid_amount, balance_amount, cash_amount, upi_amount")
           .eq("id", saleId)
           .single(),
         supabase
@@ -2729,7 +3005,7 @@ async function printSavedBill(saleId: string) {
       await Promise.all([
         supabase
           .from("sales")
-          .select("id, sale_date, customer_id, payment_method, total_amount, paid_amount, balance_amount, cash_amount, upi_amount")
+          .select("id, sale_date, customer_id, payment_method, total_amount, round_off, paid_amount, balance_amount, cash_amount, upi_amount")
           .eq("id", saleId)
           .single(),
         supabase
@@ -3117,6 +3393,45 @@ return (
           </p>
         </div>
       )}
+
+      {/* ROUND OFF */}
+
+      <div className="md:col-span-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="flex-1">
+            <label className="block font-semibold mb-2">
+              Round-off (₹)
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              value={roundOff}
+              onChange={(e) => setRoundOff(e.target.value)}
+              className="w-full border rounded-xl px-4 py-3"
+              placeholder="0.00"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Use a small positive or negative amount only. It does not change stock.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            disabled={loading || subtotalSale <= 0}
+            onClick={() =>
+              setRoundOff((Math.round(subtotalSale) - subtotalSale).toFixed(2))
+            }
+            className="bg-amber-600 hover:bg-amber-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-bold"
+          >
+            Auto Round ₹1
+          </button>
+
+          <div className="rounded-xl bg-white border px-5 py-3 min-w-[180px]">
+            <p className="text-xs text-gray-500">Final Sale Total</p>
+            <p className="text-xl font-bold text-blue-700">₹{totalSale.toFixed(2)}</p>
+          </div>
+        </div>
+      </div>
 
       {/* PAYMENT */}
 
@@ -3740,7 +4055,10 @@ return (
         <div className="bg-blue-50 rounded-xl p-5">
 
           <p className="text-gray-600">
-            Total Sale
+            Final Sale Total
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Subtotal ₹{subtotalSale.toFixed(2)} + Round-off ₹{roundOffAmount.toFixed(2)}
           </p>
 
           <p className="text-3xl font-bold text-blue-700">
@@ -4011,6 +4329,11 @@ return (
                     ₹
                     {sale.total_amount.toFixed(
                       2
+                    )}
+                    {Math.abs(Number(sale.round_off) || 0) >= 0.001 && (
+                      <span className="block text-xs text-amber-700 font-semibold">
+                        Round-off: {(Number(sale.round_off) || 0) >= 0 ? "+" : ""}{(Number(sale.round_off) || 0).toFixed(2)}
+                      </span>
                     )}
                   </td>
 
