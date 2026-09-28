@@ -22,7 +22,7 @@ import {
   FiCalendar,
   FiTag,
   FiUserCheck,
-  FiHeart,
+  FiSettings,
 } from "react-icons/fi";
 
 import Header from "./Header";
@@ -116,12 +116,6 @@ const menu = [
   },
 
   {
-    name: "Personal Expenses",
-    path: "/personal-expenses",
-    icon: <FiHeart />,
-  },
-
-  {
     name: "Cash Book",
     path: "/cash-book",
     icon: <FiBookOpen />,
@@ -154,6 +148,12 @@ const menu = [
     path: "/user-management",
     icon: <FiUserCheck />,
     ownerOnly: true,
+  },
+
+  {
+    name: "Settings",
+    path: "/settings",
+    icon: <FiSettings />,
   },
 ];
 

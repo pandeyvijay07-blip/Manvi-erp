@@ -535,6 +535,30 @@ const [recentSales, setRecentSales] =
 useState<RecentSale[]>([]);
 
 /* =========================================================
+CUSTOMER SALE SEARCH
+Search any customer and show all saved sales for that
+customer with the existing Edit / Delete actions.
+========================================================= */
+
+const [customerSaleSearch, setCustomerSaleSearch] =
+useState("");
+
+const [customerSaleFromDate, setCustomerSaleFromDate] =
+useState("");
+
+const [customerSaleToDate, setCustomerSaleToDate] =
+useState("");
+
+const [searchedCustomerId, setSearchedCustomerId] =
+useState<string | null>(null);
+
+const [customerSales, setCustomerSales] =
+useState<RecentSale[]>([]);
+
+const [searchingCustomerSales, setSearchingCustomerSales] =
+useState(false);
+
+/* =========================================================
 LOADING
 ========================================================= */
 
@@ -752,6 +776,141 @@ ascending: false,
   );
 }
 
+}
+
+/* =========================================================
+SEARCH ALL SALES FOR ONE CUSTOMER
+========================================================= */
+
+async function searchCustomerSales(
+  customerIdToSearch: string,
+  fromDate = customerSaleFromDate,
+  toDate = customerSaleToDate
+) {
+  if (!customerIdToSearch) {
+    alert("Please select a customer.");
+    return;
+  }
+
+  if (fromDate && toDate && fromDate > toDate) {
+    alert("From Date cannot be after To Date.");
+    return;
+  }
+
+  try {
+    setSearchingCustomerSales(true);
+
+    const {
+      data,
+      error,
+    } = await supabase
+      .from("sales")
+      .select(`
+        id,
+        sale_date,
+        customer_id,
+        payment_method,
+        total_amount,
+        round_off,
+        paid_amount,
+        balance_amount,
+        cash_amount,
+        upi_amount
+      `)
+      .eq(
+        "customer_id",
+        customerIdToSearch
+      )
+      .gte("sale_date", fromDate || "1900-01-01")
+      .lte("sale_date", toDate || "2999-12-31")
+      .order("sale_date", {
+        ascending: false,
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    const customer = customers.find(
+      (item) =>
+        item.id === customerIdToSearch
+    );
+
+    const rows: RecentSale[] =
+      (data || []).map(
+        (sale: any) => ({
+          id: sale.id,
+          sale_date: sale.sale_date,
+          customer_id:
+            sale.customer_id,
+          customer_name:
+            customer?.customer_name ||
+            "Unknown Customer",
+          payment_method:
+            sale.payment_method ||
+            "Cash",
+          total_amount:
+            Number(
+              sale.total_amount
+            ) || 0,
+          round_off:
+            Number(
+              sale.round_off
+            ) || 0,
+          paid_amount:
+            Number(
+              sale.paid_amount
+            ) || 0,
+          balance_amount:
+            Number(
+              sale.balance_amount
+            ) || 0,
+          cash_amount:
+            Number(
+              sale.cash_amount
+            ) || 0,
+          upi_amount:
+            Number(
+              sale.upi_amount
+            ) || 0,
+        })
+      );
+
+    setSearchedCustomerId(
+      customerIdToSearch
+    );
+
+    setCustomerSales(rows);
+  } catch (error: any) {
+    console.error(
+      "Customer sales search error:",
+      error
+    );
+
+    alert(
+      "Unable to load customer sales:\n" +
+      (error?.message ||
+        "Unknown error")
+    );
+  } finally {
+    setSearchingCustomerSales(false);
+  }
+}
+
+function clearCustomerSaleSearch() {
+  setCustomerSaleSearch("");
+  setCustomerSaleFromDate("");
+  setCustomerSaleToDate("");
+  setSearchedCustomerId(null);
+  setCustomerSales([]);
+}
+
+async function refreshCustomerSalesIfNeeded() {
+  if (searchedCustomerId) {
+    await searchCustomerSales(
+      searchedCustomerId
+    );
+  }
 }
 
 /* =========================================================
@@ -2539,6 +2698,7 @@ try {
 
   await loadData();
   await loadRecentSales();
+  await refreshCustomerSalesIfNeeded();
 } catch (error: any) {
   console.error("Update sale error:", error);
 
@@ -3291,6 +3451,15 @@ Sales
 );
 
 }
+
+/* =========================================================
+SALES TABLE DATA
+========================================================= */
+
+const salesTableRows =
+  searchedCustomerId
+    ? customerSales
+    : recentSales;
 
 /* =========================================================
 RENDER
@@ -4213,6 +4382,174 @@ return (
   </div>
 
   {/* =====================================================
+      CUSTOMER SALE SEARCH
+  ===================================================== */}
+
+  <div className="bg-white rounded-2xl shadow p-6">
+    <div className="mb-4">
+      <h2 className="text-2xl font-bold text-blue-700">
+        Search Customer Sales
+      </h2>
+
+      <p className="text-gray-500 mt-1">
+        Search a customer and optionally select a date or date range to see saved sales. Edit or Delete any sale.
+      </p>
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+      <div className="relative">
+        <input
+          type="text"
+          value={customerSaleSearch}
+          onChange={(e) => {
+            setCustomerSaleSearch(
+              e.target.value
+            );
+            setSearchedCustomerId(null);
+          }}
+          placeholder="Search customer name..."
+          className="w-full border rounded-xl px-4 py-3"
+          disabled={
+            searchingCustomerSales ||
+            loading
+          }
+        />
+
+        {customerSaleSearch.trim() && !searchedCustomerId && (
+          <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-xl shadow-lg max-h-60 overflow-y-auto">
+            {customers
+              .filter((customer) =>
+                customer.customer_name
+                  .toLowerCase()
+                  .includes(
+                    customerSaleSearch
+                      .trim()
+                      .toLowerCase()
+                  )
+              )
+              .slice(0, 10)
+              .map((customer) => (
+                <button
+                  key={customer.id}
+                  type="button"
+                  onClick={() => {
+                    setCustomerSaleSearch(
+                      customer.customer_name
+                    );
+                    setSearchedCustomerId(
+                      customer.id
+                    );
+                  }}
+                  className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b last:border-b-0"
+                >
+                  {customer.customer_name}
+                </button>
+              ))}
+
+            {customers.filter((customer) =>
+              customer.customer_name
+                .toLowerCase()
+                .includes(
+                  customerSaleSearch
+                    .trim()
+                    .toLowerCase()
+                )
+            ).length === 0 && (
+              <div className="px-4 py-3 text-gray-500">
+                No customer found.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">
+          From Date
+        </label>
+        <input
+          type="date"
+          value={customerSaleFromDate}
+          onChange={(e) => setCustomerSaleFromDate(e.target.value)}
+          className="w-full border rounded-xl px-4 py-3"
+          disabled={loading || searchingCustomerSales}
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">
+          To Date
+        </label>
+        <input
+          type="date"
+          value={customerSaleToDate}
+          onChange={(e) => setCustomerSaleToDate(e.target.value)}
+          className="w-full border rounded-xl px-4 py-3"
+          disabled={loading || searchingCustomerSales}
+        />
+      </div>
+
+      <button
+        type="button"
+        disabled={
+          loading ||
+          loadingData ||
+          searchingCustomerSales ||
+          !searchedCustomerId
+        }
+        onClick={() => {
+          if (searchedCustomerId) {
+            void searchCustomerSales(
+              searchedCustomerId
+            );
+          }
+        }}
+        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold disabled:bg-gray-400"
+      >
+        {searchingCustomerSales
+          ? "Searching..."
+          : "Search Sales"}
+      </button>
+
+      <button
+        type="button"
+        disabled={
+          loading ||
+          searchingCustomerSales
+        }
+        onClick={clearCustomerSaleSearch}
+        className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-xl font-bold disabled:bg-gray-400"
+      >
+        Clear
+      </button>
+    </div>
+
+    {searchedCustomerId && (
+      <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3">
+        <span className="font-semibold">
+          Showing all sales for:{" "}
+        </span>
+        {customers.find(
+          (customer) =>
+            customer.id ===
+            searchedCustomerId
+        )?.customer_name || "Customer"}
+        <span className="ml-2 text-sm text-gray-600">
+          ({customerSales.length} sale
+          {customerSales.length === 1
+            ? ""
+            : "s"})
+        </span>
+        {(customerSaleFromDate || customerSaleToDate) && (
+          <span className="block mt-1 text-sm text-gray-600">
+            Date: {customerSaleFromDate || "All"} to {customerSaleToDate || "All"}
+          </span>
+        )}
+      </div>
+    )}
+  </div>
+
+  {/* =====================================================
       RECENT SALES
   ===================================================== */}
 
@@ -4222,19 +4559,29 @@ return (
 
       <div>
         <h2 className="text-2xl font-bold text-blue-700">
-          Recent Sales
+          {searchedCustomerId
+            ? "Customer Sales"
+            : "Recent Sales"}
         </h2>
 
         <p className="text-gray-500">
-          Verify and correct previous sales.
+          {searchedCustomerId
+            ? "All saved sales for the selected customer. Edit or Delete any sale."
+            : "Verify and correct previous sales."}
         </p>
       </div>
 
       <button
         type="button"
-        onClick={
-          loadRecentSales
-        }
+        onClick={() => {
+          if (searchedCustomerId) {
+            void searchCustomerSales(
+              searchedCustomerId
+            );
+          } else {
+            void loadRecentSales();
+          }
+        }}
         className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-semibold"
       >
         Refresh
@@ -4284,18 +4631,20 @@ return (
 
         <tbody>
 
-          {recentSales.length ===
+          {salesTableRows.length ===
           0 ? (
             <tr>
               <td
                 colSpan={7}
                 className="p-8 text-center text-gray-500"
               >
-                No recent sales found.
+                {searchedCustomerId
+                  ? "No sales found for this customer."
+                  : "No recent sales found."}
               </td>
             </tr>
           ) : (
-            recentSales.map(
+            salesTableRows.map(
               (sale) => (
                 <tr
                   key={
