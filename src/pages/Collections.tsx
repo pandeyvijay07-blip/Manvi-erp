@@ -33,6 +33,15 @@ type Allocation = {
   amount: number;
 };
 
+type RouteCollectionRow = {
+  id: string;
+  customer_name: string;
+  route: string;
+  outstanding: number;
+  cash: string;
+  upi: string;
+};
+
 
 function getTodayLocalDate() {
   const now = new Date();
@@ -195,6 +204,22 @@ export default function Collections() {
 
   const [editingCollectionId, setEditingCollectionId] =
     useState<string | null>(null);
+
+  /* =====================================================
+     ROUTE-WISE COLLECTION
+     ===================================================== */
+
+  const [routeCollectionRoute, setRouteCollectionRoute] =
+    useState("");
+
+  const [routeCollectionRows, setRouteCollectionRows] =
+    useState<RouteCollectionRow[]>([]);
+
+  const [routeCollectionLoading, setRouteCollectionLoading] =
+    useState(false);
+
+  const [routeCollectionSaving, setRouteCollectionSaving] =
+    useState(false);
 
   /* =====================================================
      LOAD CUSTOMERS
@@ -1226,6 +1251,18 @@ export default function Collections() {
     );
   }, [customers]);
 
+  useEffect(() => {
+    if (!routeCollectionRoute && routeOptions.length > 0) {
+      setRouteCollectionRoute(routeOptions[0]);
+    }
+  }, [routeOptions, routeCollectionRoute]);
+
+  useEffect(() => {
+    if (routeCollectionRoute && customers.length > 0) {
+      void loadRouteCollectionRows(routeCollectionRoute);
+    }
+  }, [routeCollectionRoute, customers]);
+
   const filteredCustomers = useMemo(() => {
     const query = customerSearch.trim().toLowerCase();
 
@@ -1241,7 +1278,212 @@ export default function Collections() {
 
       return matchesRoute && matchesCustomer;
     });
+
   }, [customers, routeFilter, customerSearch]);
+
+  /* =====================================================
+     ROUTE-WISE COLLECTION
+     ===================================================== */
+
+  async function loadRouteCollectionRows(
+    selectedRoute: string = routeCollectionRoute
+  ) {
+    const normalizedRoute = String(selectedRoute || "").trim();
+
+    if (!normalizedRoute) {
+      setRouteCollectionRows([]);
+      return;
+    }
+
+    const routeCustomers = customers.filter(
+      (customer) =>
+        String(customer.route || "").trim().toLowerCase() ===
+        normalizedRoute.toLowerCase()
+    );
+
+    if (routeCustomers.length === 0) {
+      setRouteCollectionRows([]);
+      return;
+    }
+
+    try {
+      setRouteCollectionLoading(true);
+
+      const customerIds = routeCustomers.map(
+        (customer) => customer.id
+      );
+
+      const { data: sales, error } = await supabase
+        .from("sales")
+        .select("customer_id, balance_amount")
+        .in("customer_id", customerIds)
+        .gt("balance_amount", 0);
+
+      if (error) throw error;
+
+      const salesOutstanding = new Map<string, number>();
+
+      (sales || []).forEach((sale: any) => {
+        const customerValue = String(
+          sale.customer_id || ""
+        );
+
+        salesOutstanding.set(
+          customerValue,
+          (salesOutstanding.get(customerValue) || 0) +
+            (Number(sale.balance_amount) || 0)
+        );
+      });
+
+      setRouteCollectionRows(
+        routeCustomers.map((customer) => ({
+          id: customer.id,
+          customer_name: customer.customer_name,
+          route: customer.route || "",
+          outstanding:
+            (Number(customer.opening_balance) || 0) +
+            (salesOutstanding.get(customer.id) || 0),
+          cash: "",
+          upi: "",
+        }))
+      );
+    } catch (error: any) {
+      console.error(
+        "Route-wise collection load error:",
+        error
+      );
+
+      setRouteCollectionRows([]);
+
+      alert(
+        "Unable to load route-wise collection:\n" +
+          (error?.message || "Unknown error")
+      );
+    } finally {
+      setRouteCollectionLoading(false);
+    }
+  }
+
+  function updateRouteCollectionAmount(
+    customerIdValue: string,
+    field: "cash" | "upi",
+    value: string
+  ) {
+    setRouteCollectionRows((rows) =>
+      rows.map((row) =>
+        row.id === customerIdValue
+          ? {
+              ...row,
+              [field]: value,
+            }
+          : row
+      )
+    );
+  }
+
+  const routeCollectionTotals = useMemo(() => {
+    const cash = routeCollectionRows.reduce(
+      (total, row) => total + (Number(row.cash) || 0),
+      0
+    );
+
+    const upi = routeCollectionRows.reduce(
+      (total, row) => total + (Number(row.upi) || 0),
+      0
+    );
+
+    const total = cash + upi;
+
+    return {
+      cash,
+      upi,
+      total,
+    };
+  }, [routeCollectionRows]);
+
+  async function saveRouteCollections() {
+    if (!routeCollectionRoute) {
+      alert("Please select a route.");
+      return;
+    }
+
+    const entries = routeCollectionRows
+      .map((row) => ({
+        ...row,
+        cashValue: Math.max(0, Number(row.cash) || 0),
+        upiValue: Math.max(0, Number(row.upi) || 0),
+      }))
+      .filter(
+        (row) => row.cashValue > 0 || row.upiValue > 0
+      );
+
+    if (entries.length === 0) {
+      alert(
+        "Enter Cash and/or UPI collection for at least one customer."
+      );
+      return;
+    }
+
+    try {
+      setRouteCollectionSaving(true);
+
+      let savedCount = 0;
+
+      for (const row of entries) {
+        const total = row.cashValue + row.upiValue;
+
+        const paymentMethod =
+          row.cashValue > 0 && row.upiValue > 0
+            ? "Split"
+            : row.upiValue > 0
+            ? "UPI"
+            : "Cash";
+
+        const { error } = await supabase
+          .from("collections")
+          .insert({
+            customer_id: row.id,
+            collection_date: getTodayLocalDate(),
+            amount: total,
+            round_off: 0,
+            payment_method: paymentMethod,
+            cash_amount: row.cashValue,
+            upi_amount: row.upiValue,
+            remarks: `Route-wise Collection - ${routeCollectionRoute}`,
+          });
+
+        if (error) throw error;
+
+        await rebuildCustomerPaymentState(row.id);
+        savedCount += 1;
+      }
+
+      alert(
+        `${savedCount} route-wise collection${
+          savedCount === 1 ? "" : "s"
+        } saved successfully.\n\n` +
+          `Cash: ₹${routeCollectionTotals.cash.toFixed(2)}\n` +
+          `UPI: ₹${routeCollectionTotals.upi.toFixed(2)}\n` +
+          `Total: ₹${routeCollectionTotals.total.toFixed(2)}`
+      );
+
+      await loadCustomers();
+      await loadRecentCollections();
+      await loadRouteCollectionRows(routeCollectionRoute);
+    } catch (error: any) {
+      console.error(
+        "Route-wise collection save error:",
+        error
+      );
+
+      alert(
+        "Route-wise Collection Error:\n" +
+          (error?.message || "Unable to save route-wise collections.")
+      );
+    } finally {
+      setRouteCollectionSaving(false);
+    }
+  }
 
   /* =====================================================
      SELECTED CUSTOMER
@@ -1298,6 +1540,224 @@ export default function Collections() {
             ? "Edit existing collection"
             : "Record customer payment"}
         </p>
+      </div>
+
+      {/* =================================================
+          ROUTE-WISE COLLECTION
+      ================================================= */}
+
+      <div className="bg-white rounded-2xl shadow p-6 border-2 border-blue-100">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-5">
+          <div>
+            <h2 className="text-2xl font-bold text-blue-700">
+              Route-wise Collection
+            </h2>
+            <p className="text-gray-500 mt-1">
+              Select a route, enter Cash and UPI for customers, then save all collections together.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="block font-semibold mb-2">
+                Collection Route
+              </label>
+              <select
+                value={routeCollectionRoute}
+                onChange={(e) => {
+                  setRouteCollectionRoute(e.target.value);
+                  setRouteCollectionRows([]);
+                }}
+                className="border rounded-xl px-4 py-3 min-w-[220px] bg-white"
+              >
+                <option value="">Select Route</option>
+                {routeOptions.map((route) => (
+                  <option key={route} value={route}>
+                    {route}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              disabled={
+                routeCollectionLoading ||
+                !routeCollectionRoute
+              }
+              onClick={() =>
+                void loadRouteCollectionRows(
+                  routeCollectionRoute
+                )
+              }
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-bold"
+            >
+              {routeCollectionLoading
+                ? "Loading..."
+                : "Load Route"}
+            </button>
+          </div>
+        </div>
+
+        {!routeCollectionRoute ? (
+          <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-gray-500">
+            Select a route to start route-wise collection.
+          </div>
+        ) : routeCollectionRows.length === 0 && !routeCollectionLoading ? (
+          <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-gray-500">
+            No customers found on this route.
+          </div>
+        ) : (
+          <>
+            <div className="overflow-x-auto border rounded-xl">
+              <table className="w-full min-w-[760px] border-collapse">
+                <thead>
+                  <tr className="bg-blue-600 text-white">
+                    <th className="p-3 text-left">#</th>
+                    <th className="p-3 text-left">Customer</th>
+                    <th className="p-3 text-right">Outstanding</th>
+                    <th className="p-3 text-right">Cash</th>
+                    <th className="p-3 text-right">UPI</th>
+                    <th className="p-3 text-right">Total</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {routeCollectionRows.map((row, index) => {
+                    const cash = Number(row.cash) || 0;
+                    const upi = Number(row.upi) || 0;
+                    const total = cash + upi;
+
+                    return (
+                      <tr
+                        key={row.id}
+                        className="border-b hover:bg-blue-50"
+                      >
+                        <td className="p-3">
+                          {index + 1}
+                        </td>
+
+                        <td className="p-3 font-semibold">
+                          {row.customer_name}
+                        </td>
+
+                        <td className="p-3 text-right font-bold text-red-600">
+                          ₹{row.outstanding.toFixed(2)}
+                        </td>
+
+                        <td className="p-3">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={row.cash}
+                            onChange={(e) =>
+                              updateRouteCollectionAmount(
+                                row.id,
+                                "cash",
+                                e.target.value
+                              )
+                            }
+                            className="w-full min-w-[130px] border-2 border-green-200 rounded-lg px-3 py-2 text-right"
+                            placeholder="0"
+                          />
+                        </td>
+
+                        <td className="p-3">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={row.upi}
+                            onChange={(e) =>
+                              updateRouteCollectionAmount(
+                                row.id,
+                                "upi",
+                                e.target.value
+                              )
+                            }
+                            className="w-full min-w-[130px] border-2 border-blue-200 rounded-lg px-3 py-2 text-right"
+                            placeholder="0"
+                          />
+                        </td>
+
+                        <td className="p-3 text-right font-bold text-green-700">
+                          ₹{total.toFixed(2)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+
+                <tfoot>
+                  <tr className="bg-gray-100 font-bold">
+                    <td
+                      colSpan={3}
+                      className="p-3 text-right"
+                    >
+                      Route Total
+                    </td>
+                    <td className="p-3 text-right text-green-700">
+                      ₹{routeCollectionTotals.cash.toFixed(2)}
+                    </td>
+                    <td className="p-3 text-right text-blue-700">
+                      ₹{routeCollectionTotals.upi.toFixed(2)}
+                    </td>
+                    <td className="p-3 text-right text-indigo-700">
+                      ₹{routeCollectionTotals.total.toFixed(2)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-4 mt-5">
+              <div className="text-sm text-gray-600">
+                Customers:{" "}
+                <span className="font-bold">
+                  {routeCollectionRows.length}
+                </span>
+                {" • "}
+                Enter only the customers who actually paid today.
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={
+                    routeCollectionSaving ||
+                    routeCollectionLoading
+                  }
+                  onClick={() =>
+                    void loadRouteCollectionRows(
+                      routeCollectionRoute
+                    )
+                  }
+                  className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-6 py-3 rounded-xl font-bold"
+                >
+                  Clear / Reload
+                </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    routeCollectionSaving ||
+                    routeCollectionLoading ||
+                    routeCollectionTotals.total <= 0
+                  }
+                  onClick={() =>
+                    void saveRouteCollections()
+                  }
+                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-8 py-3 rounded-xl font-bold"
+                >
+                  {routeCollectionSaving
+                    ? "Saving All..."
+                    : "Save All Collections"}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* =================================================
