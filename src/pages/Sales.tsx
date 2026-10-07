@@ -136,6 +136,13 @@ purchase_rate: number;
 amount: number;
 };
 
+type CustomerPriceRow = {
+  id: string;
+  customer_id: string;
+  product_id: string;
+  selling_rate: number;
+};
+
 type RecentSale = {
 id: string;
 sale_date: string;
@@ -231,6 +238,7 @@ cashValue: number = 0,
 upiValue: number = 0
 ) {
 const itemLines = items
+.filter((item) => Number(item.quantity) > 0)
 .map((item, index) => {
 return `${index + 1}. ${item.product_name}\n   Qty: ${item.quantity}  Amount: ₹${item.amount.toFixed(2)}`;
 })
@@ -512,6 +520,30 @@ SALE ITEMS
 
 const [saleItems, setSaleItems] =
 useState<SaleItem[]>([]);
+
+/* =========================================================
+CUSTOMER ASSIGNED PRODUCTS - FAST SALES TEST
+========================================================= */
+const [customerAssignedProducts, setCustomerAssignedProducts] =
+useState<CustomerPriceRow[]>([]);
+
+const [customerProductsLoading, setCustomerProductsLoading] =
+useState(false);
+
+const [newCustomerProductId, setNewCustomerProductId] =
+useState("");
+
+const [newCustomerProductRate, setNewCustomerProductRate] =
+useState("");
+
+const [newCustomerProductQty, setNewCustomerProductQty] =
+useState("1");
+
+const [editingCustomerProductId, setEditingCustomerProductId] =
+useState<string | null>(null);
+
+const [editingCustomerProductRate, setEditingCustomerProductRate] =
+useState("");
 
 /* =========================================================
 EDIT CURRENT PRODUCT LINE
@@ -977,6 +1009,18 @@ useEffect(() => {
 }, [customerId]);
 
 /* =========================================================
+LOAD CUSTOMER ASSIGNED PRODUCTS - FAST SALES TEST
+========================================================= */
+useEffect(() => {
+  if (!customerId || products.length === 0) {
+    setCustomerAssignedProducts([]);
+    return;
+  }
+
+  void loadCustomerAssignedProducts(customerId);
+}, [customerId, products.length]);
+
+/* =========================================================
 COPY YESTERDAY'S SALE
 Loads the customer's sale from exactly one calendar day
 before the selected sale date, including all products,
@@ -1214,9 +1258,9 @@ brands,
 ]);
 
 /* =========================================================
-CUSTOMER PRICE
+CUSTOMER PRICE / ASSIGNED PRODUCTS
+Uses the existing customer_prices.selling_rate column.
 ========================================================= */
-
 async function getCustomerPrice(
 customer: string,
 product: string
@@ -1226,28 +1270,15 @@ return null;
 }
 
 try {
-  const {
-    data,
-    error,
-  } = await supabase
+  const { data, error } = await supabase
     .from("customer_prices")
-    .select("rate")
-    .eq(
-      "customer_id",
-      customer
-    )
-    .eq(
-      "product_id",
-      product
-    )
+    .select("selling_rate")
+    .eq("customer_id", customer)
+    .eq("product_id", product)
     .maybeSingle();
 
   if (error) {
-    console.error(
-      "Customer price error:",
-      error
-    );
-
+    console.error("Customer price error:", error);
     return null;
   }
 
@@ -1255,38 +1286,255 @@ try {
     return null;
   }
 
-  const rate = Number(
-    data.rate
-  );
-
-  if (
-    !Number.isFinite(rate)
-  ) {
-    return null;
-  }
-
-  return rate;
+  const rate = Number(data.selling_rate);
+  return Number.isFinite(rate) ? rate : null;
 } catch (error) {
   console.error(error);
   return null;
 }
+}
 
+async function loadCustomerAssignedProducts(customer: string) {
+  if (!customer) {
+    setCustomerAssignedProducts([]);
+    return;
+  }
+
+  try {
+    setCustomerProductsLoading(true);
+
+    const { data, error } = await supabase
+      .from("customer_prices")
+      .select("id, customer_id, product_id, selling_rate")
+      .eq("customer_id", customer)
+      .order("id");
+
+    if (error) throw error;
+
+    const rows: CustomerPriceRow[] = (data || []).map((row: any) => ({
+      id: String(row.id),
+      customer_id: String(row.customer_id),
+      product_id: String(row.product_id),
+      selling_rate: Number(row.selling_rate) || 0,
+    }));
+
+    setCustomerAssignedProducts(rows);
+
+    // For a new sale, show all assigned products immediately.
+    // Quantity starts at zero so the user only enters the quantities needed today.
+    if (!editingSaleId && saleItems.every((item) => Number(item.quantity) <= 0)) {
+      const assignedSaleItems: SaleItem[] = rows
+        .map((row) => {
+          const product = products.find((p) => p.id === row.product_id);
+          if (!product) return null;
+
+          const brand = brands.find((b) => b.id === product.brand_id);
+
+          return {
+            product_id: product.id,
+            brand_id: product.brand_id || null,
+            brand_name: brand?.brand_name || "No Brand",
+            product_name: product.product_name,
+            pack_size: product.pack_size || "",
+            unit: getProductUnit(product),
+            quantity: 0,
+            rate: Number(row.selling_rate) || 0,
+            purchase_rate: Number(product.purchase_rate) || 0,
+            amount: 0,
+          } as SaleItem;
+        })
+        .filter((item): item is SaleItem => item !== null);
+
+      setSaleItems(assignedSaleItems);
+    }
+  } catch (error: any) {
+    console.error("Customer assigned products error:", error);
+    setCustomerAssignedProducts([]);
+    alert("Unable to load customer products:\n" + (error?.message || "Unknown error"));
+  } finally {
+    setCustomerProductsLoading(false);
+  }
+}
+
+async function saveCustomerProductRate(productIdValue: string) {
+  if (!customerId) return;
+
+  const rate = Number(editingCustomerProductRate);
+  if (!Number.isFinite(rate) || rate < 0) {
+    alert("Enter a valid selling rate.");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const { error } = await supabase
+      .from("customer_prices")
+      .upsert(
+        [{
+          customer_id: customerId,
+          product_id: productIdValue,
+          selling_rate: rate,
+        }],
+        { onConflict: "customer_id,product_id" }
+      );
+
+    if (error) throw error;
+
+    setSaleItems((old) =>
+      old.map((item) =>
+        item.product_id === productIdValue
+          ? { ...item, rate, amount: Number(item.quantity || 0) * rate }
+          : item
+      )
+    );
+
+    setEditingCustomerProductId(null);
+    setEditingCustomerProductRate("");
+    await loadCustomerAssignedProducts(customerId);
+  } catch (error: any) {
+    console.error("Customer rate update error:", error);
+    alert("Unable to update customer rate:\n" + (error?.message || "Unknown error"));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function deleteCustomerProduct(productIdValue: string) {
+  if (!customerId) return;
+
+  const product = products.find((p) => p.id === productIdValue);
+  const confirmed = window.confirm(
+    `Remove ${product?.product_name || "this product"} from this customer's assigned products?\n\nThe Product Master and old sales will NOT be deleted.`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    setLoading(true);
+
+    const { error } = await supabase
+      .from("customer_prices")
+      .delete()
+      .eq("customer_id", customerId)
+      .eq("product_id", productIdValue);
+
+    if (error) throw error;
+
+    setCustomerAssignedProducts((old) =>
+      old.filter((row) => row.product_id !== productIdValue)
+    );
+
+    setSaleItems((old) =>
+      old.filter((item) => item.product_id !== productIdValue)
+    );
+  } catch (error: any) {
+    console.error("Customer product delete error:", error);
+    alert("Unable to remove customer product:\n" + (error?.message || "Unknown error"));
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function addNewProductForCustomer() {
+  if (!customerId) {
+    alert("Please select a customer first.");
+    return;
+  }
+
+  if (!newCustomerProductId) {
+    alert("Please select a product.");
+    return;
+  }
+
+  const rate = Number(newCustomerProductRate);
+  const qty = Number(newCustomerProductQty);
+
+  if (!Number.isFinite(rate) || rate < 0) {
+    alert("Enter a valid selling rate.");
+    return;
+  }
+
+  if (!Number.isFinite(qty) || qty < 0) {
+    alert("Enter a valid quantity.");
+    return;
+  }
+
+  const product = products.find((p) => p.id === newCustomerProductId);
+  if (!product) {
+    alert("Product not found.");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const { error } = await supabase
+      .from("customer_prices")
+      .upsert(
+        [{
+          customer_id: customerId,
+          product_id: product.id,
+          selling_rate: rate,
+        }],
+        { onConflict: "customer_id,product_id" }
+      );
+
+    if (error) throw error;
+
+    const brand = brands.find((b) => b.id === product.brand_id);
+
+    const newItem: SaleItem = {
+      product_id: product.id,
+      brand_id: product.brand_id || null,
+      brand_name: brand?.brand_name || "No Brand",
+      product_name: product.product_name,
+      pack_size: product.pack_size || "",
+      unit: getProductUnit(product),
+      quantity: qty,
+      rate,
+      purchase_rate: Number(product.purchase_rate) || 0,
+      amount: qty * rate,
+    };
+
+    setSaleItems((old) => {
+      const existingIndex = old.findIndex((item) => item.product_id === product.id);
+      if (existingIndex >= 0) {
+        return old.map((item, index) =>
+          index === existingIndex ? newItem : item
+        );
+      }
+      return [...old, newItem];
+    });
+
+    setNewCustomerProductId("");
+    setNewCustomerProductRate("");
+    setNewCustomerProductQty("1");
+
+    await loadCustomerAssignedProducts(customerId);
+  } catch (error: any) {
+    console.error("Add customer product error:", error);
+    alert("Unable to add customer product:\n" + (error?.message || "Unknown error"));
+  } finally {
+    setLoading(false);
+  }
 }
 
 /* =========================================================
 SYNC CUSTOMER PRICES
-Whenever a sale is saved, the entered customer/product
-rate becomes the current saved customer price.
+Every saved sale rate becomes the customer's current rate.
+Uses selling_rate, matching Customer Prices.
 ========================================================= */
 async function syncCustomerPrices(items: SaleItem[]) {
   if (!customerId || items.length === 0) return;
 
   const rows = getUniqueSaleItems(items)
+    .filter((item) => Number(item.quantity) > 0)
     .filter((item) => Number.isFinite(Number(item.rate)) && Number(item.rate) >= 0)
     .map((item) => ({
       customer_id: customerId,
       product_id: item.product_id,
-      rate: Number(item.rate),
+      selling_rate: Number(item.rate),
     }));
 
   if (rows.length === 0) return;
@@ -1829,11 +2077,13 @@ if (saveInProgressRef.current) {
   return;
 }
 
-if (
-saleItems.length === 0
-) {
+const activeSaleItems = saleItems.filter(
+  (item) => Number(item.quantity) > 0
+);
+
+if (activeSaleItems.length === 0) {
 alert(
-"Please add at least one product."
+"Please enter quantity for at least one product."
 );
 return;
 }
@@ -1856,7 +2106,7 @@ try {
      older sale contains duplicate product rows.
      ===================================================== */
 
-  const uniqueSaleItems = getUniqueSaleItems(saleItems);
+  const uniqueSaleItems = getUniqueSaleItems(activeSaleItems);
 
   if (uniqueSaleItems.length !== saleItems.length) {
     setSaleItems(uniqueSaleItems);
@@ -2306,7 +2556,11 @@ try {
      Never allow the same product twice in one sale.
      ===================================================== */
 
-  const uniqueSaleItems = getUniqueSaleItems(saleItems);
+  const activeSaleItems = saleItems.filter(
+    (item) => Number(item.quantity) > 0
+  );
+
+  const uniqueSaleItems = getUniqueSaleItems(activeSaleItems);
 
   if (uniqueSaleItems.length === 0) {
     throw new Error("A sale must contain at least one product.");
@@ -3474,7 +3728,7 @@ return (
 
   <div>
     <h1 className="text-3xl font-bold text-blue-700">
-      Sales Entry
+      Sales Entry — Fast Customer Products TEST
     </h1>
 
     <p className="text-gray-600 mt-1">
@@ -3541,7 +3795,12 @@ return (
       <CustomerRouteSearch
         customers={customers}
         value={customerId}
-        onChange={setCustomerId}
+        onChange={(value) => {
+          setCustomerId(value);
+          setEditingSaleId(null);
+          setEditingItemIndex(null);
+          setSaleItems([]);
+        }}
         disabled={loading || loadingData}
         label="Customer / Route"
       />
@@ -3729,335 +3988,266 @@ return (
     )}
 
     {/* ===================================================
-        ADD PRODUCTS
+        FAST CUSTOMER PRODUCTS
     =================================================== */}
 
     <div className="border-t mt-7 pt-7">
 
-      <h2 className="text-2xl font-bold text-gray-800">
-        Add Products
-      </h2>
-
-      <p className="text-gray-500 mt-1 mb-5">
-        Select a brand and add multiple products.
-      </p>
-
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-
-        {/* BRAND */}
-
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
-          <label className="block font-semibold mb-2">
-            Brand
-          </label>
-
-          <select
-            value={brandId}
-            onChange={(e) => {
-              setBrandId(
-                e.target.value
-              );
-
-              setProductId("");
-
-              setSellingRate("");
-            }}
-            className="w-full border rounded-xl px-4 py-3"
-          >
-            <option value="">
-              Select Brand
-            </option>
-
-            {brands.map(
-              (brand) => (
-                <option
-                  key={
-                    brand.id
-                  }
-                  value={
-                    brand.id
-                  }
-                >
-                  {
-                    brand.brand_name
-                  }
-                </option>
-              )
-            )}
-          </select>
-        </div>
-
-        {/* SEARCH */}
-
-        <div>
-          <label className="block font-semibold mb-2">
-            Product Search
-          </label>
-
-          <input
-            type="text"
-            value={
-              productSearch
-            }
-            onChange={(e) =>
-              setProductSearch(
-                e.target.value
-              )
-            }
-            placeholder="Search product..."
-            className="w-full border rounded-xl px-4 py-3"
-          />
-        </div>
-
-        {/* PRODUCT */}
-
-        <div>
-          <label className="block font-semibold mb-2">
-            Product
-          </label>
-
-          <select
-            value={productId}
-            onChange={(e) =>
-              handleProductChange(
-                e.target.value
-              )
-            }
-            className="w-full border rounded-xl px-4 py-3"
-          >
-            <option value="">
-              Select Product
-            </option>
-
-            {brandProducts.map(
-              (product) => (
-                <option
-                  key={
-                    product.id
-                  }
-                  value={
-                    product.id
-                  }
-                >
-                  {
-                    product.product_name
-                  }
-                  {" - "}
-                  {
-                    getPackDisplay(
-                      product.pack_size
-                    )
-                  }
-                </option>
-              )
-            )}
-          </select>
-        </div>
-
-        {/* QUANTITY */}
-
-        <div>
-          <label className="block font-semibold mb-2">
-            Quantity
-          </label>
-
-          <input
-            type="number"
-            min="0.01"
-            step="0.01"
-            value={quantity}
-            onChange={(e) =>
-              setQuantity(
-                e.target.value
-              )
-            }
-            className="w-full border rounded-xl px-4 py-3"
-          />
-
-          {selectedProduct && (
-            <div className="mt-2 rounded-lg bg-gray-100 px-3 py-2">
-
-              <p className="text-xs text-gray-500">
-                Available Stock
-              </p>
-
-              <p
-                className={`text-lg font-bold ${
-                  Number(
-                    selectedProduct.stock_qty ||
-                      0
-                  ) > 0
-                    ? "text-green-600"
-                    : "text-red-600"
-                }`}
-              >
-                {Number(
-                  selectedProduct.stock_qty ||
-                    0
-                )}
-
-                {" "}
-
-                Litre
-              </p>
-
-            </div>
-          )}
-        </div>
-
-        {/* SELLING RATE */}
-
-        <div>
-          <label className="block font-semibold mb-2">
-            Selling Rate
-          </label>
-
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={
-              sellingRate
-            }
-            onChange={(e) =>
-              setSellingRate(
-                e.target.value
-              )
-            }
-            className="w-full border rounded-xl px-4 py-3"
-          />
-
-          <p className="text-sm text-gray-500 mt-1">
-            Customer rate applied automatically.
+          <h2 className="text-2xl font-bold text-gray-800">
+            Customer Products
+          </h2>
+          <p className="text-gray-500 mt-1">
+            Select the customer once. Their assigned products and saved rates open automatically. Enter only today's quantities.
           </p>
         </div>
 
+        {selectedCustomer && (
+          <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-3">
+            <p className="text-xs text-gray-500">Customer</p>
+            <p className="font-bold text-blue-700">
+              {selectedCustomer.customer_name}
+            </p>
+          </div>
+        )}
       </div>
 
-      {/* =================================================
-          SELECTED PRODUCT INFORMATION
-      ================================================= */}
+      {!customerId ? (
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-5 text-amber-800 font-semibold">
+          Select a customer above to open that customer's products.
+        </div>
+      ) : customerProductsLoading ? (
+        <div className="mt-5 rounded-xl border bg-gray-50 p-5 text-gray-600">
+          Loading customer products...
+        </div>
+      ) : (
+        <>
+          <div className="mt-5 overflow-x-auto rounded-xl border">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="bg-blue-600 text-white">
+                  <th className="p-3 text-left">Product</th>
+                  <th className="p-3 text-center">Pack</th>
+                  <th className="p-3 text-center">Stock</th>
+                  <th className="p-3 text-right">Selling Rate</th>
+                  <th className="p-3 text-center">Quantity</th>
+                  <th className="p-3 text-right">Amount</th>
+                  <th className="p-3 text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customerAssignedProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-7 text-center text-gray-500">
+                      No products assigned to this customer yet. Use <strong>Add Product</strong> below.
+                    </td>
+                  </tr>
+                ) : (
+                  customerAssignedProducts.map((row) => {
+                    const product = products.find((p) => p.id === row.product_id);
+                    const item = saleItems.find((saleItem) => saleItem.product_id === row.product_id);
+                    const qty = Number(item?.quantity || 0);
+                    const rate = Number(item?.rate ?? row.selling_rate) || 0;
+                    const amount = qty * rate;
+                    const editingRate = editingCustomerProductId === row.product_id;
 
-      {selectedProduct && (
-        <div className="mt-5 bg-blue-50 border border-blue-200 rounded-xl p-4">
+                    return (
+                      <tr key={row.product_id} className="border-b hover:bg-gray-50">
+                        <td className="p-3 font-semibold">
+                          <div>{product?.product_name || "Unknown Product"}</div>
+                          <div className="text-xs text-gray-500">
+                            {brands.find((b) => b.id === product?.brand_id)?.brand_name || "No Brand"}
+                          </div>
+                        </td>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                        <td className="p-3 text-center">
+                          {getPackDisplay(product?.pack_size || null)}
+                        </td>
 
-            {/* BRAND */}
+                        <td className="p-3 text-center">
+                          <span
+                            className={`font-bold ${
+                              Number(product?.stock_qty || 0) > 0
+                                ? "text-green-600"
+                                : "text-red-600"
+                            }`}
+                          >
+                            {Number(product?.stock_qty || 0).toFixed(2).replace(/\.00$/, "")}
+                          </span>
+                        </td>
 
-            <div>
-              <span className="text-gray-500 text-sm">
-                Brand
-              </span>
+                        <td className="p-3 text-right">
+                          {editingRate ? (
+                            <div className="flex items-center justify-end gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={editingCustomerProductRate}
+                                onChange={(e) => setEditingCustomerProductRate(e.target.value)}
+                                className="w-28 border rounded-lg px-3 py-2 text-right"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void saveCustomerProductRate(row.product_id)}
+                                className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-semibold"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingCustomerProductId(null);
+                                  setEditingCustomerProductRate("");
+                                }}
+                                className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded-lg font-semibold"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="font-bold">₹{rate.toFixed(2)}</span>
+                          )}
+                        </td>
 
-              <p className="font-bold text-blue-700">
-                {
-                  selectedBrand?.brand_name ||
-                  "No Brand"
-                }
-              </p>
-            </div>
+                        <td className="p-3 text-center">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={qty === 0 ? "" : qty}
+                            onChange={(e) => {
+                              const nextQty = Number(e.target.value) || 0;
+                              setSaleItems((old) =>
+                                old.map((saleItem) =>
+                                  saleItem.product_id === row.product_id
+                                    ? {
+                                        ...saleItem,
+                                        quantity: nextQty,
+                                        amount: nextQty * Number(saleItem.rate || row.selling_rate),
+                                      }
+                                    : saleItem
+                                )
+                              );
+                            }}
+                            placeholder="0"
+                            className="w-24 border rounded-lg px-3 py-2 text-center font-bold"
+                          />
+                        </td>
 
-            {/* PRODUCT */}
+                        <td className="p-3 text-right font-bold">
+                          ₹{amount.toFixed(2)}
+                        </td>
 
-            <div>
-              <span className="text-gray-500 text-sm">
-                Product
-              </span>
+                        <td className="p-3">
+                          <div className="flex flex-wrap justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCustomerProductId(row.product_id);
+                                setEditingCustomerProductRate(String(row.selling_rate));
+                              }}
+                              className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded-lg font-semibold"
+                            >
+                              Edit Rate
+                            </button>
 
-              <p className="font-bold">
-                {
-                  selectedProduct.product_name
-                }
-              </p>
-            </div>
-
-            {/* PACK */}
-
-            <div>
-              <span className="text-gray-500 text-sm">
-                Pack Size
-              </span>
-
-              <p className="font-bold">
-                {
-                  getPackDisplay(
-                    selectedProduct.pack_size
-                  )
-                }
-              </p>
-            </div>
-
-            {/* RATE */}
-
-            <div>
-              <span className="text-gray-500 text-sm">
-                Selling Rate
-              </span>
-
-              <p className="font-bold">
-                ₹
-                {Number(
-                  selectedProduct.selling_rate ||
-                    0
-                ).toFixed(2)}
-              </p>
-            </div>
-
-            {/* STOCK */}
-
-            <div>
-              <span className="text-gray-500 text-sm">
-                Current Stock
-              </span>
-
-              <p className="font-bold text-green-600">
-                {Number(
-                  selectedProduct.stock_qty ||
-                    0
-                )}{" "}
-                Litre
-              </p>
-            </div>
-
+                            <button
+                              type="button"
+                              disabled={loading}
+                              onClick={() => void deleteCustomerProduct(row.product_id)}
+                              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-3 py-2 rounded-lg font-semibold"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
 
-        </div>
+          <div className="mt-5 rounded-xl border border-green-200 bg-green-50 p-5">
+            <h3 className="text-lg font-bold text-green-800">
+              + Add Product for this Customer
+            </h3>
+            <p className="text-sm text-green-700 mt-1 mb-4">
+              Add a new product and customer rate. It becomes part of this customer's regular product list.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="md:col-span-2">
+                <label className="block font-semibold mb-2">Product</label>
+                <select
+                  value={newCustomerProductId}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setNewCustomerProductId(value);
+                    const product = products.find((p) => p.id === value);
+                    setNewCustomerProductRate(
+                      product ? String(product.selling_rate || 0) : ""
+                    );
+                  }}
+                  className="w-full border rounded-xl px-4 py-3"
+                >
+                  <option value="">Select Product</option>
+                  {products
+                    .filter(
+                      (product) =>
+                        !customerAssignedProducts.some(
+                          (row) => row.product_id === product.id
+                        )
+                    )
+                    .map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.product_name} - {getPackDisplay(product.pack_size)}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-2">Customer Rate</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={newCustomerProductRate}
+                  onChange={(e) => setNewCustomerProductRate(e.target.value)}
+                  className="w-full border rounded-xl px-4 py-3"
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-2">Today's Qty</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={newCustomerProductQty}
+                  onChange={(e) => setNewCustomerProductQty(e.target.value)}
+                  className="w-full border rounded-xl px-4 py-3"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={loading || !newCustomerProductId}
+              onClick={() => void addNewProductForCustomer()}
+              className="mt-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-7 py-3 rounded-xl font-bold"
+            >
+              + Add Product
+            </button>
+          </div>
+        </>
       )}
-
-      {/* =================================================
-          PRODUCT BUTTONS
-      ================================================= */}
-
-      <div className="flex flex-wrap gap-3 mt-5">
-
-        <button
-          type="button"
-          onClick={
-            addOrUpdateSaleItem
-          }
-          className="bg-blue-600 hover:bg-blue-700 text-white px-7 py-3 rounded-xl font-bold"
-        >
-          {editingItemIndex !==
-          null
-            ? "Update Product"
-            : "+ Add Product"}
-        </button>
-
-        <button
-          type="button"
-          onClick={
-            cancelProductEdit
-          }
-          className="bg-gray-500 hover:bg-gray-600 text-white px-7 py-3 rounded-xl font-bold"
-        >
-          {editingItemIndex !==
-          null
-            ? "Cancel Edit"
-            : "Clear Product"}
-        </button>
-
-      </div>
 
     </div>
 
