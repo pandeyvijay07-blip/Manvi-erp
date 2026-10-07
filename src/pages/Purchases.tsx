@@ -888,13 +888,26 @@ export default function Purchases() {
         (row) => String(row.product_id) === String(product.id)
       );
 
+      // Quantity 0 / blank means remove the product from this purchase.
+      if (field === "quantity" && numericValue <= 0) {
+        return previous.filter(
+          (row) => String(row.product_id) !== String(product.id)
+        );
+      }
+
       if (existingIndex >= 0) {
         const updated = [...previous];
         const existing = updated[existingIndex];
+
         const nextQuantity =
-          field === "quantity" ? numericValue : Number(existing.quantity || 0);
+          field === "quantity"
+            ? numericValue
+            : Number(existing.quantity || 0);
+
         const nextRate =
-          field === "rate" ? numericValue : Number(existing.rate || product.purchase_rate || 0);
+          field === "rate"
+            ? numericValue
+            : Number(existing.rate || product.purchase_rate || 0);
 
         updated[existingIndex] = {
           ...existing,
@@ -3193,198 +3206,7 @@ export default function Purchases() {
       </div>
 
       {/* ==================================================
-          SUPPLIER-LINKED BRANDS + PRODUCTS
-      ================================================== */}
-
-      <div
-        className="
-          mb-6
-          rounded-2xl
-          bg-white
-          p-6
-          shadow-lg
-        "
-      >
-
-        <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-slate-800">
-              1. Supplier Products
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Select a supplier above. Its linked brands and all products will open automatically.
-            </p>
-          </div>
-
-          {selectedSupplierId && (
-            <div className="rounded-lg bg-blue-50 px-4 py-2 font-bold text-blue-700">
-              {supplierBrands.length} Linked Brand{supplierBrands.length === 1 ? "" : "s"}
-            </div>
-          )}
-        </div>
-
-        {!selectedSupplierId && !localVendorMode && (
-          <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm font-semibold text-orange-800">
-            Select a supplier first. Its linked brands and products will appear automatically.
-          </div>
-        )}
-
-        {selectedSupplierId && supplierBrands.length === 0 && (
-          <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-            No products are linked to this supplier yet. Add a product from Product Master, or use a purchase to create the supplier-product link.
-          </div>
-        )}
-
-        {localVendorMode && supplierBrands.length === 0 && (
-          <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-            No products are available in Product Master yet.
-          </div>
-        )}
-
-        <div className="space-y-5">
-          {supplierBrands.map((brand) => {
-            const brandProductsForDisplay = products.filter((product) => {
-              if (String(product.brand_id) !== String(brand.id)) return false;
-
-              if (localVendorMode) return true;
-
-              return supplierProductLinks.some(
-                (link) =>
-                  String(link.supplier_id) === String(selectedSupplierId) &&
-                  String(link.product_id) === String(product.id)
-              );
-            });
-
-            return (
-              <div key={brand.id} className="overflow-hidden rounded-2xl border-2 border-blue-100">
-                <div className="flex items-center justify-between bg-blue-50 px-4 py-3">
-                  <div>
-                    <h3 className="text-lg font-bold text-blue-800">
-                      {brand.brand_name}
-                    </h3>
-                    <p className="text-xs text-blue-600">
-                      {brandProductsForDisplay.length} product{brandProductsForDisplay.length === 1 ? "" : "s"}
-                    </p>
-                  </div>
-                </div>
-
-                {brandProductsForDisplay.length === 0 ? (
-                  <div className="p-4 text-sm text-gray-500">
-                    No products linked to this brand for this supplier.
-                  </div>
-                ) : (
-                  <div>
-                    <div className="hidden border-b bg-slate-800 px-3 py-3 text-xs font-bold uppercase tracking-wide text-white md:grid md:grid-cols-[minmax(220px,1fr)_90px_130px_110px_140px_80px] md:items-center md:gap-3">
-                      <div>Product</div>
-                      <div className="text-right">Stock</div>
-                      <div className="text-right">Purchase Rate</div>
-                      <div className="text-right">Qty</div>
-                      <div className="text-right">Amount</div>
-                      <div className="text-center">Action</div>
-                    </div>
-                    <div className="divide-y divide-slate-100">
-                    {brandProductsForDisplay.map((product) => {
-                      const currentRow = purchaseRows.find(
-                        (row) => String(row.product_id) === String(product.id)
-                      );
-
-                      const isSelected =
-                        String(selectedProductId) === String(product.id);
-
-                      return (
-                        <div
-                          key={product.id}
-                          className="grid gap-3 border-b p-3 md:grid-cols-[minmax(220px,1fr)_90px_130px_110px_140px_80px] md:items-center"
-                        >
-                          <div>
-                            <p className="font-bold text-slate-800">
-                              {product.product_name}
-                            </p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {Number(product.size || 1)} {product.unit || "Litre"}
-                            </p>
-                          </div>
-
-                          <div className="text-right">
-                            <span className="block text-xs text-slate-500">Stock</span>
-                            <span className="font-bold text-green-700">
-                              {Number(product.stock_qty || 0)}
-                            </span>
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-xs font-semibold text-slate-500">
-                              Purchase Rate
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={currentRow?.rate ?? product.purchase_rate ?? ""}
-                              onChange={(e) =>
-                                updateDirectPurchaseRow(
-                                  product,
-                                  "rate",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-lg border border-blue-200 p-2 text-right font-semibold"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-xs font-semibold text-slate-500">
-                              Qty
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.001"
-                              value={currentRow?.quantity ?? ""}
-                              onChange={(e) =>
-                                updateDirectPurchaseRow(
-                                  product,
-                                  "quantity",
-                                  e.target.value
-                                )
-                              }
-                              placeholder="Qty"
-                              className="w-full rounded-lg border-2 border-blue-300 p-2 text-right font-bold"
-                            />
-                          </div>
-
-                          <div className="text-right text-lg font-bold text-slate-800">
-                            ₹{Number(currentRow?.amount || 0).toFixed(2)}
-                          </div>
-
-                          <div className="text-center">
-                            {!localVendorMode && (
-                              <button
-                                type="button"
-                                onClick={() => deleteSupplierProductLink(product.id)}
-                                className="rounded-lg bg-red-600 px-2 py-2 text-xs font-bold text-white hover:bg-red-700"
-                                title="Remove product from supplier"
-                              >
-                                Delete
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* FAST PURCHASE ENTRY IS HANDLED DIRECTLY IN THE SUPPLIER PRODUCT TABLE ABOVE. */}
-
-      {/* ==================================================
-          PURCHASE CART
+          SUPPLIER PRODUCT FAST-ENTRY TABLE
       ================================================== */}
 
       <div
@@ -3402,395 +3224,157 @@ export default function Purchases() {
             mb-5
             flex
             flex-col
-            gap-3
+            gap-2
             md:flex-row
             md:items-center
             md:justify-between
           "
         >
-
           <div>
-
-            <h2
-              className="
-                text-xl
-                font-bold
-                text-slate-800
-              "
-            >
+            <h2 className="text-xl font-bold text-slate-800">
               3. Purchase Products
             </h2>
-
-            <p
-              className="
-                mt-1
-                text-sm
-                text-slate-500
-              "
-            >
-              Multiple products
-              can be added to the
-              same purchase.
+            <p className="mt-1 text-sm text-slate-500">
+              Products linked to the selected supplier appear automatically. Enter quantity only.
             </p>
-
           </div>
 
-          <div
-            className="
-              rounded-xl
-              bg-blue-50
-              px-5
-              py-3
-            "
-          >
-
-            <p
-              className="
-                text-xs
-                font-semibold
-                text-slate-500
-              "
-            >
+          <div className="rounded-xl bg-blue-50 px-5 py-3">
+            <p className="text-xs font-semibold text-slate-500">
               Purchase Total
             </p>
-
-            <p
-              className="
-                text-2xl
-                font-bold
-                text-blue-700
-              "
-            >
-              {money(
-                totalPurchaseAmount
-              )}
+            <p className="text-2xl font-bold text-blue-700">
+              {money(totalPurchaseAmount)}
             </p>
-
           </div>
-
         </div>
 
-        {purchaseRows.length ===
-        0 ? (
-
-          <div
-            className="
-              rounded-xl
-              border-2
-              border-dashed
-              border-slate-300
-              p-10
-              text-center
-            "
-          >
-
-            <p
-              className="
-                text-lg
-                font-semibold
-                text-slate-500
-              "
-            >
-              No products added yet
+        {!selectedSupplierId && !localVendorMode ? (
+          <div className="rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 p-6 text-center">
+            <p className="font-bold text-orange-800">
+              Select a supplier first
             </p>
-
-            <p
-              className="
-                mt-2
-                text-sm
-                text-slate-400
-              "
-            >
-              Select a brand and
-              product above to
-              start punching the
-              purchase.
+            <p className="mt-1 text-sm text-orange-700">
+              The supplier's linked products will automatically appear here.
             </p>
-
           </div>
-
         ) : (
+          (() => {
+            const tableProducts = products.filter((product) => {
+              if (localVendorMode) return true;
 
-          <div
-            className="
-              overflow-x-auto
-            "
-          >
+              return supplierProductLinks.some(
+                (link) =>
+                  String(link.supplier_id) === String(selectedSupplierId) &&
+                  String(link.product_id) === String(product.id)
+              );
+            });
 
-            <table
-              className="
-                w-full
-                min-w-[900px]
-                border-collapse
-              "
-            >
+            if (tableProducts.length === 0) {
+              return (
+                <div className="rounded-xl border-2 border-dashed border-slate-300 p-8 text-center">
+                  <p className="font-bold text-slate-600">
+                    No products linked to this supplier
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Link products to this supplier and they will appear automatically.
+                  </p>
+                </div>
+              );
+            }
 
-              <thead
-                className="
-                  bg-slate-800
-                  text-white
-                "
-              >
-
-                <tr>
-
-                  <th className="p-3 text-left">
-                    #
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Product
-                  </th>
-
-                  <th className="p-3 text-left">
-                    Brand
-                  </th>
-
-                  <th className="p-3 text-center">
-                    Size
-                  </th>
-
-                  <th className="p-3 text-right">
-                    Quantity
-                  </th>
-
-                  <th className="p-3 text-right">
-                    Rate
-                  </th>
-
-                  <th className="p-3 text-right">
-                    Amount
-                  </th>
-
-                  <th className="p-3 text-center">
-                    Action
-                  </th>
-
-                </tr>
-
-              </thead>
-
-              <tbody>
-
-                {purchaseRows.map(
-                  (
-                    row,
-                    index
-                  ) => (
-
-                    <tr
-                      key={
-                        row.product_id
-                      }
-                      className="
-                        border-b
-                        hover:bg-slate-50
-                      "
-                    >
-
-                      <td
-                        className="
-                          p-3
-                          font-semibold
-                        "
-                      >
-                        {index + 1}
-                      </td>
-
-                      <td
-                        className="
-                          p-3
-                        "
-                      >
-
-                        <p
-                          className="
-                            font-bold
-                            text-blue-700
-                          "
-                        >
-                          {
-                            row.product_name
-                          }
-                        </p>
-
-                      </td>
-
-                      <td
-                        className="
-                          p-3
-                          font-semibold
-                          text-slate-600
-                        "
-                      >
-                        {
-                          getBrandName(
-                            row.brand_id
-                          )
-                        }
-                      </td>
-
-                      <td
-                        className="
-                          p-3
-                          text-center
-                        "
-                      >
-
-                        {
-                          row.size
-                        }
-
-                        {" "}
-
-                        {
-                          row.unit
-                        }
-
-                      </td>
-
-                      <td
-                        className="
-                          p-3
-                          text-right
-                          font-semibold
-                        "
-                      >
-                        {
-                          row.quantity
-                        }
-                      </td>
-
-                      <td
-                        className="
-                          p-3
-                          text-right
-                        "
-                      >
-                        ₹
-                        {
-                          row.rate.toFixed(
-                            2
-                          )
-                        }
-                      </td>
-
-                      <td
-                        className="
-                          p-3
-                          text-right
-                          font-bold
-                        "
-                      >
-                        ₹
-                        {
-                          row.amount.toFixed(
-                            2
-                          )
-                        }
-                      </td>
-
-                      <td
-                        className="
-                          p-3
-                          text-center
-                        "
-                      >
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            removePurchaseItem(
-                              row.product_id
-                            )
-                          }
-                          className="
-                            rounded-lg
-                            bg-red-600
-                            px-3
-                            py-2
-                            font-semibold
-                            text-white
-                            hover:bg-red-700
-                          "
-                        >
-                          Remove
-                        </button>
-
-                      </td>
-
+            return (
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full min-w-[720px] border-collapse">
+                  <thead className="bg-slate-800 text-white">
+                    <tr>
+                      <th className="p-3 text-left">Product</th>
+                      <th className="p-3 text-right">Stock</th>
+                      <th className="p-3 text-right">Purchase Rate</th>
+                      <th className="p-3 text-center">Qty</th>
+                      <th className="p-3 text-right">Amount</th>
                     </tr>
+                  </thead>
 
-                  )
-                )}
+                  <tbody>
+                    {tableProducts.map((product) => {
+                      const currentRow = purchaseRows.find(
+                        (row) => String(row.product_id) === String(product.id)
+                      );
 
-              </tbody>
+                      const purchaseRate = Number(
+                        currentRow?.rate ?? product.purchase_rate ?? 0
+                      );
 
-              <tfoot>
+                      const quantityValue =
+                        currentRow && Number(currentRow.quantity) > 0
+                          ? currentRow.quantity
+                          : "";
 
-                <tr
-                  className="
-                    bg-blue-50
-                    font-bold
-                  "
-                >
+                      const amount = Number(quantityValue || 0) * purchaseRate;
 
-                  <td
-                    colSpan={
-                      4
-                    }
-                    className="
-                      p-4
-                      text-right
-                    "
-                  >
-                    TOTAL
-                  </td>
+                      return (
+                        <tr
+                          key={product.id}
+                          className="border-b border-slate-100 hover:bg-slate-50"
+                        >
+                          <td className="p-3">
+                            <div className="font-bold text-slate-800">
+                              {product.product_name}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {Number(product.size || 1)} {product.unit || "Litre"}
+                            </div>
+                          </td>
 
-                  <td
-                    className="
-                      p-4
-                      text-right
-                      text-blue-700
-                    "
-                  >
-                    {
-                      totalPurchaseQuantity
-                    }
-                  </td>
+                          <td className="p-3 text-right font-bold text-green-700">
+                            {Number(product.stock_qty || 0)}
+                          </td>
 
-                  <td
-                    className="
-                      p-4
-                      text-right
-                    "
-                  >
-                    -
-                  </td>
+                          <td className="p-3 text-right font-semibold text-slate-700">
+                            ₹{purchaseRate.toFixed(2)}
+                          </td>
 
-                  <td
-                    className="
-                      p-4
-                      text-right
-                      text-xl
-                      text-blue-700
-                    "
-                  >
-                    {money(
-                      totalPurchaseAmount
-                    )}
-                  </td>
+                          <td className="p-3 text-center">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.001"
+                              value={quantityValue}
+                              onChange={(e) =>
+                                updateDirectPurchaseRow(
+                                  product,
+                                  "quantity",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="0"
+                              className="w-28 rounded-lg border-2 border-blue-300 bg-white p-2 text-center text-lg font-bold outline-none focus:border-blue-600"
+                            />
+                          </td>
 
-                  <td />
+                          <td className="p-3 text-right text-lg font-bold text-blue-700">
+                            ₹{amount.toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
 
-                </tr>
-
-              </tfoot>
-
-            </table>
-
-          </div>
-
+                  <tfoot>
+                    <tr className="bg-blue-50 font-bold">
+                      <td className="p-4 text-right" colSpan={4}>
+                        TOTAL
+                      </td>
+                      <td className="p-4 text-right text-xl text-blue-700">
+                        {money(totalPurchaseAmount)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            );
+          })()
         )}
 
       </div>
