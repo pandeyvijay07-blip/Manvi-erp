@@ -56,6 +56,8 @@ type SavedPurchase = {
   payment_method: string | null;
   paid_amount: number | string | null;
   balance_amount: number | string | null;
+  cash_amount?: number | string | null;
+  upi_amount?: number | string | null;
 };
 
 // ======================================================
@@ -261,6 +263,12 @@ export default function Purchases() {
     useState("");
 
   const [
+    localVendorMode,
+    setLocalVendorMode,
+  ] =
+    useState(false);
+
+  const [
     paymentMethod,
     setPaymentMethod,
   ] =
@@ -269,6 +277,18 @@ export default function Purchases() {
   const [
     paidAmount,
     setPaidAmount,
+  ] =
+    useState("0");
+
+  const [
+    cashPaid,
+    setCashPaid,
+  ] =
+    useState("0");
+
+  const [
+    upiPaid,
+    setUpiPaid,
   ] =
     useState("0");
 
@@ -305,14 +325,6 @@ export default function Purchases() {
     setRate,
   ] =
     useState("");
-
-  // Fast-entry rate overrides used by the supplier product table.
-  // Product Master purchase_rate remains unchanged until a purchase is saved.
-  const [
-    purchaseRateOverrides,
-    setPurchaseRateOverrides,
-  ] =
-    useState<Record<string, string>>({});
 
   // ====================================================
   // PURCHASE CART
@@ -534,6 +546,8 @@ export default function Purchases() {
   // ====================================================
 
   const selectedSupplierId = useMemo(() => {
+    if (localVendorMode) return "";
+
     const supplier = suppliers.find(
       (item) =>
         String(item.supplier_name).trim().toLowerCase() ===
@@ -541,7 +555,7 @@ export default function Purchases() {
     );
 
     return supplier?.id || "";
-  }, [suppliers, supplierName]);
+  }, [suppliers, supplierName, localVendorMode]);
 
   const allowedProductIds = useMemo(() => {
     if (!selectedSupplierId) return new Set<string>();
@@ -580,7 +594,9 @@ export default function Purchases() {
               total_amount,
               payment_method,
               paid_amount,
-              balance_amount
+              balance_amount,
+              cash_amount,
+              upi_amount
             `
           )
           .order(
@@ -637,10 +653,10 @@ export default function Purchases() {
         return [];
       }
 
-      // Once the supplier's linked brand is opened, show ALL products
-      // belonging to that brand. The supplier_products mapping decides
-      // which brand opens for the supplier; it does not hide products
-      // belonging to that already-selected brand.
+      // A supplier is selected for the purchase, but products are NOT
+      // hidden just because the supplier_products mapping is missing.
+      // When a product is actually added to the purchase, we automatically
+      // create the supplier -> product connection below.
       return products.filter(
         (product) =>
           String(product.brand_id) === String(selectedBrandId)
@@ -656,8 +672,20 @@ export default function Purchases() {
   // ====================================================
 
   const supplierBrands = useMemo(() => {
+    if (localVendorMode) {
+      const brandIds = new Set(
+        products
+          .map((product) => String(product.brand_id || ""))
+          .filter(Boolean)
+      );
+
+      return brands.filter((brand) => brandIds.has(String(brand.id)));
+    }
+
     if (!selectedSupplierId) return [];
 
+    // IMPORTANT: for a normal supplier, show ONLY brands that have
+    // at least one product linked to this supplier in supplier_products.
     const linkedProductIds = new Set(
       supplierProductLinks
         .filter(
@@ -666,46 +694,21 @@ export default function Purchases() {
         .map((link) => String(link.product_id))
     );
 
-    const brandIds = new Set(
+    const linkedBrandIds = new Set(
       products
         .filter((product) => linkedProductIds.has(String(product.id)))
         .map((product) => String(product.brand_id || ""))
         .filter(Boolean)
     );
 
-    return brands.filter((brand) => brandIds.has(String(brand.id)));
-  }, [brands, products, supplierProductLinks, selectedSupplierId]);
-
-  // ====================================================
-  // AUTO OPEN SUPPLIER'S LINKED BRAND
-  // ====================================================
-
-  useEffect(() => {
-    if (!selectedSupplierId) {
-      setSelectedBrandId("");
-      setSelectedProductId("");
-      setQuantity("");
-      setRate("");
-      return;
-    }
-
-    // Automatically open the first brand linked to this supplier.
-    // For the normal dairy setup, a supplier is linked to one brand.
-    const firstBrand = supplierBrands[0];
-
-    if (!firstBrand) {
-      setSelectedBrandId("");
-      setSelectedProductId("");
-      setQuantity("");
-      setRate("");
-      return;
-    }
-
-    setSelectedBrandId(String(firstBrand.id));
-    setSelectedProductId("");
-    setQuantity("");
-    setRate("");
-  }, [selectedSupplierId, supplierBrands]);
+    return brands.filter((brand) => linkedBrandIds.has(String(brand.id)));
+  }, [
+    brands,
+    products,
+    supplierProductLinks,
+    selectedSupplierId,
+    localVendorMode,
+  ]);
 
   // ====================================================
   // SELECTED BRAND PRODUCT COUNT
@@ -870,6 +873,120 @@ export default function Purchases() {
   }
 
   // ====================================================
+  // FAST PRODUCT ENTRY
+  // ====================================================
+
+  function updateDirectPurchaseRow(
+    product: Product,
+    field: "quantity" | "rate",
+    value: string
+  ) {
+    const numericValue = Number(value || 0);
+
+    setPurchaseRows((previous) => {
+      const existingIndex = previous.findIndex(
+        (row) => String(row.product_id) === String(product.id)
+      );
+
+      if (existingIndex >= 0) {
+        const updated = [...previous];
+        const existing = updated[existingIndex];
+        const nextQuantity =
+          field === "quantity" ? numericValue : Number(existing.quantity || 0);
+        const nextRate =
+          field === "rate" ? numericValue : Number(existing.rate || product.purchase_rate || 0);
+
+        updated[existingIndex] = {
+          ...existing,
+          quantity: nextQuantity,
+          rate: nextRate,
+          amount: nextQuantity * nextRate,
+        };
+
+        return updated;
+      }
+
+      const nextQuantity = field === "quantity" ? numericValue : 0;
+      const nextRate =
+        field === "rate"
+          ? numericValue
+          : Number(product.purchase_rate || 0);
+
+      return [
+        ...previous,
+        {
+          product_id: product.id,
+          product_name: product.product_name,
+          size: Number(product.size || 1),
+          unit: product.unit || "Litre",
+          quantity: nextQuantity,
+          rate: nextRate,
+          amount: nextQuantity * nextRate,
+          brand_id: product.brand_id,
+        },
+      ];
+    });
+  }
+
+  // ====================================================
+  // DELETE SUPPLIER -> PRODUCT CONNECTION
+  // ====================================================
+
+  async function deleteSupplierProductLink(productId: string) {
+    if (!selectedSupplierId || !productId) return;
+
+    const product = products.find(
+      (item) => String(item.id) === String(productId)
+    );
+
+    const confirmed = window.confirm(
+      `Remove "${product?.product_name || "this product"}" from this supplier?\n\nProduct Master and old purchases will NOT be deleted.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const { error } = await supabase
+        .from("supplier_products")
+        .delete()
+        .eq("supplier_id", selectedSupplierId)
+        .eq("product_id", productId);
+
+      if (error) throw error;
+
+      setSupplierProductLinks((previous) =>
+        previous.filter(
+          (link) =>
+            !(
+              String(link.supplier_id) === String(selectedSupplierId) &&
+              String(link.product_id) === String(productId)
+            )
+        )
+      );
+
+      // If this product is currently in the unsaved purchase cart, remove
+      // only the current cart row as well. Saved purchase history is untouched.
+      setPurchaseRows((previous) =>
+        previous.filter(
+          (row) => String(row.product_id) !== String(productId)
+        )
+      );
+
+      if (String(selectedProductId) === String(productId)) {
+        setSelectedProductId("");
+        setQuantity("");
+        setRate("");
+      }
+    } catch (error: any) {
+      console.error("DELETE SUPPLIER PRODUCT LINK ERROR:", error);
+      alert(
+        "Unable to remove supplier product:\n\n" +
+          (error?.message || "Unknown error")
+      );
+    }
+  }
+
+  // ====================================================
   // ADD PURCHASE ITEM
   // ====================================================
 
@@ -940,19 +1057,23 @@ export default function Purchases() {
       return;
     }
 
-    if (!selectedSupplierId) {
-      alert("Please select a supplier first.");
+    if (!selectedSupplierId && !localVendorMode) {
+      alert(
+        "Please select a supplier first, or choose Local / Emergency Vendor."
+      );
       return;
     }
 
     try {
-      // If a product under the automatically opened brand is purchased
-      // for this supplier, keep the supplier -> product connection.
-      await ensureSupplierProductLink(selectedProduct.id);
+      // Master suppliers are automatically linked to purchased products.
+      // Local / Emergency Vendor purchases do not create a Supplier Master link.
+      if (selectedSupplierId) {
+        await ensureSupplierProductLink(selectedProduct.id);
+      }
     } catch (error: any) {
       console.error("AUTO LINK SUPPLIER PRODUCT ERROR:", error);
       alert(
-        "Product could not be linked to this supplier.\\n\\n" +
+        "Product could not be linked to this supplier.\n\n" +
           (error?.message || "Unable to create supplier-product connection.")
       );
       return;
@@ -1073,143 +1194,6 @@ export default function Purchases() {
   }
 
   // ====================================================
-  // FAST PURCHASE TABLE HELPERS
-  // ====================================================
-
-  function getFastPurchaseRow(productId: string) {
-    return purchaseRows.find(
-      (row) => String(row.product_id) === String(productId)
-    );
-  }
-
-  function getFastPurchaseRate(product: Product) {
-    const override = purchaseRateOverrides[String(product.id)];
-
-    if (override !== undefined && override !== "") {
-      return Number(override) || 0;
-    }
-
-    const existingRow = getFastPurchaseRow(product.id);
-
-    if (existingRow) {
-      return Number(existingRow.rate || 0);
-    }
-
-    return Number(product.purchase_rate || 0);
-  }
-
-  async function handleFastQuantityChange(
-    product: Product,
-    value: string
-  ) {
-    const cleaned = value.replace(/[^0-9.]/g, "");
-
-    if (cleaned === "") {
-      setPurchaseRows((previous) =>
-        previous.filter(
-          (row) => String(row.product_id) !== String(product.id)
-        )
-      );
-      return;
-    }
-
-    const numericQuantity = Number(cleaned);
-
-    if (!Number.isFinite(numericQuantity) || numericQuantity < 0) {
-      return;
-    }
-
-    if (numericQuantity === 0) {
-      setPurchaseRows((previous) =>
-        previous.filter(
-          (row) => String(row.product_id) !== String(product.id)
-        )
-      );
-      return;
-    }
-
-    const numericRate = getFastPurchaseRate(product);
-    const amount = numericQuantity * numericRate;
-
-    setPurchaseRows((previous) => {
-      const existingIndex = previous.findIndex(
-        (row) => String(row.product_id) === String(product.id)
-      );
-
-      if (existingIndex >= 0) {
-        const updated = [...previous];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          quantity: numericQuantity,
-          rate: numericRate,
-          amount,
-        };
-        return updated;
-      }
-
-      return [
-        ...previous,
-        {
-          product_id: product.id,
-          product_name: product.product_name,
-          size: Number(product.size || 1),
-          unit: product.unit || "Litre",
-          quantity: numericQuantity,
-          rate: numericRate,
-          amount,
-          brand_id: product.brand_id,
-        },
-      ];
-    });
-
-    // Keep the existing supplier -> product mapping behavior.
-    if (selectedSupplierId) {
-      try {
-        await ensureSupplierProductLink(product.id);
-      } catch (error: any) {
-        console.error("FAST PURCHASE SUPPLIER LINK ERROR:", error);
-        alert(
-          "Product could not be linked to this supplier.\n\n" +
-            (error?.message || "Unable to create supplier-product connection.")
-        );
-      }
-    }
-  }
-
-  function handleFastRateChange(
-    product: Product,
-    value: string
-  ) {
-    const cleaned = value.replace(/[^0-9.]/g, "");
-
-    setPurchaseRateOverrides((previous) => ({
-      ...previous,
-      [String(product.id)]: cleaned,
-    }));
-
-    const numericRate = Number(cleaned || 0);
-
-    setPurchaseRows((previous) => {
-      const existingIndex = previous.findIndex(
-        (row) => String(row.product_id) === String(product.id)
-      );
-
-      if (existingIndex < 0) {
-        return previous;
-      }
-
-      const updated = [...previous];
-      const existing = updated[existingIndex];
-      updated[existingIndex] = {
-        ...existing,
-        rate: numericRate,
-        amount: Number(existing.quantity || 0) * numericRate,
-      };
-      return updated;
-    });
-  }
-
-  // ====================================================
   // REMOVE PURCHASE ITEM
   // ====================================================
 
@@ -1238,7 +1222,6 @@ export default function Purchases() {
 
   async function copyYesterdayPurchase() {
     setLoading(true);
-    setPurchaseRateOverrides({});
 
     try {
       const today = todayInput();
@@ -1495,11 +1478,21 @@ export default function Purchases() {
       ""
     );
 
+    setLocalVendorMode(false);
+
     setPaymentMethod(
       "Credit"
     );
 
     setPaidAmount(
+      "0"
+    );
+
+    setCashPaid(
+      "0"
+    );
+
+    setUpiPaid(
       "0"
     );
 
@@ -1518,8 +1511,6 @@ export default function Purchases() {
     setRate(
       ""
     );
-
-    setPurchaseRateOverrides({});
 
     setPurchaseRows(
       []
@@ -1584,6 +1575,19 @@ export default function Purchases() {
       paidAmount
     );
 
+  const numericCashPaid =
+    Number(cashPaid);
+
+  const numericUpiPaid =
+    Number(upiPaid);
+
+  // For Split, paid amount is always Cash + UPI.
+  const effectivePaidAmount =
+    paymentMethod === "Split"
+      ? (Number.isFinite(numericCashPaid) ? numericCashPaid : 0) +
+        (Number.isFinite(numericUpiPaid) ? numericUpiPaid : 0)
+      : (Number.isFinite(numericPaidAmount) ? numericPaidAmount : 0);
+
   // ====================================================
   // PURCHASE BALANCE
   // ====================================================
@@ -1592,13 +1596,7 @@ export default function Purchases() {
     Math.max(
       0,
       totalPurchaseAmount -
-        (
-          Number.isFinite(
-            numericPaidAmount
-          )
-            ? numericPaidAmount
-            : 0
-        )
+        effectivePaidAmount
     );
 
   // ====================================================
@@ -1609,37 +1607,38 @@ export default function Purchases() {
     value: string
   ) {
 
-    setPaymentMethod(
-      value
-    );
+    setPaymentMethod(value);
 
-    // Credit defaults to zero paid.
-    if (
-      value ===
-      "Credit"
-    ) {
-
-      setPaidAmount(
-        "0"
-      );
-
+    if (value === "Credit") {
+      setPaidAmount("0");
+      setCashPaid("0");
+      setUpiPaid("0");
       return;
     }
 
-    // If switching from Credit,
-    // automatically suggest full payment.
-    if (
-      totalPurchaseAmount > 0
-    ) {
+    if (value === "Split") {
+      const full = totalPurchaseAmount > 0
+        ? totalPurchaseAmount.toFixed(2)
+        : "0";
 
-      setPaidAmount(
-        totalPurchaseAmount.toFixed(
-          2
-        )
-      );
-
+      // Start Split with the full amount in Cash and zero UPI.
+      setCashPaid(full);
+      setUpiPaid("0");
+      setPaidAmount(full);
+      return;
     }
 
+    // Cash / UPI / Bank: full payment by default.
+    if (totalPurchaseAmount > 0) {
+      const full = totalPurchaseAmount.toFixed(2);
+      setPaidAmount(full);
+      setCashPaid(value === "Cash" ? full : "0");
+      setUpiPaid(value === "UPI" ? full : "0");
+    } else {
+      setPaidAmount("0");
+      setCashPaid("0");
+      setUpiPaid("0");
+    }
   }
 
   // ====================================================
@@ -1656,10 +1655,37 @@ export default function Purchases() {
         ""
       );
 
-    setPaidAmount(
-      cleaned
-    );
+    setPaidAmount(cleaned);
 
+    if (paymentMethod === "Cash") {
+      setCashPaid(cleaned);
+      setUpiPaid("0");
+    } else if (paymentMethod === "UPI") {
+      setCashPaid("0");
+      setUpiPaid(cleaned);
+    }
+  }
+
+  function handleCashPaidChange(value: string) {
+    const cleaned = value.replace(/[^0-9.]/g, "");
+    setCashPaid(cleaned);
+
+    if (paymentMethod === "Split") {
+      const cash = Number(cleaned || 0);
+      const upi = Number(upiPaid || 0);
+      setPaidAmount(String(cash + upi));
+    }
+  }
+
+  function handleUpiPaidChange(value: string) {
+    const cleaned = value.replace(/[^0-9.]/g, "");
+    setUpiPaid(cleaned);
+
+    if (paymentMethod === "Split") {
+      const cash = Number(cashPaid || 0);
+      const upi = Number(cleaned || 0);
+      setPaidAmount(String(cash + upi));
+    }
   }
 
   // ====================================================
@@ -1680,7 +1706,9 @@ export default function Purchases() {
           total_amount,
           payment_method,
           paid_amount,
-          balance_amount
+          balance_amount,
+          cash_amount,
+          upi_amount
         `)
         .eq("id", purchaseId)
         .single();
@@ -1720,15 +1748,38 @@ export default function Purchases() {
       setPurchaseDate(date || todayInput());
       setPurchaseDateDisplay(formatDate(date || todayInput()));
       setInvoiceNo(purchase.invoice_no || "");
-      setSupplierName(purchase.supplier_name || "");
+
+      const savedSupplierName = purchase.supplier_name || "";
+      const isLocalVendor =
+        savedSupplierName.trim().toLowerCase() === "local vendor" ||
+        savedSupplierName.trim().toLowerCase() === "local / emergency vendor";
+
+      setLocalVendorMode(isLocalVendor);
+      setSupplierName(savedSupplierName);
+
       setPaymentMethod(purchase.payment_method || "Credit");
       setPaidAmount(
         purchase.paid_amount == null
           ? "0"
           : String(Number(purchase.paid_amount))
       );
+
+      const savedPurchaseAny = purchase as any;
+      setCashPaid(
+        savedPurchaseAny.cash_amount == null
+          ? (purchase.payment_method === "Cash"
+              ? String(Number(purchase.paid_amount || 0))
+              : "0")
+          : String(Number(savedPurchaseAny.cash_amount || 0))
+      );
+      setUpiPaid(
+        savedPurchaseAny.upi_amount == null
+          ? (purchase.payment_method === "UPI"
+              ? String(Number(purchase.paid_amount || 0))
+              : "0")
+          : String(Number(savedPurchaseAny.upi_amount || 0))
+      );
       setPurchaseRows(rows);
-      setPurchaseRateOverrides({});
       setSelectedBrandId("");
       setSelectedProductId("");
       setQuantity("");
@@ -1852,7 +1903,11 @@ export default function Purchases() {
     }
 
     if (!supplierName.trim()) {
-      alert("Please select a supplier.");
+      alert(
+        localVendorMode
+          ? "Please enter Local / Emergency Vendor name."
+          : "Please select a supplier."
+      );
       return;
     }
 
@@ -1864,17 +1919,37 @@ export default function Purchases() {
     // Paid amount can contain formatting commas. Treat a blank field as 0.
     const paidText = String(paidAmount ?? "").trim().replace(/,/g, "");
     const finalPaid = paidText === "" ? 0 : Number(paidText);
+    const finalCash = paymentMethod === "Split"
+      ? (Number.isFinite(Number(cashPaid)) ? Number(cashPaid) : 0)
+      : paymentMethod === "Cash"
+        ? finalPaid
+        : 0;
+    const finalUpi = paymentMethod === "Split"
+      ? (Number.isFinite(Number(upiPaid)) ? Number(upiPaid) : 0)
+      : paymentMethod === "UPI"
+        ? finalPaid
+        : 0;
+    const finalEffectivePaid = paymentMethod === "Split"
+      ? finalCash + finalUpi
+      : finalPaid;
 
     if (
-      !Number.isFinite(finalPaid) ||
-      finalPaid < 0 ||
-      finalPaid > totalPurchaseAmount
+      !Number.isFinite(finalEffectivePaid) ||
+      finalEffectivePaid < 0 ||
+      finalEffectivePaid > totalPurchaseAmount
     ) {
       alert("Please enter a valid paid amount.");
       return;
     }
 
-    if (paymentMethod === "Credit" && finalPaid !== 0) {
+    if (paymentMethod === "Split" && finalEffectivePaid !== totalPurchaseAmount) {
+      alert(
+        `For Split payment, Cash + UPI must equal the purchase total of ${money(totalPurchaseAmount)}.`
+      );
+      return;
+    }
+
+    if (paymentMethod === "Credit" && finalEffectivePaid !== 0) {
       alert("For Credit purchase, Paid Amount should be 0.");
       return;
     }
@@ -1979,8 +2054,10 @@ export default function Purchases() {
           supplier_name: supplierName.trim(),
           total_amount: totalPurchaseAmount,
           payment_method: paymentMethod,
-          paid_amount: finalPaid,
-          balance_amount: Math.max(0, totalPurchaseAmount - finalPaid),
+          paid_amount: finalEffectivePaid,
+          balance_amount: Math.max(0, totalPurchaseAmount - finalEffectivePaid),
+          cash_amount: finalCash,
+          upi_amount: finalUpi,
         })
         .eq("id", editingPurchaseId);
 
@@ -2105,7 +2182,9 @@ export default function Purchases() {
     ) {
 
       alert(
-        "Please enter company / supplier name."
+        localVendorMode
+          ? "Please enter Local / Emergency Vendor name."
+          : "Please enter company / supplier name."
       );
 
       return;
@@ -2133,38 +2212,46 @@ export default function Purchases() {
     // -----------------------------------------------
 
     const finalPaid =
-      Number(
-        paidAmount
-      );
+      Number(paidAmount);
+
+    const finalCash = paymentMethod === "Split"
+      ? (Number.isFinite(Number(cashPaid)) ? Number(cashPaid) : 0)
+      : paymentMethod === "Cash"
+        ? (Number.isFinite(finalPaid) ? finalPaid : 0)
+        : 0;
+
+    const finalUpi = paymentMethod === "Split"
+      ? (Number.isFinite(Number(upiPaid)) ? Number(upiPaid) : 0)
+      : paymentMethod === "UPI"
+        ? (Number.isFinite(finalPaid) ? finalPaid : 0)
+        : 0;
+
+    const finalEffectivePaid = paymentMethod === "Split"
+      ? finalCash + finalUpi
+      : (Number.isFinite(finalPaid) ? finalPaid : 0);
 
     if (
-      !Number.isFinite(
-        finalPaid
-      ) ||
-      finalPaid < 0
+      !Number.isFinite(finalEffectivePaid) ||
+      finalEffectivePaid < 0
     ) {
-
-      alert(
-        "Please enter a valid paid amount."
-      );
-
+      alert("Please enter a valid paid amount.");
       return;
-
     }
 
-    if (
-      finalPaid >
-      totalPurchaseAmount
-    ) {
-
+    if (finalEffectivePaid > totalPurchaseAmount) {
       alert(
         `Paid amount cannot exceed purchase total of ${money(
           totalPurchaseAmount
         )}.`
       );
-
       return;
+    }
 
+    if (paymentMethod === "Split" && finalEffectivePaid !== totalPurchaseAmount) {
+      alert(
+        `For Split payment, Cash + UPI must equal the purchase total of ${money(totalPurchaseAmount)}.`
+      );
+      return;
     }
 
     // -----------------------------------------------
@@ -2172,17 +2259,13 @@ export default function Purchases() {
     // -----------------------------------------------
 
     if (
-      paymentMethod ===
-        "Credit" &&
-      finalPaid !== 0
+      paymentMethod === "Credit" &&
+      finalEffectivePaid !== 0
     ) {
-
       alert(
         "For Credit purchase, Paid Amount should be 0."
       );
-
       return;
-
     }
 
     setSaving(
@@ -2190,13 +2273,6 @@ export default function Purchases() {
     );
 
     try {
-
-      // Ensure every fast-entry product is linked to the selected supplier
-      // before the purchase is saved. This keeps supplier_products as the
-      // source of truth for future purchase screens.
-      for (const row of purchaseRows) {
-        await ensureSupplierProductLink(row.product_id);
-      }
 
       // =================================================
       // STEP 1 — CREATE PURCHASE HEADER
@@ -2230,14 +2306,20 @@ export default function Purchases() {
               paymentMethod,
 
             paid_amount:
-              finalPaid,
+              finalEffectivePaid,
 
             balance_amount:
               Math.max(
                 0,
                 totalPurchaseAmount -
-                  finalPaid
+                  finalEffectivePaid
               ),
+
+            cash_amount:
+              finalCash,
+
+            upi_amount:
+              finalUpi,
 
           })
           .select(
@@ -2808,45 +2890,93 @@ export default function Purchases() {
               Company / Supplier
             </label>
 
-            <select
-              value={supplierName}
-              onChange={(e) => {
-                setSupplierName(e.target.value);
+            {!localVendorMode ? (
+              <>
+                <select
+                  value={supplierName}
+                  onChange={(e) => {
+                    setSupplierName(e.target.value);
+                    setSelectedBrandId("");
+                    setSelectedProductId("");
+                    setQuantity("");
+                    setRate("");
+                  }}
+                  className="
+                    w-full
+                    rounded-lg
+                    border-2
+                    border-blue-200
+                    bg-white
+                    p-3
+                    font-semibold
+                    focus:border-blue-500
+                    focus:outline-none
+                  "
+                >
+                  <option value="">
+                    Select Supplier
+                  </option>
+                  {suppliers.map((supplier) => (
+                    <option
+                      key={supplier.id}
+                      value={supplier.supplier_name}
+                    >
+                      {supplier.supplier_name}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="mt-1 text-xs text-slate-500">
+                  Select the supplier from Supplier Master.
+                </p>
+              </>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={supplierName}
+                  onChange={(e) => setSupplierName(e.target.value)}
+                  placeholder="Local / Emergency Vendor name"
+                  className="
+                    w-full
+                    rounded-lg
+                    border-2
+                    border-orange-300
+                    bg-orange-50
+                    p-3
+                    font-semibold
+                    focus:border-orange-500
+                    focus:outline-none
+                  "
+                />
+
+                <p className="mt-1 text-xs text-orange-700">
+                  Local / Emergency Vendor is a purchase-only vendor and is not added to Supplier Master.
+                </p>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                const next = !localVendorMode;
+                setLocalVendorMode(next);
+                setSupplierName(next ? "Local Vendor" : "");
                 setSelectedBrandId("");
                 setSelectedProductId("");
                 setQuantity("");
                 setRate("");
-                setPurchaseRateOverrides({});
-                setPurchaseRows([]);
               }}
-              className="
-                w-full
-                rounded-lg
-                border-2
-                border-blue-200
-                bg-white
-                p-3
-                font-semibold
-                focus:border-blue-500
-                focus:outline-none
-              "
+              className={`mt-2 rounded-lg px-3 py-2 text-sm font-bold ${
+                localVendorMode
+                  ? "bg-slate-600 text-white hover:bg-slate-700"
+                  : "bg-orange-500 text-white hover:bg-orange-600"
+              }`}
             >
-              <option value="">
-                Select Supplier
-              </option>
-              {suppliers.map((supplier) => (
-                <option
-                  key={supplier.id}
-                  value={supplier.supplier_name}
-                >
-                  {supplier.supplier_name}
-                </option>
-              ))}
-            </select>
-
-            <p className="mt-1 text-xs text-slate-500">
-              Select the supplier from Supplier Master.
-            </p>
+              {localVendorMode
+                ? "← Use Supplier Master"
+                : "+ Local / Emergency Vendor"}
+            </button>
 
           </div>
 
@@ -2900,6 +3030,10 @@ export default function Purchases() {
                 Bank
               </option>
 
+              <option value="Split">
+                Split (Cash + UPI)
+              </option>
+
               <option value="Credit">
                 Credit
               </option>
@@ -2910,69 +3044,114 @@ export default function Purchases() {
 
           {/* PAID */}
 
-          <div>
-
-            <label
-              className="
-                mb-2
-                block
-                text-sm
-                font-semibold
-                text-slate-700
-              "
-            >
-              Paid Amount
-            </label>
-
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={
-                paidAmount
-              }
-              onChange={(e) =>
-                handlePaidAmountChange(
-                  e.target.value
-                )
-              }
-              disabled={
-                paymentMethod ===
-                "Credit"
-              }
-              className={`
-                w-full
-                rounded-lg
-                border-2
-                p-3
-                font-bold
-                ${
-                  paymentMethod ===
-                  "Credit"
-                    ? "bg-slate-100 border-slate-200 text-slate-500"
-                    : "bg-white border-green-200"
-                }
-              `}
-            />
-
-            {paymentMethod ===
-              "Credit" && (
-
-              <p
+          {paymentMethod === "Split" ? (
+            <div className="md:col-span-1">
+              <label
                 className="
-                  mt-1
-                  text-xs
-                  text-slate-500
+                  mb-2
+                  block
+                  text-sm
+                  font-semibold
+                  text-slate-700
                 "
               >
-                Credit purchase:
-                paid amount is
-                automatically ₹0.
+                Split Payment
+              </label>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-500">
+                    Cash
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={cashPaid}
+                    onChange={(e) => handleCashPaidChange(e.target.value)}
+                    className="
+                      w-full
+                      rounded-lg
+                      border-2
+                      border-green-200
+                      bg-white
+                      p-3
+                      font-bold
+                    "
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-500">
+                    UPI
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={upiPaid}
+                    onChange={(e) => handleUpiPaidChange(e.target.value)}
+                    className="
+                      w-full
+                      rounded-lg
+                      border-2
+                      border-purple-200
+                      bg-white
+                      p-3
+                      font-bold
+                    "
+                  />
+                </div>
+              </div>
+
+              <p className="mt-2 text-xs font-semibold text-slate-500">
+                Cash + UPI = {money(effectivePaidAmount)}
               </p>
+            </div>
+          ) : (
+            <div>
+              <label
+                className="
+                  mb-2
+                  block
+                  text-sm
+                  font-semibold
+                  text-slate-700
+                "
+              >
+                Paid Amount
+              </label>
 
-            )}
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={paidAmount}
+                onChange={(e) =>
+                  handlePaidAmountChange(e.target.value)
+                }
+                disabled={paymentMethod === "Credit"}
+                className={`
+                  w-full
+                  rounded-lg
+                  border-2
+                  p-3
+                  font-bold
+                  ${
+                    paymentMethod === "Credit"
+                      ? "bg-slate-100 border-slate-200 text-slate-500"
+                      : "bg-white border-green-200"
+                  }
+                `}
+              />
 
-          </div>
+              {paymentMethod === "Credit" && (
+                <p className="mt-1 text-xs text-slate-500">
+                  Credit purchase: paid amount is automatically ₹0.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* BALANCE */}
 
@@ -3014,7 +3193,7 @@ export default function Purchases() {
       </div>
 
       {/* ==================================================
-          SUPPLIER BRAND + FAST PRODUCT ENTRY
+          SUPPLIER-LINKED BRANDS + PRODUCTS
       ================================================== */}
 
       <div
@@ -3027,160 +3206,182 @@ export default function Purchases() {
         "
       >
 
-        <div
-          className="
-            mb-5
-            flex
-            flex-col
-            gap-3
-            md:flex-row
-            md:items-center
-            md:justify-between
-          "
-        >
+        <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-800">
-              Supplier Products
+              1. Supplier Products
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Select the supplier once. Its linked brand opens automatically. Enter only today's quantities.
+              Select a supplier above. Its linked brands and all products will open automatically.
             </p>
           </div>
 
-          {selectedBrandId && (
-            <div className="rounded-xl bg-blue-50 px-5 py-3 text-right">
-              <p className="text-xs font-semibold text-slate-500">
-                Brand
-              </p>
-              <p className="text-xl font-bold text-blue-700">
-                {getBrandName(selectedBrandId)}
-              </p>
+          {selectedSupplierId && (
+            <div className="rounded-lg bg-blue-50 px-4 py-2 font-bold text-blue-700">
+              {supplierBrands.length} Linked Brand{supplierBrands.length === 1 ? "" : "s"}
             </div>
           )}
         </div>
 
-        {!selectedSupplierId ? (
-          <div className="rounded-xl border-2 border-dashed border-orange-200 bg-orange-50 p-8 text-center text-orange-800">
-            Select a supplier above to automatically open its linked brand and products.
-          </div>
-        ) : !selectedBrandId ? (
-          <div className="rounded-xl border-2 border-dashed border-yellow-200 bg-yellow-50 p-8 text-center text-yellow-800">
-            No linked brand/products found for this supplier.
-          </div>
-        ) : brandProducts.length === 0 ? (
-          <div className="rounded-xl border-2 border-dashed border-yellow-200 bg-yellow-50 p-8 text-center text-yellow-800">
-            No products found under {getBrandName(selectedBrandId)}.
-          </div>
-        ) : (
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full min-w-[900px] border-collapse">
-              <thead className="bg-blue-600 text-white">
-                <tr>
-                  <th className="p-3 text-left">Product</th>
-                  <th className="p-3 text-center">Stock</th>
-                  <th className="p-3 text-right">Purchase Rate</th>
-                  <th className="p-3 text-center">Qty</th>
-                  <th className="p-3 text-right">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {brandProducts.map((product) => {
-                  const row = getFastPurchaseRow(product.id);
-                  const currentQuantity = row?.quantity ?? 0;
-                  const currentRate = getFastPurchaseRate(product);
-                  const amount = currentQuantity * currentRate;
-
-                  return (
-                    <tr
-                      key={product.id}
-                      className="border-b border-slate-200 hover:bg-blue-50/40"
-                    >
-                      <td
-                        className="p-3"
-                        onClick={() => {
-                          setSelectedProductId(String(product.id));
-                          setQuantity(currentQuantity ? String(currentQuantity) : "");
-                          setRate(String(currentRate));
-                        }}
-                      >
-                        <p className="font-bold text-slate-800">
-                          {product.product_name}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {Number(product.size || 1)} {product.unit || "Litre"}
-                        </p>
-                      </td>
-
-
-                      <td className="p-3 text-center">
-                        <span
-                          className={`font-bold ${
-                            Number(product.stock_qty || 0) > 0
-                              ? "text-green-600"
-                              : "text-red-600"
-                          }`}
-                        >
-                          {Number(product.stock_qty || 0)
-                            .toFixed(2)
-                            .replace(/\.00$/, "")}
-                        </span>
-                      </td>
-
-                      <td className="p-3 text-right">
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={
-                            purchaseRateOverrides[String(product.id)] ??
-                            String(currentRate)
-                          }
-                          onChange={(e) =>
-                            handleFastRateChange(product, e.target.value)
-                          }
-                          className="w-28 rounded-lg border border-blue-200 bg-white px-3 py-2 text-right font-bold text-blue-700 focus:border-blue-500 focus:outline-none"
-                        />
-                      </td>
-
-                      <td className="p-3 text-center">
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.001"
-                          value={currentQuantity || ""}
-                          placeholder="0"
-                          onChange={(e) =>
-                            void handleFastQuantityChange(product, e.target.value)
-                          }
-                          className="w-24 rounded-lg border-2 border-slate-200 bg-white p-2 text-center font-bold focus:border-blue-500 focus:outline-none"
-                        />
-                      </td>
-
-                      <td className="p-3 text-right font-bold text-slate-800">
-                        ₹{amount.toFixed(2)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-blue-50 font-bold">
-                  <td colSpan={3} className="p-4 text-right">
-                    SELECTED TOTAL
-                  </td>
-                  <td className="p-4 text-center text-blue-700">
-                    {totalPurchaseQuantity}
-                  </td>
-                  <td className="p-4 text-right text-xl text-blue-700">
-                    {money(totalPurchaseAmount)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+        {!selectedSupplierId && !localVendorMode && (
+          <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm font-semibold text-orange-800">
+            Select a supplier first. Its linked brands and products will appear automatically.
           </div>
         )}
 
+        {selectedSupplierId && supplierBrands.length === 0 && (
+          <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
+            No products are linked to this supplier yet. Add a product from Product Master, or use a purchase to create the supplier-product link.
+          </div>
+        )}
+
+        {localVendorMode && supplierBrands.length === 0 && (
+          <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
+            No products are available in Product Master yet.
+          </div>
+        )}
+
+        <div className="space-y-5">
+          {supplierBrands.map((brand) => {
+            const brandProductsForDisplay = products.filter((product) => {
+              if (String(product.brand_id) !== String(brand.id)) return false;
+
+              if (localVendorMode) return true;
+
+              return supplierProductLinks.some(
+                (link) =>
+                  String(link.supplier_id) === String(selectedSupplierId) &&
+                  String(link.product_id) === String(product.id)
+              );
+            });
+
+            return (
+              <div key={brand.id} className="overflow-hidden rounded-2xl border-2 border-blue-100">
+                <div className="flex items-center justify-between bg-blue-50 px-4 py-3">
+                  <div>
+                    <h3 className="text-lg font-bold text-blue-800">
+                      {brand.brand_name}
+                    </h3>
+                    <p className="text-xs text-blue-600">
+                      {brandProductsForDisplay.length} product{brandProductsForDisplay.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                </div>
+
+                {brandProductsForDisplay.length === 0 ? (
+                  <div className="p-4 text-sm text-gray-500">
+                    No products linked to this brand for this supplier.
+                  </div>
+                ) : (
+                  <div>
+                    <div className="hidden border-b bg-slate-800 px-3 py-3 text-xs font-bold uppercase tracking-wide text-white md:grid md:grid-cols-[minmax(220px,1fr)_90px_130px_110px_140px_80px] md:items-center md:gap-3">
+                      <div>Product</div>
+                      <div className="text-right">Stock</div>
+                      <div className="text-right">Purchase Rate</div>
+                      <div className="text-right">Qty</div>
+                      <div className="text-right">Amount</div>
+                      <div className="text-center">Action</div>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                    {brandProductsForDisplay.map((product) => {
+                      const currentRow = purchaseRows.find(
+                        (row) => String(row.product_id) === String(product.id)
+                      );
+
+                      const isSelected =
+                        String(selectedProductId) === String(product.id);
+
+                      return (
+                        <div
+                          key={product.id}
+                          className="grid gap-3 border-b p-3 md:grid-cols-[minmax(220px,1fr)_90px_130px_110px_140px_80px] md:items-center"
+                        >
+                          <div>
+                            <p className="font-bold text-slate-800">
+                              {product.product_name}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {Number(product.size || 1)} {product.unit || "Litre"}
+                            </p>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="block text-xs text-slate-500">Stock</span>
+                            <span className="font-bold text-green-700">
+                              {Number(product.stock_qty || 0)}
+                            </span>
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold text-slate-500">
+                              Purchase Rate
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={currentRow?.rate ?? product.purchase_rate ?? ""}
+                              onChange={(e) =>
+                                updateDirectPurchaseRow(
+                                  product,
+                                  "rate",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-blue-200 p-2 text-right font-semibold"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold text-slate-500">
+                              Qty
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.001"
+                              value={currentRow?.quantity ?? ""}
+                              onChange={(e) =>
+                                updateDirectPurchaseRow(
+                                  product,
+                                  "quantity",
+                                  e.target.value
+                                )
+                              }
+                              placeholder="Qty"
+                              className="w-full rounded-lg border-2 border-blue-300 p-2 text-right font-bold"
+                            />
+                          </div>
+
+                          <div className="text-right text-lg font-bold text-slate-800">
+                            ₹{Number(currentRow?.amount || 0).toFixed(2)}
+                          </div>
+
+                          <div className="text-center">
+                            {!localVendorMode && (
+                              <button
+                                type="button"
+                                onClick={() => deleteSupplierProductLink(product.id)}
+                                className="rounded-lg bg-red-600 px-2 py-2 text-xs font-bold text-white hover:bg-red-700"
+                                title="Remove product from supplier"
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
+
+      {/* FAST PURCHASE ENTRY IS HANDLED DIRECTLY IN THE SUPPLIER PRODUCT TABLE ABOVE. */}
 
       {/* ==================================================
           PURCHASE CART
@@ -3300,7 +3501,10 @@ export default function Purchases() {
                 text-slate-400
               "
             >
-              Select a supplier above. Its linked brand and products will open automatically.
+              Select a brand and
+              product above to
+              start punching the
+              purchase.
             </p>
 
           </div>
@@ -3683,7 +3887,7 @@ export default function Purchases() {
               "
             >
               {money(
-                numericPaidAmount
+                effectivePaidAmount
               )}
             </p>
 
@@ -4125,6 +4329,12 @@ export default function Purchases() {
                             "Credit"
                           }
                         </span>
+
+                        {purchase.payment_method === "Split" && (
+                          <div className="mt-1 text-xs font-semibold text-slate-500">
+                            Cash {money(purchase.cash_amount)} • UPI {money(purchase.upi_amount)}
+                          </div>
+                        )}
 
                       </td>
 
