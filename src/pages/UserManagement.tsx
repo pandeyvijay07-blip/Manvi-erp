@@ -7,6 +7,9 @@ type UserRecord = {
   email: string;
   role: string;
   active: boolean | null;
+  can_delete_sales: boolean;
+  can_delete_purchases: boolean;
+  can_delete_collections: boolean;
   created_at?: string;
 };
 
@@ -49,7 +52,7 @@ export default function UserManagement() {
     try {
       const { data, error } = await supabase
         .from("users")
-        .select("id, name, email, role, active, created_at")
+        .select("id, name, email, role, active, can_delete_sales, can_delete_purchases, can_delete_collections, created_at")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
@@ -59,6 +62,9 @@ export default function UserManagement() {
         email: user.email || "",
         role: user.role || "Employee",
         active: user.active === null ? true : Boolean(user.active),
+        can_delete_sales: Boolean(user.can_delete_sales),
+        can_delete_purchases: Boolean(user.can_delete_purchases),
+        can_delete_collections: Boolean(user.can_delete_collections),
         created_at: user.created_at,
       })));
     } catch (error: any) {
@@ -240,6 +246,41 @@ export default function UserManagement() {
     }
   }
 
+  async function toggleDeletePermission(
+    user: UserRecord,
+    permission: "can_delete_sales" | "can_delete_purchases" | "can_delete_collections"
+  ) {
+    if (user.role?.toLowerCase() === "owner") {
+      alert("Owner already has full deletion permission.");
+      return;
+    }
+
+    const newValue = !user[permission];
+
+    try {
+      const { error } = await supabase
+        .from("users")
+        .update({ [permission]: newValue })
+        .eq("id", user.id);
+
+      if (error) throw error;
+
+      setUsers((previous) =>
+        previous.map((item) =>
+          item.id === user.id
+            ? { ...item, [permission]: newValue }
+            : item
+        )
+      );
+    } catch (error: any) {
+      console.error("UPDATE DELETE PERMISSION ERROR:", error);
+      alert(
+        "Unable to update delete permission:\\n\\n" +
+          (error?.message || "Unknown error")
+      );
+    }
+  }
+
   async function toggleActive(user: UserRecord) {
     const currentActive = user.active !== false;
     const newActive = !currentActive;
@@ -282,6 +323,122 @@ export default function UserManagement() {
       alert("Unable to delete ERP login:\n\n" + (error?.message || "Unknown error"));
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function clearHistoricalSales() {
+    const firstConfirm = window.confirm(
+      "⚠️ CLEAR ALL HISTORICAL SALES?\n\nThis will permanently delete ALL sales and sale items.\n\nRelated collection allocations will also be removed and product stock used by those sales will be restored.\n\nProducts, Customer Prices, customers, suppliers and purchases will NOT be deleted.\n\nContinue?"
+    );
+    if (!firstConfirm) return;
+
+    const secondConfirm = window.prompt(
+      "FINAL CONFIRMATION\n\nType exactly:\n\nDELETE ALL SALES\n\nto clear all historical sales."
+    );
+    if (secondConfirm !== "DELETE ALL SALES") {
+      alert("Cancelled. No sales were deleted.");
+      return;
+    }
+
+    setResettingData(true);
+    try {
+      const { data, error } = await supabase.rpc("clear_historical_sales");
+      if (error) throw error;
+      const result = (data || {}) as ResetResult;
+      alert(result.message || "All historical sales cleared successfully.");
+      await Promise.all([loadUsers(), loadEmployees()]);
+    } catch (error: any) {
+      console.error("CLEAR HISTORICAL SALES ERROR:", error);
+      alert("Unable to clear historical sales:\n\n" + (error?.message || "Unknown error"));
+    } finally {
+      setResettingData(false);
+    }
+  }
+
+  async function clearHistoricalPurchases() {
+    const firstConfirm = window.confirm(
+      "⚠️ CLEAR ALL HISTORICAL PURCHASES?\n\nThis will permanently delete ALL purchases and purchase items.\n\nThe stock added by those purchases will be reversed.\n\nProducts, Customer Prices, customers, suppliers and sales will NOT be deleted.\n\nIf stock is insufficient to safely reverse a purchase history, the operation will stop and nothing will be deleted.\n\nContinue?"
+    );
+    if (!firstConfirm) return;
+
+    const secondConfirm = window.prompt(
+      "FINAL CONFIRMATION\n\nType exactly:\n\nDELETE ALL PURCHASES\n\nto clear all historical purchases."
+    );
+    if (secondConfirm !== "DELETE ALL PURCHASES") {
+      alert("Cancelled. No purchases were deleted.");
+      return;
+    }
+
+    setResettingData(true);
+    try {
+      const { data, error } = await supabase.rpc("clear_historical_purchases");
+      if (error) throw error;
+      const result = (data || {}) as ResetResult;
+      alert(result.message || "All historical purchases cleared successfully.");
+      await Promise.all([loadUsers(), loadEmployees()]);
+    } catch (error: any) {
+      console.error("CLEAR HISTORICAL PURCHASES ERROR:", error);
+      alert("Unable to clear historical purchases:\n\n" + (error?.message || "Unknown error"));
+    } finally {
+      setResettingData(false);
+    }
+  }
+
+  async function clearHistoricalCollections() {
+    const firstConfirm = window.confirm(
+      "⚠️ CLEAR ALL HISTORICAL COLLECTIONS?\n\nThis will permanently delete ALL collection entries and collection allocations.\n\nCustomer outstanding balances will be rebuilt from the remaining sales/opening balances.\n\nProducts, Customer Prices, customers, suppliers, sales and purchases will NOT be deleted.\n\nContinue?"
+    );
+    if (!firstConfirm) return;
+
+    const secondConfirm = window.prompt(
+      "FINAL CONFIRMATION\n\nType exactly:\n\nDELETE ALL COLLECTIONS\n\nto clear all historical collections."
+    );
+    if (secondConfirm !== "DELETE ALL COLLECTIONS") {
+      alert("Cancelled. No collections were deleted.");
+      return;
+    }
+
+    setResettingData(true);
+    try {
+      const { data, error } = await supabase.rpc("clear_historical_collections");
+      if (error) throw error;
+      const result = (data || {}) as ResetResult;
+      alert(result.message || "All historical collections cleared successfully.");
+      await Promise.all([loadUsers(), loadEmployees()]);
+    } catch (error: any) {
+      console.error("CLEAR HISTORICAL COLLECTIONS ERROR:", error);
+      alert("Unable to clear historical collections:\n\n" + (error?.message || "Unknown error"));
+    } finally {
+      setResettingData(false);
+    }
+  }
+
+  async function clearHistoricalStock() {
+    const firstConfirm = window.confirm(
+      "⚠️ SET ALL HISTORICAL STOCK TO ZERO?\n\nThis will set stock_qty = 0 for every Product Master product.\n\nProducts and Customer Prices will NOT be deleted.\nSales and Purchases will NOT be deleted by this button.\n\nUse this after clearing the historical transactions when you want the historical stock position to be zero.\n\nContinue?"
+    );
+    if (!firstConfirm) return;
+
+    const secondConfirm = window.prompt(
+      "FINAL CONFIRMATION\n\nType exactly:\n\nZERO ALL STOCK\n\nto set all Product Master stock to zero."
+    );
+    if (secondConfirm !== "ZERO ALL STOCK") {
+      alert("Cancelled. Stock was not changed.");
+      return;
+    }
+
+    setResettingData(true);
+    try {
+      const { data, error } = await supabase.rpc("clear_historical_stock");
+      if (error) throw error;
+      const result = (data || {}) as ResetResult;
+      alert(result.message || "All historical stock set to zero successfully.");
+      await Promise.all([loadUsers(), loadEmployees()]);
+    } catch (error: any) {
+      console.error("CLEAR HISTORICAL STOCK ERROR:", error);
+      alert("Unable to clear historical stock:\n\n" + (error?.message || "Unknown error"));
+    } finally {
+      setResettingData(false);
     }
   }
 
@@ -452,6 +609,54 @@ export default function UserManagement() {
         )}
       </div>
 
+      <div className="mb-6 rounded-2xl border-2 border-amber-200 bg-amber-50 p-6 shadow-lg">
+        <div className="mb-5">
+          <p className="text-sm font-bold uppercase tracking-wide text-amber-700">Owner / Authorized User • Historical Data</p>
+          <h2 className="mt-1 text-xl font-bold text-amber-900">Clear Historical Transactions</h2>
+          <p className="mt-1 text-sm text-amber-800">
+            These buttons clear one transaction type at a time. Product Master, Customer Prices, customers and suppliers are kept.
+          </p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <button
+            type="button"
+            onClick={() => void clearHistoricalSales()}
+            disabled={resettingData || loading || loadingUsers}
+            className="rounded-xl bg-red-600 px-5 py-4 font-bold text-white shadow hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {resettingData ? "Working..." : "Delete All Historical Sales"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void clearHistoricalPurchases()}
+            disabled={resettingData || loading || loadingUsers}
+            className="rounded-xl bg-red-600 px-5 py-4 font-bold text-white shadow hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {resettingData ? "Working..." : "Delete All Historical Purchases"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void clearHistoricalCollections()}
+            disabled={resettingData || loading || loadingUsers}
+            className="rounded-xl bg-red-600 px-5 py-4 font-bold text-white shadow hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {resettingData ? "Working..." : "Delete All Historical Collections"}
+          </button>
+          
+          <button
+            type="button"
+            onClick={() => void clearHistoricalStock()}
+            disabled={resettingData || loading || loadingUsers}
+            className="rounded-xl bg-amber-600 px-5 py-4 font-bold text-white shadow hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {resettingData ? "Working..." : "Set All Historical Stock → 0"}
+          </button>
+        </div>
+      </div>
+
       <div className="mb-6 rounded-2xl border-2 border-red-200 bg-red-50 p-6 shadow-lg">
         <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
           <div>
@@ -480,7 +685,7 @@ export default function UserManagement() {
           <div className="rounded-xl border-2 border-dashed border-slate-300 p-8 text-center text-slate-500">No ERP users found.</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[850px] border-collapse">
+            <table className="w-full min-w-[1250px] border-collapse">
               <thead className="bg-slate-800 text-white">
                 <tr>
                   <th className="p-3 text-left">Name</th>
@@ -488,6 +693,9 @@ export default function UserManagement() {
                   <th className="p-3 text-left">Role</th>
                   <th className="p-3 text-center">Status</th>
                   <th className="p-3 text-left">Created</th>
+                  <th className="p-3 text-center">Delete Sales</th>
+                  <th className="p-3 text-center">Delete Purchases</th>
+                  <th className="p-3 text-center">Delete Collections</th>
                   <th className="p-3 text-center">Action</th>
                 </tr>
               </thead>
@@ -502,6 +710,33 @@ export default function UserManagement() {
                       <td className="p-3">{isOwner ? "Owner" : "Employee"}</td>
                       <td className="p-3 text-center">{isActive ? "Active" : "Inactive"}</td>
                       <td className="p-3 text-sm text-slate-500">{formatDate(user.created_at)}</td>
+                      <td className="p-3 text-center">
+                        {isOwner ? (
+                          <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">FULL</span>
+                        ) : (
+                          <button type="button" onClick={() => void toggleDeletePermission(user, "can_delete_sales")} className={`rounded-lg px-3 py-2 text-xs font-bold text-white ${user.can_delete_sales ? "bg-green-600 hover:bg-green-700" : "bg-slate-400 hover:bg-slate-500"}`}>
+                            {user.can_delete_sales ? "ON" : "OFF"}
+                          </button>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        {isOwner ? (
+                          <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">FULL</span>
+                        ) : (
+                          <button type="button" onClick={() => void toggleDeletePermission(user, "can_delete_purchases")} className={`rounded-lg px-3 py-2 text-xs font-bold text-white ${user.can_delete_purchases ? "bg-green-600 hover:bg-green-700" : "bg-slate-400 hover:bg-slate-500"}`}>
+                            {user.can_delete_purchases ? "ON" : "OFF"}
+                          </button>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        {isOwner ? (
+                          <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-700">FULL</span>
+                        ) : (
+                          <button type="button" onClick={() => void toggleDeletePermission(user, "can_delete_collections")} className={`rounded-lg px-3 py-2 text-xs font-bold text-white ${user.can_delete_collections ? "bg-green-600 hover:bg-green-700" : "bg-slate-400 hover:bg-slate-500"}`}>
+                            {user.can_delete_collections ? "ON" : "OFF"}
+                          </button>
+                        )}
+                      </td>
                       <td className="p-3">
                         {isOwner ? (
                           <span className="flex justify-center rounded-lg bg-purple-100 px-4 py-2 text-sm font-bold text-purple-700">Owner</span>

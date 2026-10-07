@@ -533,8 +533,24 @@ export default function Suppliers() {
     );
   }, [suppliers, search]);
 
-  const totalOutstanding = useMemo(
-    () => suppliers.reduce((sum, supplier) => sum + supplier.outstanding, 0),
+  // Keep payable and supplier advance separate.
+  // A supplier payment can be an advance for a future purchase, so a
+  // negative supplier balance must NOT cancel another supplier's payable.
+  const totalPayable = useMemo(
+    () =>
+      suppliers.reduce(
+        (sum, supplier) => sum + Math.max(Number(supplier.outstanding || 0), 0),
+        0
+      ),
+    [suppliers]
+  );
+
+  const totalSupplierAdvance = useMemo(
+    () =>
+      suppliers.reduce(
+        (sum, supplier) => sum + Math.max(-Number(supplier.outstanding || 0), 0),
+        0
+      ),
     [suppliers]
   );
 
@@ -811,14 +827,33 @@ export default function Suppliers() {
           <input className="w-full rounded-lg border p-3" placeholder="Remarks (optional)" value={paymentRemarks} onChange={(e) => setPaymentRemarks(e.target.value)} />
         </div>
 
-        {paymentSupplierId && (
-          <div className="mt-4 rounded-xl bg-blue-50 p-4">
-            <span className="text-sm text-slate-600">Current supplier balance: </span>
-            <span className="font-bold text-red-700">
-              {money(suppliers.find((item) => item.id === paymentSupplierId)?.outstanding || 0)}
-            </span>
-          </div>
-        )}
+        {paymentSupplierId && (() => {
+          const currentBalance =
+            Number(
+              suppliers.find((item) => item.id === paymentSupplierId)?.outstanding || 0
+            ) || 0;
+
+          return (
+            <div className="mt-4 rounded-xl bg-blue-50 p-4">
+              <span className="text-sm text-slate-600">Current supplier position: </span>
+              <span
+                className={`font-bold ${
+                  currentBalance > 0
+                    ? "text-red-700"
+                    : currentBalance < 0
+                    ? "text-blue-700"
+                    : "text-green-700"
+                }`}
+              >
+                {currentBalance > 0
+                  ? `Payable ${money(currentBalance)}`
+                  : currentBalance < 0
+                  ? `Advance ${money(Math.abs(currentBalance))}`
+                  : "Settled ₹ 0"}
+              </span>
+            </div>
+          );
+        })()}
 
         <div className="mt-4 flex flex-wrap gap-3">
           <button type="button" onClick={() => void savePayment()} disabled={paymentSaving} className="rounded-lg bg-green-600 px-7 py-3 font-bold text-white hover:bg-green-700 disabled:opacity-50">
@@ -833,18 +868,25 @@ export default function Suppliers() {
       </div>
 
       {/* SUMMARY */}
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl bg-white p-5 shadow">
           <p className="text-sm text-slate-500">Suppliers</p>
           <p className="mt-1 text-2xl font-bold">{suppliers.length}</p>
         </div>
+
         <div className="rounded-2xl bg-white p-5 shadow">
           <p className="text-sm text-slate-500">Total Supplier Payments</p>
           <p className="mt-1 text-2xl font-bold text-green-700">{money(totalPayments)}</p>
         </div>
+
         <div className="rounded-2xl bg-white p-5 shadow">
-          <p className="text-sm text-slate-500">Net Supplier Balance</p>
-          <p className={`mt-1 text-2xl font-bold ${totalOutstanding > 0 ? "text-red-700" : totalOutstanding < 0 ? "text-blue-700" : "text-green-700"}`}>{totalOutstanding > 0 ? `Payable ${money(totalOutstanding)}` : totalOutstanding < 0 ? `Credit ${money(Math.abs(totalOutstanding))}` : "Settled ₹ 0"}</p>
+          <p className="text-sm text-slate-500">Total Payable</p>
+          <p className="mt-1 text-2xl font-bold text-red-700">{money(totalPayable)}</p>
+        </div>
+
+        <div className="rounded-2xl bg-white p-5 shadow">
+          <p className="text-sm text-slate-500">Supplier Advance</p>
+          <p className="mt-1 text-2xl font-bold text-blue-700">{money(totalSupplierAdvance)}</p>
         </div>
       </div>
 
