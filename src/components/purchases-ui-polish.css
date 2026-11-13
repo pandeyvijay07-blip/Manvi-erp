@@ -1,0 +1,160 @@
+
+/* =========================================================
+   MANVI ERP — PURCHASES UI POLISH
+   UI ONLY. No React/Supabase/business logic changes.
+   ========================================================= */
+
+main.manvi-content > div.max-w-7xl:has(h1) {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 4px 2px 32px;
+}
+
+/* Purchase hero */
+main.manvi-content > div.max-w-7xl:has(h1) > div:first-child {
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .10);
+  border: 1px solid rgba(255,255,255,.18);
+}
+
+main.manvi-content > div.max-w-7xl:has(h1) > div:first-child h1 {
+  letter-spacing: -0.03em;
+}
+
+/* Main purchase cards */
+main.manvi-content > div.max-w-7xl:has(h1) > .bg-white {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  box-shadow: 0 7px 24px rgba(15, 23, 42, .055);
+}
+
+/* Form controls */
+main.manvi-content > div.max-w-7xl:has(h1) input,
+main.manvi-content > div.max-w-7xl:has(h1) select {
+  min-height: 45px;
+  border-color: #cbd5e1;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+main.manvi-content > div.max-w-7xl:has(h1) input:focus,
+main.manvi-content > div.max-w-7xl:has(h1) select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+/* Section headings */
+main.manvi-content > div.max-w-7xl:has(h1) h2 {
+  letter-spacing: -0.02em;
+}
+
+/* Purchase tables */
+main.manvi-content > div.max-w-7xl:has(h1) table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+main.manvi-content > div.max-w-7xl:has(h1) th {
+  font-size: 12px;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+main.manvi-content > div.max-w-7xl:has(h1) td {
+  vertical-align: middle;
+}
+
+main.manvi-content > div.max-w-7xl:has(h1) tbody tr {
+  transition: background-color .12s ease;
+}
+
+main.manvi-content > div.max-w-7xl:has(h1) tbody tr:hover {
+  background: #f8fafc;
+}
+
+/* Product rows / amount emphasis */
+main.manvi-content > div.max-w-7xl:has(h1) .text-2xl,
+main.manvi-content > div.max-w-7xl:has(h1) .text-3xl {
+  letter-spacing: -0.035em;
+}
+
+/* Buttons */
+main.manvi-content > div.max-w-7xl:has(h1) button {
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+
+main.manvi-content > div.max-w-7xl:has(h1) button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 12px rgba(15,23,42,.10);
+}
+
+main.manvi-content > div.max-w-7xl:has(h1) button:active {
+  transform: translateY(0);
+}
+
+/* Payment summary cards */
+main.manvi-content > div.max-w-7xl:has(h1) .bg-blue-50,
+main.manvi-content > div.max-w-7xl:has(h1) .bg-green-50,
+main.manvi-content > div.max-w-7xl:has(h1) .bg-orange-50 {
+  border: 1px solid rgba(148,163,184,.18);
+}
+
+/* Scrollable tables on mobile */
+main.manvi-content > div.max-w-7xl:has(h1) .overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 900px) {
+  main.manvi-content > div.max-w-7xl:has(h1) {
+    padding: 2px 0 28px;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) > div:first-child {
+    border-radius: 16px;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) > .bg-white {
+    padding: 16px !important;
+    border-radius: 16px;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) table {
+    font-size: 13px;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) th,
+  main.manvi-content > div.max-w-7xl:has(h1) td {
+    padding: 10px 9px;
+  }
+}
+
+@media (max-width: 640px) {
+  main.manvi-content > div.max-w-7xl:has(h1) {
+    padding: 0 0 24px;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) > .bg-white {
+    padding: 13px !important;
+    border-radius: 14px;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) > div:first-child h1 {
+    font-size: 1.45rem;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) input,
+  main.manvi-content > div.max-w-7xl:has(h1) select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) button {
+    min-height: 44px;
+  }
+
+  main.manvi-content > div.max-w-7xl:has(h1) .text-2xl {
+    font-size: 1.45rem;
+  }
+}

@@ -1,0 +1,310 @@
+
+/* =========================================================
+   MANVI ERP — STRONG VISUAL UI OVERRIDE
+   UI ONLY — no business logic / no database changes
+   ========================================================= */
+
+/* ---------- APP BACKGROUND ---------- */
+.manvi-app,
+.manvi-main {
+  background: #f1f5f9 !important;
+}
+
+.manvi-content {
+  padding: 28px !important;
+  max-width: 100% !important;
+}
+
+/* ---------- DESKTOP SIDEBAR ---------- */
+.manvi-sidebar {
+  width: 250px !important;
+  background: linear-gradient(180deg, #0f2747 0%, #123b69 55%, #0b315b 100%) !important;
+  border-right: 0 !important;
+  box-shadow: 8px 0 30px rgba(15, 39, 71, .14) !important;
+}
+
+.manvi-logo-area {
+  height: 86px !important;
+  padding: 0 20px !important;
+  border-bottom: 1px solid rgba(255,255,255,.10) !important;
+}
+
+.manvi-logo-mark {
+  width: 46px !important;
+  height: 46px !important;
+  background: linear-gradient(135deg,#38bdf8,#2563eb) !important;
+  box-shadow: 0 8px 22px rgba(37,99,235,.35) !important;
+}
+
+.manvi-logo-title {
+  color: #fff !important;
+  font-size: 17px !important;
+}
+
+.manvi-logo-subtitle {
+  color: #a9c5e4 !important;
+}
+
+.manvi-user-box {
+  margin: 16px !important;
+  background: rgba(255,255,255,.08) !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+}
+
+.manvi-user-info strong {
+  color: #fff !important;
+}
+
+.manvi-user-info span {
+  color: #a9c5e4 !important;
+}
+
+.manvi-avatar {
+  background: #dbeafe !important;
+  color: #1d4ed8 !important;
+}
+
+.manvi-nav-label {
+  color: #7fa4ca !important;
+}
+
+.manvi-nav-item {
+  min-height: 46px !important;
+  color: #c8d9ea !important;
+  border-radius: 12px !important;
+}
+
+.manvi-nav-item:hover {
+  background: rgba(255,255,255,.09) !important;
+  color: #fff !important;
+  transform: translateX(3px) !important;
+}
+
+.manvi-nav-item.active {
+  background: linear-gradient(90deg, #2563eb, #3b82f6) !important;
+  color: #fff !important;
+  box-shadow: 0 7px 18px rgba(37,99,235,.28) !important;
+}
+
+.manvi-nav-arrow {
+  color: #8fb3d6 !important;
+}
+
+.manvi-sidebar-footer {
+  color: #8fb3d6 !important;
+  border-top: 1px solid rgba(255,255,255,.10) !important;
+}
+
+/* ---------- TOP HEADER ---------- */
+.manvi-header {
+  height: 74px !important;
+  padding: 0 28px !important;
+  background: rgba(255,255,255,.94) !important;
+  border-bottom: 1px solid #dbe3ed !important;
+  box-shadow: 0 3px 18px rgba(15,23,42,.05) !important;
+}
+
+.manvi-desktop-page-title {
+  font-size: 21px !important;
+  letter-spacing: -.3px !important;
+}
+
+.manvi-business-chip {
+  background: #eff6ff !important;
+  border: 1px solid #bfdbfe !important;
+  color: #1d4ed8 !important;
+  padding: 0 14px !important;
+}
+
+.manvi-header-icon {
+  background: #f1f5f9 !important;
+  border: 1px solid #e2e8f0 !important;
+}
+
+.manvi-header-icon:hover {
+  background: #dbeafe !important;
+  border-color: #93c5fd !important;
+}
+
+/* ---------- ALL PAGE CONTAINERS ---------- */
+.manvi-content > div,
+.manvi-content main {
+  --tw-ring-color: #dbe3ed;
+}
+
+.manvi-content .bg-white {
+  border: 1px solid #dce5ef !important;
+  box-shadow: 0 5px 20px rgba(15,23,42,.055) !important;
+  border-radius: 16px !important;
+}
+
+/* ---------- PAGE HEADINGS ---------- */
+.manvi-content h1 {
+  letter-spacing: -.45px !important;
+}
+
+.manvi-content h2 {
+  letter-spacing: -.25px !important;
+}
+
+/* ---------- FORM FIELDS ---------- */
+.manvi-content input:not([type="checkbox"]):not([type="radio"]),
+.manvi-content select,
+.manvi-content textarea {
+  min-height: 42px !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 10px !important;
+  background: #fff !important;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease !important;
+}
+
+.manvi-content input:not([type="checkbox"]):not([type="radio"]):focus,
+.manvi-content select:focus,
+.manvi-content textarea:focus {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.13) !important;
+}
+
+/* ---------- BUTTONS ---------- */
+.manvi-content button {
+  border-radius: 10px !important;
+  transition: transform .14s ease, box-shadow .14s ease, filter .14s ease !important;
+}
+
+.manvi-content button:hover:not(:disabled) {
+  transform: translateY(-1px) !important;
+}
+
+.manvi-content button:active:not(:disabled) {
+  transform: translateY(0) !important;
+}
+
+/* Primary blue buttons */
+.manvi-content button.bg-blue-600,
+.manvi-content button.bg-blue-700,
+.manvi-content button.bg-blue-500 {
+  background: linear-gradient(135deg,#2563eb,#1d4ed8) !important;
+  box-shadow: 0 5px 14px rgba(37,99,235,.20) !important;
+}
+
+/* ---------- TABLES ---------- */
+.manvi-content table {
+  border: 1px solid #dbe3ed !important;
+  border-radius: 14px !important;
+  overflow: hidden !important;
+  box-shadow: 0 4px 16px rgba(15,23,42,.045) !important;
+}
+
+.manvi-content thead,
+.manvi-content th {
+  background: #eaf2fb !important;
+}
+
+.manvi-content th {
+  color: #334e68 !important;
+  font-size: 11px !important;
+  text-transform: uppercase !important;
+  letter-spacing: .45px !important;
+  padding: 13px 14px !important;
+}
+
+.manvi-content td {
+  padding: 13px 14px !important;
+  border-bottom: 1px solid #edf2f7 !important;
+}
+
+.manvi-content tbody tr {
+  transition: background .12s ease !important;
+}
+
+.manvi-content tbody tr:hover {
+  background: #f8fbff !important;
+}
+
+/* ---------- DASHBOARD HERO ---------- */
+main.manvi-content > div:has(h1) > div:first-child,
+.manvi-content .bg-gradient-to-r {
+  border-radius: 20px !important;
+  box-shadow: 0 12px 32px rgba(30,64,175,.18) !important;
+}
+
+/* Dashboard KPI/card visual hierarchy */
+main.manvi-content > div:has(h1) .rounded-xl,
+main.manvi-content > div:has(h1) .rounded-2xl {
+  border-radius: 16px !important;
+}
+
+main.manvi-content > div:has(h1) .shadow-sm {
+  box-shadow: 0 5px 18px rgba(15,23,42,.055) !important;
+}
+
+/* ---------- KPI NUMBERS ---------- */
+.manvi-content .text-3xl,
+.manvi-content .text-4xl {
+  letter-spacing: -.8px !important;
+}
+
+/* ---------- STATUS / BADGES ---------- */
+.manvi-content .rounded-full {
+  font-weight: 700 !important;
+}
+
+/* ---------- MOBILE ---------- */
+@media (max-width: 900px) {
+  .manvi-content {
+    padding: 16px 12px 92px !important;
+  }
+
+  .manvi-header {
+    height: 64px !important;
+    padding: 0 12px !important;
+  }
+
+  .manvi-content .bg-white {
+    border-radius: 14px !important;
+  }
+
+  .manvi-content input:not([type="checkbox"]):not([type="radio"]),
+  .manvi-content select,
+  .manvi-content textarea {
+    min-height: 44px !important;
+  }
+
+  .manvi-content table {
+    font-size: 12px !important;
+  }
+
+  .manvi-content th,
+  .manvi-content td {
+    padding: 11px 10px !important;
+  }
+
+  .manvi-mobile-top-nav {
+    box-shadow: 0 10px 30px rgba(15,23,42,.18) !important;
+    border: 1px solid #dbe3ed !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .manvi-content {
+    padding-left: 9px !important;
+    padding-right: 9px !important;
+  }
+
+  .manvi-header {
+    padding-left: 9px !important;
+    padding-right: 9px !important;
+  }
+
+  .manvi-content .p-6 {
+    padding: 14px !important;
+  }
+
+  .manvi-content .p-5 {
+    padding: 13px !important;
+  }
+
+  .manvi-content .p-4 {
+    padding: 12px !important;
+  }
+}

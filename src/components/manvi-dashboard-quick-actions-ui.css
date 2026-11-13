@@ -1,0 +1,44 @@
+
+/* MANVI ERP — Dashboard Quick Actions UI */
+main.manvi-content > div.space-y-6:has(button:has(svg)) button {
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease !important;
+}
+
+main.manvi-content > div.space-y-6:has(button:has(svg)) button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(15,23,42,.10) !important;
+}
+
+main.manvi-content > div.space-y-6:has(button:has(svg)) button:active {
+  transform: scale(.98);
+}
+
+main.manvi-content > div.space-y-6 .grid button {
+  min-height: 54px;
+  border-radius: 12px !important;
+  font-weight: 700 !important;
+  letter-spacing: .01em;
+}
+
+main.manvi-content > div.space-y-6 .grid button svg {
+  width: 19px;
+  height: 19px;
+  flex-shrink: 0;
+}
+
+main.manvi-content > div.space-y-6 .grid button:hover svg {
+  transform: scale(1.08);
+}
+
+@media (max-width: 600px) {
+  main.manvi-content > div.space-y-6 .grid button {
+    min-height: 50px;
+    padding: 10px 8px !important;
+    font-size: 12px !important;
+  }
+
+  main.manvi-content > div.space-y-6 .grid button svg {
+    width: 17px;
+    height: 17px;
+  }
+}
