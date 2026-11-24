@@ -22,19 +22,19 @@ import {
   FiCalendar,
   FiTag,
   FiUserCheck,
-  FiSettings,
+  FiMenu,
+  FiBell,
+  FiChevronRight,
+  FiX,
+  FiLogOut,
 } from "react-icons/fi";
 
-import Header from "./Header";
 import { supabase } from "../lib/supabase";
+import "./manvi-ui.css";
 
 interface Props {
   children: ReactNode;
 }
-
-// ============================================
-// USER TYPE
-// ============================================
 
 type CurrentUser = {
   id: string;
@@ -44,126 +44,63 @@ type CurrentUser = {
   active: boolean;
 };
 
-// ============================================
-// MENU
-// ============================================
-
 const menu = [
-  {
-    name: "Dashboard",
-    path: "/",
-    icon: <FiHome />,
-  },
-
-  {
-    name: "Sales",
-    path: "/sales",
-    icon: <FiShoppingCart />,
-  },
-
-  {
-    name: "Purchases",
-    path: "/purchases",
-    icon: <FiTruck />,
-  },
-
-  {
-    name: "Suppliers",
-    path: "/suppliers",
-    icon: <FiUsers />,
-  },
-
-  {
-    name: "Brands",
-    path: "/brands",
-    icon: <FiTag />,
-  },
-
-  {
-    name: "Products",
-    path: "/products",
-    icon: <FiBox />,
-  },
-
-  {
-    name: "Customers",
-    path: "/customers",
-    icon: <FiUsers />,
-  },
-
+  { name: "Dashboard", path: "/", icon: <FiHome /> },
+  { name: "Sales", path: "/sales", icon: <FiShoppingCart /> },
+  { name: "Purchases", path: "/purchases", icon: <FiTruck /> },
+  { name: "Suppliers", path: "/suppliers", icon: <FiUsers /> },
+  { name: "Brands", path: "/brands", icon: <FiTag /> },
+  { name: "Products", path: "/products", icon: <FiBox /> },
+  { name: "Customers", path: "/customers", icon: <FiUsers /> },
   {
     name: "Customer Prices",
     path: "/customer-prices",
     icon: <FiDollarSign />,
   },
-
   {
     name: "Walk-in Sales",
     path: "/walkin-sales",
     icon: <FiShoppingCart />,
   },
-
   {
     name: "Collections",
     path: "/collections",
     icon: <FiDollarSign />,
   },
-
   {
     name: "Expenses",
     path: "/expenses",
     icon: <FiCreditCard />,
   },
-
   {
     name: "Cash Book",
     path: "/cash-book",
     icon: <FiBookOpen />,
   },
-
   {
     name: "Reports",
     path: "/reports",
     icon: <FiBarChart2 />,
   },
-
   {
     name: "Customer Ledger",
     path: "/customer-ledger",
     icon: <FiBookOpen />,
   },
-
   {
     name: "Daily Closing",
     path: "/daily-closing",
     icon: <FiCalendar />,
   },
-
-  // ==========================================
-  // OWNER ONLY
-  // ==========================================
-
   {
     name: "User Management",
     path: "/user-management",
     icon: <FiUserCheck />,
     ownerOnly: true,
   },
-
-  {
-    name: "Settings",
-    path: "/settings",
-    icon: <FiSettings />,
-  },
 ];
 
-// ============================================
-// LAYOUT
-// ============================================
-
-export default function Layout({
-  children,
-}: Props) {
+export default function Layout({ children }: Props) {
   const location = useLocation();
 
   const [currentUser, setCurrentUser] =
@@ -172,23 +109,17 @@ export default function Layout({
   const [loadingUser, setLoadingUser] =
     useState(true);
 
-  // ==========================================
-  // LOAD CURRENT USER
-  // ==========================================
+  const [mobileMenuOpen, setMobileMenuOpen] =
+    useState(false);
 
   async function loadCurrentUser() {
     try {
       setLoadingUser(true);
 
-      // ----------------------------------------
-      // AUTH SESSION
-      // ----------------------------------------
-
       const {
         data: sessionData,
         error: sessionError,
-      } =
-        await supabase.auth.getSession();
+      } = await supabase.auth.getSession();
 
       if (sessionError) {
         console.error(
@@ -208,28 +139,19 @@ export default function Layout({
         return;
       }
 
-      // ----------------------------------------
-      // USERS TABLE
-      // ----------------------------------------
-
       const {
         data,
         error,
       } = await supabase
         .from("users")
-        .select(
-          `
-            id,
-            name,
-            email,
-            role,
-            active
-          `
-        )
-        .eq(
-          "id",
-          authUser.id
-        )
+        .select(`
+          id,
+          name,
+          email,
+          role,
+          active
+        `)
+        .eq("id", authUser.id)
         .maybeSingle();
 
       if (error) {
@@ -238,25 +160,16 @@ export default function Layout({
           error
         );
 
-        // --------------------------------------
-        // AUTH METADATA FALLBACK
-        // --------------------------------------
-
         setCurrentUser({
           id: authUser.id,
-
           name:
             authUser.user_metadata?.name ||
             authUser.email?.split("@")[0] ||
             "User",
-
-          email:
-            authUser.email || "",
-
+          email: authUser.email || "",
           role:
             authUser.user_metadata?.role ||
             "Employee",
-
           active: true,
         });
 
@@ -268,25 +181,16 @@ export default function Layout({
           data as CurrentUser
         );
       } else {
-        // --------------------------------------
-        // FALLBACK
-        // --------------------------------------
-
         setCurrentUser({
           id: authUser.id,
-
           name:
             authUser.user_metadata?.name ||
             authUser.email?.split("@")[0] ||
             "User",
-
-          email:
-            authUser.email || "",
-
+          email: authUser.email || "",
           role:
             authUser.user_metadata?.role ||
             "Employee",
-
           active: true,
         });
       }
@@ -301,10 +205,6 @@ export default function Layout({
       setLoadingUser(false);
     }
   }
-
-  // ==========================================
-  // INITIAL USER LOAD
-  // ==========================================
 
   useEffect(() => {
     loadCurrentUser();
@@ -327,10 +227,6 @@ export default function Layout({
     };
   }, []);
 
-  // ==========================================
-  // ROLE CHECK
-  // ==========================================
-
   const userRole =
     currentUser?.role
       ?.trim()
@@ -341,299 +237,237 @@ export default function Layout({
     userRole === "admin" ||
     userRole === "administrator";
 
-  // ==========================================
-  // FILTER MENU
-  // ==========================================
-
-  const visibleMenu =
-    menu.filter((item) => {
+  const visibleMenu = menu.filter(
+    (item) => {
       if (item.ownerOnly) {
         return isOwner;
       }
 
       return true;
-    });
+    }
+  );
 
-  // ==========================================
-  // ACTIVE PAGE
-  // ==========================================
+  function isActive(path: string) {
+    if (path === "/") {
+      return location.pathname === "/";
+    }
 
-  function isActive(
-    path: string
-  ) {
     return (
-      location.pathname === path
+      location.pathname === path ||
+      location.pathname.startsWith(
+        `${path}/`
+      )
     );
   }
 
-  // ==========================================
-  // LOADING
-  // ==========================================
+  function closeMobileMenu() {
+    setMobileMenuOpen(false);
+  }
 
   if (loadingUser) {
     return (
-      <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-hidden bg-slate-100 flex">
-
-        {/* SIDEBAR */}
-
-        <aside
-          className="
-            hidden
-            md:flex
-            w-64
-            flex-col
-            bg-gradient-to-b
-            from-blue-700
-            to-blue-900
-            text-white
-            shadow-xl
-            fixed
-            left-0
-            top-0
-            bottom-0
-            z-40
-          "
-        >
-
-          <div className="p-5 border-b border-blue-500">
-
-            <div className="flex items-center gap-3">
-
-              <div
-                className="
-                  w-12
-                  h-12
-                  rounded-full
-                  bg-white
-                  text-blue-700
-                  flex
-                  items-center
-                  justify-center
-                  text-xl
-                  font-bold
-                  shadow
-                "
-              >
-                M
-              </div>
-
-              <div>
-
-                <h1 className="text-xl font-bold">
-                  MANVI ERP
-                </h1>
-
-                <p className="text-xs text-blue-100">
-                  MANVI MILK AGENCIES
-                </p>
-
-              </div>
-
-            </div>
-
+      <div className="manvi-loading">
+        <div className="manvi-loading-card">
+          <div className="manvi-loading-logo">
+            M
           </div>
 
-        </aside>
+          <div className="manvi-spinner" />
 
-        {/* LOADING */}
-
-        <div
-          className="
-            flex-1
-            md:ml-64
-            flex
-            items-center
-            justify-center
-          "
-        >
-
-          <div className="text-center">
-
-            <div
-              className="
-                w-12
-                h-12
-                border-4
-                border-blue-600
-                border-t-transparent
-                rounded-full
-                animate-spin
-                mx-auto
-                mb-4
-              "
-            />
-
-            <p className="font-semibold text-blue-700">
-              Loading MANVI ERP...
-            </p>
-
-          </div>
-
+          <p>
+            Loading MANVI ERP...
+          </p>
         </div>
-
       </div>
     );
   }
 
-  // ==========================================
-  // MAIN UI
-  // ==========================================
+  const currentPage =
+    menu.find((item) =>
+      isActive(item.path)
+    )?.name || "MANVI ERP";
 
   return (
-    <div className="min-h-screen w-full min-w-0 max-w-full overflow-x-hidden bg-slate-100 flex">
+    <div className="manvi-app">
 
-      {/* ======================================
-          SIDEBAR
-      ======================================= */}
+      {/* DESKTOP SIDEBAR */}
 
-      <aside
-        className="
-          hidden
-          md:flex
-          w-64
-          flex-col
-          bg-gradient-to-b
-          from-blue-700
-          to-blue-900
-          text-white
-          shadow-xl
-          fixed
-          left-0
-          top-0
-          bottom-0
-          z-40
-        "
-      >
+      <aside className="manvi-sidebar">
 
-        {/* ==================================
-            LOGO
-        =================================== */}
+        <div className="manvi-logo-area">
 
-        <div
-          className="
-            p-5
-            border-b
-            border-blue-500
-          "
-        >
+          <div className="manvi-logo-mark">
+            M
+          </div>
 
-          <div className="flex items-center gap-3">
-
-            <div
-              className="
-                w-12
-                h-12
-                rounded-full
-                bg-white
-                text-blue-700
-                flex
-                items-center
-                justify-center
-                text-xl
-                font-bold
-                shadow
-              "
-            >
-              M
+          <div>
+            <div className="manvi-logo-title">
+              MANVI ERP
             </div>
 
-            <div>
-
-              <h1 className="text-xl font-bold">
-                MANVI ERP
-              </h1>
-
-              <p className="text-xs text-blue-100">
-                MANVI MILK AGENCIES
-              </p>
-
+            <div className="manvi-logo-subtitle">
+              MANVI MILK AGENCIES
             </div>
+          </div>
+
+        </div>
+
+        <div className="manvi-user-box">
+
+          <div className="manvi-avatar">
+            {(currentUser?.name || "U")
+              .charAt(0)
+              .toUpperCase()}
+          </div>
+
+          <div className="manvi-user-info">
+
+            <strong>
+              {currentUser?.name || "User"}
+            </strong>
+
+            <span>
+              {currentUser?.role ||
+                "Employee"}
+            </span>
 
           </div>
 
         </div>
 
-        {/* ==================================
-            USER ROLE
-        =================================== */}
+        <nav className="manvi-sidebar-nav">
 
-        <div
-          className="
-            px-4
-            py-3
-            border-b
-            border-blue-600
-          "
-        >
+          <div className="manvi-nav-label">
+            MAIN MENU
+          </div>
 
-          <p className="text-xs text-blue-200">
-            Logged in as
-          </p>
+          {visibleMenu.map((item) => {
 
-          <p className="font-semibold truncate">
-            {currentUser?.name || "User"}
-          </p>
+            const active =
+              isActive(item.path);
 
-          <span
-            className="
-              inline-block
-              mt-1
-              rounded-full
-              bg-white/20
-              px-2
-              py-1
-              text-[11px]
-              font-bold
-            "
-          >
-            {currentUser?.role || "Employee"}
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={closeMobileMenu}
+                className={
+                  active
+                    ? "manvi-nav-item active"
+                    : "manvi-nav-item"
+                }
+              >
+
+                <span className="manvi-nav-icon">
+                  {item.icon}
+                </span>
+
+                <span className="manvi-nav-text">
+                  {item.name}
+                </span>
+
+                {active && (
+                  <FiChevronRight className="manvi-nav-arrow" />
+                )}
+
+              </Link>
+            );
+          })}
+
+        </nav>
+
+        <div className="manvi-sidebar-footer">
+
+          <div>
+            MANVI ERP V30
+          </div>
+
+          <span>
+            Dairy Management System
           </span>
 
         </div>
 
-        {/* ==================================
-            NAVIGATION
-        =================================== */}
+      </aside>
 
-        <nav
-          className="
-            flex-1
-            p-3
-            space-y-1
-            overflow-y-auto
-          "
-        >
+      {/* MOBILE DRAWER */}
 
-          {visibleMenu.map(
-            (item) => {
+      {mobileMenuOpen && (
+        <>
+          <button
+            className="manvi-mobile-overlay"
+            onClick={closeMobileMenu}
+            aria-label="Close menu"
+          />
 
-              const active =
-                isActive(
-                  item.path
-                );
+          <aside className="manvi-mobile-drawer">
 
-              return (
+            <div className="manvi-mobile-drawer-header">
+
+              <div className="manvi-logo-mark">
+                M
+              </div>
+
+              <div>
+                <strong>
+                  MANVI ERP
+                </strong>
+
+                <span>
+                  MANVI MILK AGENCIES
+                </span>
+              </div>
+
+              <button
+                className="manvi-icon-button"
+                onClick={closeMobileMenu}
+                aria-label="Close"
+              >
+                <FiX />
+              </button>
+
+            </div>
+
+            <div className="manvi-mobile-user">
+
+              <div className="manvi-avatar">
+                {(currentUser?.name || "U")
+                  .charAt(0)
+                  .toUpperCase()}
+              </div>
+
+              <div>
+
+                <strong>
+                  {currentUser?.name ||
+                    "User"}
+                </strong>
+
+                <span>
+                  {currentUser?.role ||
+                    "Employee"}
+                </span>
+
+              </div>
+
+            </div>
+
+            <nav className="manvi-mobile-nav">
+
+              {visibleMenu.map((item) => (
+
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`
-                    flex
-                    items-center
-                    gap-3
-                    px-4
-                    py-3
-                    rounded-xl
-                    transition
-                    duration-200
-                    ${
-                      active
-                        ? "bg-white text-blue-700 font-semibold shadow"
-                        : "text-white hover:bg-blue-600"
-                    }
-                  `}
+                  onClick={closeMobileMenu}
+                  className={
+                    isActive(item.path)
+                      ? "manvi-mobile-nav-item active"
+                      : "manvi-mobile-nav-item"
+                  }
                 >
 
-                  <span className="text-lg">
+                  <span>
                     {item.icon}
                   </span>
 
@@ -641,77 +475,183 @@ export default function Layout({
                     {item.name}
                   </span>
 
+                  <FiChevronRight />
+
                 </Link>
-              );
+
+              ))}
+
+            </nav>
+
+            <div className="manvi-mobile-drawer-footer">
+
+              <FiLogOut />
+
+              <span>
+                Logout
+              </span>
+
+            </div>
+
+          </aside>
+        </>
+      )}
+
+      {/* MAIN AREA */}
+
+      <div className="manvi-main">
+
+        {/* TOP HEADER */}
+
+        <header className="manvi-header">
+
+          <div className="manvi-header-left">
+
+            <button
+              className="manvi-mobile-menu-button"
+              onClick={() =>
+                setMobileMenuOpen(true)
+              }
+              aria-label="Open menu"
+            >
+              <FiMenu />
+            </button>
+
+            <div className="manvi-mobile-title">
+
+              <strong>
+                {currentPage}
+              </strong>
+
+              <span>
+                MANVI ERP V30
+              </span>
+
+            </div>
+
+            <div className="manvi-desktop-page-title">
+              {currentPage}
+            </div>
+
+          </div>
+
+          <div className="manvi-header-right">
+
+            <div className="manvi-business-chip">
+
+              <span className="manvi-business-dot" />
+
+              <span>
+                MANVI MILK AGENCIES
+              </span>
+
+            </div>
+
+            <button
+              className="manvi-header-icon"
+              aria-label="Notifications"
+            >
+              <FiBell />
+
+              <span className="manvi-notification-dot" />
+
+            </button>
+
+            <div className="manvi-header-user">
+
+              <div className="manvi-avatar small">
+                {(currentUser?.name || "U")
+                  .charAt(0)
+                  .toUpperCase()}
+              </div>
+
+              <div>
+
+                <strong>
+                  {currentUser?.name ||
+                    "User"}
+                </strong>
+
+                <span>
+                  {currentUser?.role ||
+                    "Employee"}
+                </span>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </header>
+
+        {/* MOBILE QUICK NAV */}
+
+        <div className="manvi-mobile-top-nav">
+
+          <Link
+            to="/"
+            className={
+              isActive("/")
+                ? "active"
+                : ""
             }
-          )}
+          >
+            <FiHome />
+            <span>Home</span>
+          </Link>
 
-        </nav>
+          <Link
+            to="/sales"
+            className={
+              isActive("/sales")
+                ? "active"
+                : ""
+            }
+          >
+            <FiShoppingCart />
+            <span>Sales</span>
+          </Link>
 
-        {/* ==================================
-            FOOTER
-        =================================== */}
+          <Link
+            to="/purchases"
+            className={
+              isActive("/purchases")
+                ? "active"
+                : ""
+            }
+          >
+            <FiTruck />
+            <span>Purchase</span>
+          </Link>
 
-        <div
-          className="
-            p-4
-            border-t
-            border-blue-600
-            text-xs
-            text-blue-100
-          "
-        >
+          <Link
+            to="/collections"
+            className={
+              isActive("/collections")
+                ? "active"
+                : ""
+            }
+          >
+            <FiDollarSign />
+            <span>Collection</span>
+          </Link>
 
-          <p>
-            MANVI ERP V29
-          </p>
-
-          <p className="mt-1">
-            Dairy Management System
-          </p>
+          <button
+            onClick={() =>
+              setMobileMenuOpen(true)
+            }
+          >
+            <FiMenu />
+            <span>More</span>
+          </button>
 
         </div>
 
-      </aside>
+        {/* EXISTING PAGE */}
 
-      {/* ======================================
-          MAIN AREA
-      ======================================= */}
-
-      <div
-        className="
-          flex
-          flex-1
-          min-w-0
-          w-full
-          max-w-full
-          flex-col
-          overflow-x-hidden
-          md:ml-64
-        "
-      >
-
-        {/* HEADER */}
-
-        <Header />
-
-        {/* PAGE */}
-
-        <main
-          className="
-            flex-1
-            min-w-0
-            w-full
-            max-w-full
-            overflow-x-hidden
-            p-3
-            sm:p-4
-            md:p-6
-          "
-        >
-
+        <main className="manvi-content">
           {children}
-
         </main>
 
       </div>

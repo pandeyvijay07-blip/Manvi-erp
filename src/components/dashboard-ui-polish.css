@@ -1,0 +1,137 @@
+
+/* =========================================================
+   MANVI ERP — DASHBOARD UI POLISH
+   UI ONLY — does not change Dashboard.tsx logic
+   ========================================================= */
+
+/* Identify the Dashboard by its existing root + h1. */
+main.manvi-content > div.bg-slate-50:has(h1) {
+  background: #f5f7fb !important;
+}
+
+/* Dashboard content width and rhythm */
+main.manvi-content > div.bg-slate-50:has(h1) > * {
+  max-width: 1440px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Hero */
+main.manvi-content > div.bg-slate-50:has(h1) > div:first-child {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px !important;
+  padding: 28px 30px !important;
+  margin-bottom: 20px !important;
+  box-shadow: 0 12px 30px rgba(37, 99, 235, .14) !important;
+}
+
+main.manvi-content > div.bg-slate-50:has(h1) > div:first-child::after {
+  content: "";
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  right: -70px;
+  top: -90px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.12);
+  pointer-events: none;
+}
+
+/* Dashboard headings */
+main.manvi-content > div.bg-slate-50:has(h1) h1 {
+  letter-spacing: -0.035em;
+}
+
+main.manvi-content > div.bg-slate-50:has(h1) h2 {
+  letter-spacing: -0.02em;
+}
+
+/* Date selector panel */
+main.manvi-content > div.bg-slate-50:has(h1) > div:nth-child(2) {
+  border-radius: 18px !important;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 18px rgba(15,23,42,.05) !important;
+}
+
+/* KPI / card hover polish */
+main.manvi-content > div.bg-slate-50:has(h1) .rounded-2xl {
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+
+main.manvi-content > div.bg-slate-50:has(h1) .rounded-2xl:hover {
+  box-shadow: 0 8px 24px rgba(15,23,42,.08) !important;
+}
+
+/* Make KPI numbers stronger */
+main.manvi-content > div.bg-slate-50:has(h1) .text-3xl {
+  letter-spacing: -0.04em;
+}
+
+/* Tables */
+main.manvi-content > div.bg-slate-50:has(h1) table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+main.manvi-content > div.bg-slate-50:has(h1) thead th {
+  font-size: 12px;
+  letter-spacing: .04em;
+  font-weight: 800;
+}
+
+main.manvi-content > div.bg-slate-50:has(h1) tbody tr {
+  transition: background-color .12s ease;
+}
+
+main.manvi-content > div.bg-slate-50:has(h1) tbody tr:hover {
+  background: #f8fafc;
+}
+
+/* Quick action buttons */
+main.manvi-content > div.bg-slate-50:has(h1) a {
+  transition: transform .14s ease, box-shadow .14s ease, background-color .14s ease;
+}
+
+main.manvi-content > div.bg-slate-50:has(h1) a:hover {
+  transform: translateY(-1px);
+}
+
+/* Better mobile dashboard spacing */
+@media (max-width: 640px) {
+  main.manvi-content > div.bg-slate-50:has(h1) {
+    padding: 10px !important;
+  }
+
+  main.manvi-content > div.bg-slate-50:has(h1) > div:first-child {
+    padding: 20px !important;
+    border-radius: 20px !important;
+  }
+
+  main.manvi-content > div.bg-slate-50:has(h1) h1 {
+    font-size: 28px !important;
+  }
+
+  main.manvi-content > div.bg-slate-50:has(h1) .text-3xl {
+    font-size: 22px !important;
+  }
+
+  main.manvi-content > div.bg-slate-50:has(h1) table {
+    min-width: 600px;
+  }
+}
+
+/* Small phone */
+@media (max-width: 390px) {
+  main.manvi-content > div.bg-slate-50:has(h1) {
+    padding: 8px !important;
+  }
+
+  main.manvi-content > div.bg-slate-50:has(h1) > div:first-child {
+    padding: 16px !important;
+  }
+
+  main.manvi-content > div.bg-slate-50:has(h1) h1 {
+    font-size: 25px !important;
+  }
+}

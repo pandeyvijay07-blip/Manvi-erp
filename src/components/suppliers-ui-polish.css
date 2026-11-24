@@ -1,0 +1,154 @@
+
+/* =========================================================
+   MANVI ERP — SUPPLIERS UI POLISH
+   UI ONLY. No React/Supabase/business logic changes.
+   ========================================================= */
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) {
+  max-width: 1500px;
+  padding-bottom: 32px;
+}
+
+/* Page header */
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) > div:first-child {
+  margin-bottom: 20px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #eff6ff, #ffffff);
+  border: 1px solid #dbeafe;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) > div:first-child h1 {
+  letter-spacing: -0.03em;
+}
+
+/* All major supplier panels */
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) > .bg-white {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  box-shadow: 0 7px 24px rgba(15,23,42,.055);
+}
+
+/* Summary cards */
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) .grid > .rounded-xl {
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) .grid > .rounded-xl:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(15,23,42,.08);
+}
+
+/* Form controls */
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) input,
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) select {
+  min-height: 45px;
+  border-color: #cbd5e1;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) input:focus,
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+/* Supplier-product mapping */
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) label:has(input[type="checkbox"]) {
+  transition: border-color .12s ease, background-color .12s ease, transform .12s ease;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) label:has(input[type="checkbox"]):hover {
+  transform: translateY(-1px);
+}
+
+/* Tables */
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) th {
+  font-size: 12px;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) td {
+  vertical-align: middle;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) tbody tr {
+  transition: background-color .12s ease;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) tbody tr:hover {
+  background: #f8fafc;
+}
+
+/* Buttons */
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) button {
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 12px rgba(15,23,42,.10);
+}
+
+main.manvi-content > div.mx-auto.max-w-7xl:has(h1) button:active {
+  transform: translateY(0);
+}
+
+/* Mobile */
+@media (max-width: 900px) {
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) {
+    padding-bottom: 28px;
+  }
+
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) > .bg-white {
+    padding: 16px !important;
+    border-radius: 16px;
+  }
+
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) table {
+    font-size: 13px;
+  }
+
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) th,
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) td {
+    padding: 10px 9px;
+  }
+}
+
+@media (max-width: 640px) {
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) {
+    padding-bottom: 24px;
+  }
+
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) > div:first-child {
+    padding: 14px 15px;
+    border-radius: 14px;
+  }
+
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) > div:first-child h1 {
+    font-size: 1.45rem;
+  }
+
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) > .bg-white {
+    padding: 13px !important;
+    border-radius: 14px;
+  }
+
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) input,
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  main.manvi-content > div.mx-auto.max-w-7xl:has(h1) button {
+    min-height: 44px;
+  }
+}

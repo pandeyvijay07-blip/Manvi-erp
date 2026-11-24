@@ -1,0 +1,45 @@
+
+/* MANVI ERP — Sidebar Navigation UI */
+.manvi-sidebar .manvi-nav-item {
+  margin: 3px 12px !important;
+  min-height: 48px !important;
+  border-radius: 12px !important;
+  transition: all .16s ease !important;
+}
+
+.manvi-sidebar .manvi-nav-item:hover {
+  transform: translateX(2px);
+  background: rgba(255,255,255,.09) !important;
+}
+
+.manvi-sidebar .manvi-nav-item.active,
+.manvi-sidebar .manvi-nav-item[aria-current="page"] {
+  box-shadow: 0 6px 18px rgba(0,0,0,.16) !important;
+  font-weight: 800 !important;
+}
+
+.manvi-sidebar .manvi-nav-item svg {
+  width: 19px !important;
+  height: 19px !important;
+  flex-shrink: 0;
+}
+
+.manvi-sidebar .manvi-logo-area {
+  padding: 20px 18px !important;
+}
+
+.manvi-sidebar .manvi-logo-area img,
+.manvi-sidebar .manvi-logo-area > div:first-child {
+  border-radius: 13px;
+}
+
+.manvi-sidebar .manvi-nav-item span {
+  letter-spacing: .01em;
+}
+
+@media (max-width: 900px) {
+  .manvi-sidebar .manvi-nav-item {
+    margin-left: 8px !important;
+    margin-right: 8px !important;
+  }
+}

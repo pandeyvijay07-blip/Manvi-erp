@@ -1,0 +1,42 @@
+
+/* MANVI ERP — ONE-GO UI PACK | UI ONLY */
+:root{--manvi-ui-blue:#2563eb;--manvi-ui-dark:#0f2f57;--manvi-ui-bg:#f5f7fb;--manvi-ui-border:#dfe7f1;--manvi-ui-shadow:0 8px 24px rgba(15,23,42,.08)}
+
+.manvi-main{background:var(--manvi-ui-bg)!important}
+.manvi-header{height:78px!important;background:#fff!important;border-bottom:1px solid var(--manvi-ui-border)!important;box-shadow:0 2px 12px rgba(15,23,42,.04)!important}
+.manvi-content{padding:28px!important}
+.manvi-sidebar{box-shadow:4px 0 20px rgba(15,23,42,.12)!important}
+
+.manvi-sidebar .manvi-nav-item{margin:3px 12px!important;min-height:46px!important;border-radius:12px!important;font-weight:600!important;transition:.16s!important}
+.manvi-sidebar .manvi-nav-item:hover{transform:translateX(2px);background:rgba(255,255,255,.10)!important}
+.manvi-sidebar .manvi-nav-item.active,.manvi-sidebar .manvi-nav-item[aria-current="page"]{box-shadow:0 6px 18px rgba(0,0,0,.16)!important;font-weight:800!important}
+
+.manvi-content .bg-white{border:1px solid var(--manvi-ui-border)!important;border-radius:16px!important;box-shadow:var(--manvi-ui-shadow)!important}
+.manvi-content .rounded-lg,.manvi-content .rounded-xl{border-radius:14px!important}
+.manvi-content input,.manvi-content select,.manvi-content textarea{min-height:42px!important;border:1px solid #d7e0eb!important;border-radius:10px!important;background:#fff!important;transition:.15s!important}
+.manvi-content input:focus,.manvi-content select:focus,.manvi-content textarea:focus{outline:none!important;border-color:var(--manvi-ui-blue)!important;box-shadow:0 0 0 3px rgba(37,99,235,.11)!important}
+
+.manvi-content button{border-radius:10px!important;font-weight:700!important;transition:transform .15s,box-shadow .15s!important}
+.manvi-content button:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(15,23,42,.10)!important}
+.manvi-content button:active{transform:scale(.98)}
+
+.manvi-content table{border:1px solid var(--manvi-ui-border)!important;border-radius:14px!important;overflow:hidden!important;background:#fff!important;box-shadow:0 5px 18px rgba(15,23,42,.05)!important}
+.manvi-content table th{height:46px!important;background:#f1f5fb!important;color:#334155!important;font-size:12px!important;font-weight:800!important}
+.manvi-content table td{height:46px!important;border-bottom:1px solid #edf1f6!important}
+.manvi-content table tbody tr:hover{background:#f8fbff!important}
+
+.manvi-content .grid>div{transition:transform .16s,box-shadow .16s!important}
+.manvi-content .grid>div:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(15,23,42,.09)!important}
+
+@media(max-width:900px){
+ .manvi-content{padding:16px!important}
+ .manvi-header{height:64px!important}
+ .manvi-content table{min-width:620px!important}
+ .manvi-content .overflow-x-auto{border-radius:12px!important}
+ .manvi-sidebar .manvi-nav-item{margin-left:8px!important;margin-right:8px!important}
+}
+@media(max-width:600px){
+ .manvi-content{padding:12px!important}
+ .manvi-content input,.manvi-content select,.manvi-content textarea{min-height:40px!important}
+ .manvi-content button{min-height:40px}
+}

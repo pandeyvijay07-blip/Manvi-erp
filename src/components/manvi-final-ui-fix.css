@@ -1,0 +1,53 @@
+/* =========================================================
+   MANVI ERP — FINAL UI CONSISTENCY FIX
+   UI ONLY — NO BUSINESS LOGIC CHANGES
+   ========================================================= */
+
+/* Prevent mobile tables from being clipped by the page canvas.
+   Existing .overflow-x-auto wrappers remain horizontally scrollable. */
+@media (max-width: 480px) {
+  main.manvi-content table {
+    min-width: 100% !important;
+    width: 100% !important;
+  }
+
+  main.manvi-content th,
+  main.manvi-content td {
+    max-width: 240px;
+  }
+
+  main.manvi-content td {
+    overflow-wrap: anywhere;
+  }
+
+  /* Keep form controls comfortably tappable. */
+  main.manvi-content input,
+  main.manvi-content select,
+  main.manvi-content textarea {
+    min-height: 44px;
+  }
+
+  /* Avoid oversized cards on very small phones. */
+  main.manvi-content .rounded-2xl {
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+  }
+}
+
+/* Consistent keyboard focus for accessibility without changing colors/layout. */
+main.manvi-content button:focus-visible,
+main.manvi-content a:focus-visible,
+main.manvi-content input:focus-visible,
+main.manvi-content select:focus-visible,
+main.manvi-content textarea:focus-visible {
+  outline: 2px solid var(--manvi-blue);
+  outline-offset: 2px;
+}
+
+/* Prevent accidental horizontal overflow from long text. */
+main.manvi-content h1,
+main.manvi-content h2,
+main.manvi-content h3,
+main.manvi-content p,
+main.manvi-content label {
+  overflow-wrap: anywhere;
+}

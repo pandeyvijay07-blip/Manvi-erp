@@ -18,6 +18,7 @@ type Brand = {
 type Supplier = {
   id: string;
   supplier_name: string;
+  opening_balance?: number | string | null;
 };
 
 type SupplierProductLink = {
@@ -188,6 +189,14 @@ function money(
   )}`;
 }
 
+function generatePurchaseInvoiceNo() {
+  const now = new Date();
+  const datePart = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const timePart = `${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+  const randomPart = Math.floor(1000 + Math.random() * 9000);
+  return `MANVI-PUR-${datePart}-${timePart}-${randomPart}`;
+}
+
 // ======================================================
 // COMPONENT
 // ======================================================
@@ -209,6 +218,22 @@ export default function Purchases() {
     setSuppliers,
   ] =
     useState<Supplier[]>([]);
+
+  // Supplier balance is calculated using the same ledger formula as
+  // Suppliers.tsx: opening balance + unpaid purchases - supplier payments.
+  const [supplierOutstandingById, setSupplierOutstandingById] =
+    useState<Record<string, number>>({});
+  const [supplierBalancesLoading, setSupplierBalancesLoading] =
+    useState(false);
+  const [supplierBalancesError, setSupplierBalancesError] =
+    useState("");
+
+  // When editing, remove the old purchase balance from the preview so the
+  // screen shows the balance BEFORE the edited bill is applied.
+  const [editingOriginalSupplierName, setEditingOriginalSupplierName] =
+    useState("");
+  const [editingOriginalPurchaseBalance, setEditingOriginalPurchaseBalance] =
+    useState(0);
 
   const [
     products,
@@ -253,6 +278,12 @@ export default function Purchases() {
     setInvoiceNo,
   ] =
     useState("");
+
+  const [copyPurchaseDate, setCopyPurchaseDate] = useState(() => {
+    const date = new Date(`${todayInput()}T00:00:00`);
+    date.setDate(date.getDate() - 1);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  });
 
   const [
     supplierName,
@@ -426,18 +457,92 @@ export default function Purchases() {
     try {
       const { data, error } = await supabase
         .from("suppliers")
-        .select("id, supplier_name")
+        .select("id, supplier_name, opening_balance")
         .order("supplier_name");
 
       if (error) throw error;
 
-      setSuppliers((data || []) as Supplier[]);
+      const supplierRows = (data || []) as Supplier[];
+      setSuppliers(supplierRows);
+      await loadSupplierOutstanding(supplierRows);
     } catch (error: any) {
       console.error("LOAD SUPPLIERS ERROR:", error);
       alert(
         "Unable to load suppliers:\n\n" +
           (error?.message || "Unknown error")
       );
+    }
+  }
+
+  // ====================================================
+  // LOAD SUPPLIER OUTSTANDING (SAME FORMULA AS SUPPLIERS PAGE)
+  // ====================================================
+
+  async function loadSupplierOutstanding(supplierRows: Supplier[] = suppliers) {
+    setSupplierBalancesLoading(true);
+    setSupplierBalancesError("");
+
+    try {
+      const [purchaseResult, paymentResult] = await Promise.all([
+        supabase
+          .from("purchases")
+          .select("supplier_name, total_amount, paid_amount"),
+        supabase
+          .from("supplier_payments")
+          .select("supplier_id, amount"),
+      ]);
+
+      if (purchaseResult.error) throw purchaseResult.error;
+      if (paymentResult.error) throw paymentResult.error;
+
+      const purchaseOutstandingByName = new Map<string, number>();
+      (purchaseResult.data || []).forEach((purchase: any) => {
+        const key = String(purchase.supplier_name || "")
+          .trim()
+          .toLowerCase();
+        if (!key) return;
+
+        const total = Number(purchase.total_amount || 0);
+        const paid = Number(purchase.paid_amount || 0);
+        const unpaid = Math.max(total - paid, 0);
+        purchaseOutstandingByName.set(
+          key,
+          (purchaseOutstandingByName.get(key) || 0) + unpaid
+        );
+      });
+
+      const supplierPaymentsById = new Map<string, number>();
+      (paymentResult.data || []).forEach((payment: any) => {
+        const key = String(payment.supplier_id || "");
+        if (!key) return;
+        supplierPaymentsById.set(
+          key,
+          (supplierPaymentsById.get(key) || 0) + Number(payment.amount || 0)
+        );
+      });
+
+      const nextBalances: Record<string, number> = {};
+      supplierRows.forEach((supplier) => {
+        const supplierId = String(supplier.id);
+        const supplierNameKey = String(supplier.supplier_name || "")
+          .trim()
+          .toLowerCase();
+        const opening = Number(supplier.opening_balance || 0);
+        const unpaidPurchases = purchaseOutstandingByName.get(supplierNameKey) || 0;
+        const supplierPayments = supplierPaymentsById.get(supplierId) || 0;
+
+        // Positive = payable; negative = supplier credit/advance.
+        nextBalances[supplierId] = opening + unpaidPurchases - supplierPayments;
+      });
+
+      setSupplierOutstandingById(nextBalances);
+    } catch (error: any) {
+      console.error("LOAD SUPPLIER OUTSTANDING ERROR:", error);
+      setSupplierBalancesError(
+        error?.message || "Unable to calculate supplier outstanding."
+      );
+    } finally {
+      setSupplierBalancesLoading(false);
     }
   }
 
@@ -1241,17 +1346,14 @@ export default function Purchases() {
     setPurchaseRateOverrides({});
 
     try {
-      const today = todayInput();
-      const yesterdayDate = new Date(`${today}T00:00:00`);
-      yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-
-      const year = yesterdayDate.getFullYear();
-      const month = String(yesterdayDate.getMonth() + 1).padStart(2, "0");
-      const day = String(yesterdayDate.getDate()).padStart(2, "0");
-      const yesterday = `${year}-${month}-${day}`;
+      const selectedCopyDate = copyPurchaseDate;
+      if (!selectedCopyDate) {
+        alert("Please select a purchase date to repeat.");
+        return;
+      }
 
       // If a product is already selected, repeat ONLY that selected product
-      // from yesterday. This prevents a different product from appearing.
+      // from the selected date. This prevents a different product from appearing.
       const selectedProductForCopy = selectedProductId
         ? products.find(
             (productItem) =>
@@ -1277,7 +1379,7 @@ export default function Purchases() {
             paid_amount,
             balance_amount
           `)
-          .eq("purchase_date", yesterday)
+          .eq("purchase_date", selectedCopyDate)
           .order("id", { ascending: true });
 
       if (purchaseError) {
@@ -1286,7 +1388,7 @@ export default function Purchases() {
 
       if (!yesterdayPurchases || yesterdayPurchases.length === 0) {
         alert(
-          `No purchase was found for yesterday (${formatDate(yesterday)}).`
+          `No purchase was found on ${formatDate(selectedCopyDate)}.`
         );
         return;
       }
@@ -1303,7 +1405,7 @@ export default function Purchases() {
 
       if (purchasesForCopy.length === 0) {
         alert(
-          `No purchase for supplier "${supplierName.trim()}" was found yesterday (${formatDate(yesterday)}).`
+          `No purchase for supplier "${supplierName.trim()}" was found on ${formatDate(selectedCopyDate)}.`
         );
         return;
       }
@@ -1330,13 +1432,13 @@ export default function Purchases() {
 
       if (!yesterdayItems || yesterdayItems.length === 0) {
         alert(
-          `Yesterday's purchases (${formatDate(yesterday)}) have no product items.`
+          `Selected-date purchases (${formatDate(selectedCopyDate)}) have no product items.`
         );
         return;
       }
 
-      // When a product is selected, only use yesterday's rows for that
-      // exact product_id. Otherwise, copy all products from yesterday.
+      // When a product is selected, only use selected-date rows for that
+      // exact product_id. Otherwise, copy all products from the selected date.
       const sourceItems = selectedProductForCopy
         ? (yesterdayItems as any[]).filter(
             (item) =>
@@ -1347,7 +1449,7 @@ export default function Purchases() {
 
       if (sourceItems.length === 0) {
         alert(
-          `${selectedProductForCopy?.product_name || "Selected product"} was not purchased yesterday (${formatDate(yesterday)}).`
+          `${selectedProductForCopy?.product_name || "Selected product"} was not purchased on ${formatDate(selectedCopyDate)}.`
         );
         return;
       }
@@ -1402,7 +1504,7 @@ export default function Purchases() {
 
       if (copiedRows.length === 0) {
         alert(
-          `${selectedProductForCopy?.product_name || "Yesterday's products"} could not be found in the product master.`
+          `${selectedProductForCopy?.product_name || "Selected-date products"} could not be found in the product master.`
         );
         return;
       }
@@ -1429,7 +1531,7 @@ export default function Purchases() {
         });
 
         // Keep the selected Chitale Jeevan (or selected product) visible
-        // after copying. Load its yesterday quantity and rate into the
+        // after copying. Load its selected-date quantity and rate into the
         // entry fields as well.
         setSelectedBrandId(String(selectedProductForCopy.brand_id || ""));
         setSelectedProductId(String(selectedProductForCopy.id));
@@ -1455,13 +1557,13 @@ export default function Purchases() {
 
       alert(
         selectedProductForCopy
-          ? `${selectedProductForCopy.product_name} repeated from yesterday (${formatDate(yesterday)}).`
-          : `${copiedRows.length} product(s) repeated from yesterday (${formatDate(yesterday)}).`
+          ? `${selectedProductForCopy.product_name} repeated from ${formatDate(selectedCopyDate)}.`
+          : `${copiedRows.length} product(s) repeated from ${formatDate(selectedCopyDate)}.`
       );
     } catch (error: any) {
-      console.error("COPY YESTERDAY PURCHASE ERROR:", error);
+      console.error("COPY PURCHASE ERROR:", error);
       alert(
-        "Unable to repeat yesterday's purchase:\n\n" +
+        "Unable to repeat purchase:\n\n" +
           (error?.message || "Unknown error")
       );
     } finally {
@@ -1476,6 +1578,8 @@ export default function Purchases() {
   function clearPurchase() {
 
     setEditingPurchaseId(null);
+    setEditingOriginalSupplierName("");
+    setEditingOriginalPurchaseBalance(0);
 
     const today = todayInput();
 
@@ -1601,6 +1705,27 @@ export default function Purchases() {
         )
     );
 
+  // Previous supplier position excludes the old balance of the bill being
+  // edited. The projected position then adds the new unpaid bill amount.
+  const selectedSupplierOutstanding = selectedSupplierId
+    ? Number(supplierOutstandingById[selectedSupplierId] || 0)
+    : 0;
+
+  const previousSupplierOutstanding =
+    editingPurchaseId &&
+    editingOriginalSupplierName.trim().toLowerCase() ===
+      supplierName.trim().toLowerCase()
+      ? selectedSupplierOutstanding - editingOriginalPurchaseBalance
+      : selectedSupplierOutstanding;
+
+  const projectedSupplierOutstanding =
+    previousSupplierOutstanding + purchaseBalance;
+
+  function formatSupplierPosition(value: number) {
+    if (value < -0.005) return `Credit ${money(Math.abs(value))}`;
+    return money(Math.max(value, 0));
+  }
+
   // ====================================================
   // PAYMENT METHOD CHANGE
   // ====================================================
@@ -1716,6 +1841,13 @@ export default function Purchases() {
         .filter((row): row is PurchaseRow => !!row);
 
       setEditingPurchaseId(purchase.id);
+      setEditingOriginalSupplierName(String(purchase.supplier_name || ""));
+      setEditingOriginalPurchaseBalance(
+        Math.max(
+          Number(purchase.total_amount || 0) - Number(purchase.paid_amount || 0),
+          0
+        )
+      );
       const date = String(purchase.purchase_date || "").slice(0, 10);
       setPurchaseDate(date || todayInput());
       setPurchaseDateDisplay(formatDate(date || todayInput()));
@@ -1744,6 +1876,50 @@ export default function Purchases() {
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  // ====================================================
+  // VIEW / PRINT PURCHASE BILL
+  // ====================================================
+
+  async function viewPurchaseBill(purchaseId: string) {
+    const billWindow = window.open("", "_blank");
+    if (!billWindow) {
+      alert("Please allow pop-ups to view or print the purchase bill.");
+      return;
+    }
+
+    billWindow.document.write("<p style='font-family:Arial;padding:24px'>Loading purchase bill...</p>");
+
+    try {
+      const { data: purchase, error: purchaseError } = await supabase
+        .from("purchases")
+        .select("id, purchase_date, invoice_no, supplier_name, total_amount, payment_method, paid_amount, balance_amount")
+        .eq("id", purchaseId)
+        .single();
+      if (purchaseError) throw purchaseError;
+
+      const { data: items, error: itemsError } = await supabase
+        .from("purchase_items")
+        .select("product_id, quantity, rate, amount")
+        .eq("purchase_id", purchaseId);
+      if (itemsError) throw itemsError;
+
+      const escapeHtml = (value: unknown) => String(value ?? "").replace(/[&<>\"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[char] || char));
+      const rows = (items || []).map((item: any, index: number) => {
+        const product = products.find((entry) => String(entry.id) === String(item.product_id));
+        return `<tr><td>${index + 1}</td><td>${escapeHtml(product?.product_name || "Product")}</td><td>${Number(item.quantity || 0).toLocaleString("en-IN")}</td><td>₹${Number(item.rate || 0).toFixed(2)}</td><td>₹${Number(item.amount || 0).toFixed(2)}</td></tr>`;
+      }).join("");
+
+      billWindow.document.open();
+      billWindow.document.write(`<!doctype html><html><head><title>${escapeHtml(purchase.invoice_no || "Purchase Bill")}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{font-family:Arial,sans-serif;color:#172033;margin:24px} .wrap{max-width:800px;margin:auto}.top{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #1d4ed8;padding-bottom:14px}h1{margin:0;color:#1d4ed8;font-size:24px}h2{margin:0 0 8px;font-size:18px}p{margin:6px 0}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{border:1px solid #cbd5e1;padding:10px;text-align:right}th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2){text-align:left}th{background:#eff6ff}.summary{margin:22px 0 0 auto;max-width:320px}.summary p{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #e2e8f0}.actions{margin-top:24px;text-align:right}button{background:#1d4ed8;color:white;border:0;border-radius:6px;padding:10px 18px;font-weight:bold}@media print{.actions{display:none}body{margin:10mm}}</style></head><body><div class="wrap"><div class="top"><div><h1>MANVI MILK AGENCIES</h1><p>Purchase Bill</p></div><div><h2>${escapeHtml(purchase.invoice_no || "-")}</h2><p>Date: ${escapeHtml(formatDate(purchase.purchase_date))}</p></div></div><p><strong>Supplier:</strong> ${escapeHtml(purchase.supplier_name || "-")}</p><table><thead><tr><th>#</th><th>Product</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${rows || "<tr><td colspan='5'>No items found</td></tr>"}</tbody></table><div class="summary"><p><strong>Total</strong><strong>${escapeHtml(money(purchase.total_amount))}</strong></p><p><span>Payment</span><strong>${escapeHtml(purchase.payment_method || "Credit")}</strong></p><p><span>Paid</span><strong>${escapeHtml(money(purchase.paid_amount))}</strong></p><p><span>Balance</span><strong>${escapeHtml(money(purchase.balance_amount))}</strong></p></div><div class="actions"><button onclick="window.print()">Print Bill</button></div></div></body></html>`);
+      billWindow.document.close();
+      billWindow.focus();
+    } catch (error: any) {
+      billWindow.close();
+      console.error("VIEW PURCHASE BILL ERROR:", error);
+      alert("Unable to open purchase bill:\n\n" + (error?.message || "Unknown error"));
     }
   }
 
@@ -1817,6 +1993,7 @@ export default function Purchases() {
 
       await loadProducts();
       await loadPurchaseHistory();
+      await loadSupplierOutstanding(suppliers);
 
       alert("Purchase deleted successfully.");
     } catch (error: any) {
@@ -1845,11 +2022,7 @@ export default function Purchases() {
       return;
     }
 
-    const cleanInvoice = invoiceNo.trim();
-    if (!cleanInvoice) {
-      alert("Please enter Purchase Bill / Invoice No.");
-      return;
-    }
+    const cleanInvoice = invoiceNo.trim() || generatePurchaseInvoiceNo();
 
     if (!supplierName.trim()) {
       alert("Please select a supplier.");
@@ -2033,6 +2206,7 @@ export default function Purchases() {
       clearPurchase();
       await loadProducts();
       await loadPurchaseHistory();
+      await loadSupplierOutstanding(suppliers);
       alert("Purchase updated successfully.");
     } catch (error: any) {
       console.error("UPDATE PURCHASE ERROR:", error);
@@ -2083,18 +2257,8 @@ export default function Purchases() {
     // INVOICE
     // -----------------------------------------------
 
-    const cleanInvoice =
-      invoiceNo.trim();
-
-    if (!cleanInvoice) {
-
-      alert(
-        "Please enter Purchase Bill / Invoice No."
-      );
-
-      return;
-
-    }
+    const cleanInvoice = invoiceNo.trim() || generatePurchaseInvoiceNo();
+    setInvoiceNo(cleanInvoice);
 
     // -----------------------------------------------
     // SUPPLIER
@@ -2436,6 +2600,7 @@ export default function Purchases() {
       await loadProducts();
 
       await loadPurchaseHistory();
+      await loadSupplierOutstanding(suppliers);
 
     } catch (
       error: any
@@ -2474,7 +2639,10 @@ export default function Purchases() {
       className="
         max-w-7xl
         mx-auto
-        pb-10
+        px-3
+        pb-28
+        md:px-0
+        md:pb-10
       "
     >
 
@@ -2750,46 +2918,14 @@ export default function Purchases() {
 
           </div>
 
-          {/* INVOICE */}
+          {/* AUTO GENERATED INVOICE */}
 
           <div>
-
-            <label
-              className="
-                mb-2
-                block
-                text-sm
-                font-semibold
-                text-slate-700
-              "
-            >
-              Purchase Bill /
-              Invoice No.
-            </label>
-
-            <input
-              type="text"
-              value={
-                invoiceNo
-              }
-              onChange={(e) =>
-                setInvoiceNo(
-                  e.target.value
-                )
-              }
-              placeholder="Example: PUR-00125"
-              className="
-                w-full
-                rounded-lg
-                border-2
-                border-blue-200
-                p-3
-                font-semibold
-                focus:border-blue-500
-                focus:outline-none
-              "
-            />
-
+            <label className="mb-2 block text-sm font-semibold text-slate-700">Purchase Bill Number</label>
+            <div className="w-full rounded-lg border-2 border-blue-200 bg-blue-50 p-3 font-bold text-blue-800">
+              {invoiceNo || "Auto-generated when you save"}
+            </div>
+            <p className="mt-1 text-xs text-slate-500">No manual bill number entry required.</p>
           </div>
 
           {/* SUPPLIER */}
@@ -3009,6 +3145,71 @@ export default function Purchases() {
 
           </div>
 
+        </div>
+
+        {/* SUPPLIER ACCOUNT POSITION — LIVE PREVIEW, NO LEDGER WRITE */}
+        <div className="mt-5 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-slate-50 p-4 md:p-5">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-extrabold uppercase tracking-wide text-slate-700">
+                Supplier Account Summary
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Preview only. The supplier ledger updates after the purchase is saved.
+              </p>
+            </div>
+            {editingPurchaseId && (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
+                Editing purchase
+              </span>
+            )}
+          </div>
+
+          {!selectedSupplierId ? (
+            <div className="rounded-xl border border-dashed border-blue-200 bg-white/80 p-4 text-sm font-medium text-slate-500">
+              Select a supplier to view its previous outstanding and projected balance.
+            </div>
+          ) : supplierBalancesLoading ? (
+            <div className="rounded-xl bg-white p-4 text-sm text-slate-500">
+              Loading supplier account balance...
+            </div>
+          ) : supplierBalancesError ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              Supplier balance could not be loaded: {supplierBalancesError}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <p className="text-xs font-semibold text-slate-500">Previous Supplier Balance</p>
+                <p className={`mt-2 text-xl font-extrabold ${previousSupplierOutstanding < 0 ? "text-emerald-700" : "text-slate-800"}`}>
+                  {formatSupplierPosition(previousSupplierOutstanding)}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Before this purchase
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
+                <p className="text-xs font-semibold text-orange-700">This Purchase Due</p>
+                <p className="mt-2 text-xl font-extrabold text-orange-800">
+                  {money(purchaseBalance)}
+                </p>
+                <p className="mt-1 text-[11px] text-orange-600">
+                  Total {money(totalPurchaseAmount)} − Paid {money(Number.isFinite(numericPaidAmount) ? numericPaidAmount : 0)}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-blue-200 bg-blue-700 p-4 text-white">
+                <p className="text-xs font-semibold text-blue-100">Estimated Supplier Balance</p>
+                <p className="mt-2 text-xl font-extrabold">
+                  {formatSupplierPosition(projectedSupplierOutstanding)}
+                </p>
+                <p className="mt-1 text-[11px] text-blue-100">
+                  After saving this purchase
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
       </div>
@@ -3307,12 +3508,29 @@ export default function Purchases() {
 
         ) : (
 
-          <div
-            className="
-              overflow-x-auto
-            "
-          >
+          <>
+          <div className="space-y-3 md:hidden">
+            {purchaseRows.map((row, index) => (
+              <div key={row.product_id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-400">#{index + 1} · {getBrandName(row.brand_id)}</p>
+                    <p className="break-words font-bold text-blue-700">{row.product_name}</p>
+                    <p className="text-xs text-slate-500">{row.size} {row.unit}</p>
+                  </div>
+                  <button type="button" onClick={() => removePurchaseItem(row.product_id)} className="shrink-0 rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white">Remove</button>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+                  <div><p className="text-xs text-slate-500">Quantity</p><p className="font-bold">{row.quantity}</p></div>
+                  <div><p className="text-xs text-slate-500">Rate</p><p className="font-semibold">₹{row.rate.toFixed(2)}</p></div>
+                  <div><p className="text-xs text-slate-500">Amount</p><p className="font-bold text-green-700">₹{row.amount.toFixed(2)}</p></div>
+                </div>
+              </div>
+            ))}
+            <div className="rounded-xl bg-blue-50 p-4 text-right font-bold text-blue-800">Total: {money(totalPurchaseAmount)}</div>
+          </div>
 
+          <div className="hidden overflow-x-auto md:block">
             <table
               className="
                 w-full
@@ -3586,6 +3804,7 @@ export default function Purchases() {
             </table>
 
           </div>
+          </>
 
         )}
 
@@ -3786,6 +4005,17 @@ export default function Purchases() {
             "
           >
 
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-semibold text-slate-600">Repeat purchase date</label>
+              <input
+                type="date"
+                value={copyPurchaseDate}
+                onChange={(event) => setCopyPurchaseDate(event.target.value)}
+                max={todayInput()}
+                className="rounded-lg border border-blue-200 px-3 py-3 font-semibold text-slate-700"
+              />
+            </div>
+
             <button
               type="button"
               onClick={
@@ -3806,7 +4036,7 @@ export default function Purchases() {
                 disabled:opacity-50
               "
             >
-              ↩ Copy Yesterday's Purchase
+              ↩ Repeat Selected Date Purchase
             </button>
 
             <button
@@ -3941,12 +4171,33 @@ export default function Purchases() {
 
         ) : (
 
-          <div
-            className="
-              overflow-x-auto
-            "
-          >
+          <>
+          <div className="space-y-3 md:hidden">
+            {purchaseHistory.map((purchase) => (
+              <div key={purchase.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs text-slate-500">{formatDate(purchase.purchase_date)}</p>
+                    <p className="break-all font-bold text-blue-700">{purchase.invoice_no || "-"}</p>
+                    <p className="break-words font-semibold text-slate-800">{purchase.supplier_name || "-"}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-blue-100 px-2 py-1 text-xs font-bold text-blue-700">{purchase.payment_method || "Credit"}</span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+                  <div><p className="text-xs text-slate-500">Total</p><p className="font-bold text-slate-800">{money(purchase.total_amount)}</p></div>
+                  <div><p className="text-xs text-slate-500">Paid</p><p className="font-bold text-green-700">{money(purchase.paid_amount)}</p></div>
+                  <div><p className="text-xs text-slate-500">Balance</p><p className="font-bold text-orange-700">{money(purchase.balance_amount)}</p></div>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <button type="button" onClick={() => void viewPurchaseBill(purchase.id)} disabled={loading || saving} className="rounded-lg bg-blue-600 px-2 py-2 text-xs font-bold text-white disabled:opacity-50">View Bill</button>
+                  <button type="button" onClick={() => void editPurchase(purchase.id)} disabled={loading || saving} className="rounded-lg bg-yellow-500 px-2 py-2 text-xs font-bold text-white disabled:opacity-50">Edit</button>
+                  <button type="button" onClick={() => void deletePurchase(purchase.id)} disabled={loading || saving} className="rounded-lg bg-red-600 px-2 py-2 text-xs font-bold text-white disabled:opacity-50">Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
 
+          <div className="hidden overflow-x-auto md:block">
             <table
               className="
                 w-full
@@ -4176,6 +4427,14 @@ export default function Purchases() {
                         <div className="flex justify-center gap-2">
                           <button
                             type="button"
+                            onClick={() => void viewPurchaseBill(purchase.id)}
+                            disabled={loading || saving}
+                            className="rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            View Bill
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => void editPurchase(purchase.id)}
                             disabled={loading || saving}
                             className="rounded-lg bg-yellow-500 px-3 py-2 font-semibold text-white hover:bg-yellow-600 disabled:opacity-50"
@@ -4204,6 +4463,7 @@ export default function Purchases() {
             </table>
 
           </div>
+          </>
 
         )}
 

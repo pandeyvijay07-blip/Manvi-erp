@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { QRCodeSVG } from "qrcode.react";
 import { jsPDF } from "jspdf";
 import { supabase } from "../lib/supabase";
-import CustomerRouteSearch from "../components/CustomerRouteSearch";
 import { sendAutomaticWhatsApp } from "../lib/whatsapp";
 
 // ---------------------------------------------------------
@@ -33,61 +32,6 @@ function formatDisplayDate(value: string | null | undefined) {
   return String(value);
 }
 
-function formatDateInput(value: string | null | undefined) {
-  if (!value) return "";
-
-  const datePart = String(value).slice(0, 10);
-  const [year, month, day] = datePart.split("-");
-
-  if (year && month && day) {
-    return `${day}/${month}/${year}`;
-  }
-
-  return "";
-}
-
-function parseDateInput(value: string) {
-  const digits = value.replace(/\D/g, "");
-
-  if (digits.length !== 8) {
-    return null;
-  }
-
-  const day = Number(digits.slice(0, 2));
-  const month = Number(digits.slice(2, 4));
-  const year = Number(digits.slice(4, 8));
-
-  if (month < 1 || month > 12 || day < 1 || day > 31) {
-    return null;
-  }
-
-  const date = new Date(year, month - 1, day);
-
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-
-  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
-function formatTypingDate(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 8);
-
-  if (digits.length <= 2) {
-    return digits;
-  }
-
-  if (digits.length <= 4) {
-    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  }
-
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-}
-
 function normalizeSaleDate(value: string | null | undefined) {
   if (!value) return getLocalDateString();
   return String(value).slice(0, 10);
@@ -111,6 +55,16 @@ customer_name: string;
 mobile?: string | null;
 route?: string | null;
 };
+
+const NO_ROUTE_KEY = "__MANVI_NO_ROUTE__";
+
+function getCustomerRouteKey(route?: string | null) {
+  return (route || "").trim() || NO_ROUTE_KEY;
+}
+
+function getCustomerRouteLabel(route?: string | null) {
+  return (route || "").trim() || "No Route / Unassigned";
+}
 
 type Product = {
 id: string;
@@ -174,11 +128,13 @@ const initialSaleDate = getLocalDateString();
 
 const [saleDate, setSaleDate] = useState(initialSaleDate);
 
-const [saleDateDisplay, setSaleDateDisplay] = useState(
-formatDateInput(initialSaleDate)
-);
-
 const [customerId, setCustomerId] = useState("");
+const [selectedRoute, setSelectedRoute] = useState("");
+const [salesEntryMode, setSalesEntryMode] = useState<"single" | "bulk">("single");
+const [bulkCustomerPrices, setBulkCustomerPrices] = useState<Record<string, CustomerPriceRow[]>>({});
+const [bulkQuantities, setBulkQuantities] = useState<Record<string, number>>({});
+const [bulkPricesLoading, setBulkPricesLoading] = useState(false);
+const [bulkSaving, setBulkSaving] = useState(false);
 
 const [paymentMethod, setPaymentMethod] =
 useState("Cash");
@@ -567,9 +523,9 @@ const [recentSales, setRecentSales] =
 useState<RecentSale[]>([]);
 
 /* =========================================================
-CUSTOMER SALE SEARCH
-Search any customer and show all saved sales for that
-customer with the existing Edit / Delete actions.
+SEARCH ALL SALES ACROSS ALL CUSTOMERS
+Search by customer name, mobile, route or sale ID.
+Optional date filters narrow the full sales history.
 ========================================================= */
 
 const [customerSaleSearch, setCustomerSaleSearch] =
@@ -581,11 +537,11 @@ useState("");
 const [customerSaleToDate, setCustomerSaleToDate] =
 useState("");
 
-const [searchedCustomerId, setSearchedCustomerId] =
-useState<string | null>(null);
-
-const [customerSales, setCustomerSales] =
+const [allSalesResults, setAllSalesResults] =
 useState<RecentSale[]>([]);
+
+const [allSalesSearchActive, setAllSalesSearchActive] =
+useState(false);
 
 const [searchingCustomerSales, setSearchingCustomerSales] =
 useState(false);
@@ -811,16 +767,20 @@ ascending: false,
 }
 
 /* =========================================================
-SEARCH ALL SALES FOR ONE CUSTOMER
+SEARCH ALL SALES ACROSS ALL CUSTOMERS
+Pages through the sales table so older sales are searchable,
+not just the latest 20 shown by the Recent Sales list.
 ========================================================= */
 
-async function searchCustomerSales(
-  customerIdToSearch: string,
+async function searchAllSales(
+  searchText = customerSaleSearch,
   fromDate = customerSaleFromDate,
   toDate = customerSaleToDate
 ) {
-  if (!customerIdToSearch) {
-    alert("Please select a customer.");
+  const normalizedSearch = searchText.trim().toLowerCase();
+
+  if (!normalizedSearch && !fromDate && !toDate) {
+    alert("Enter a customer name, mobile number or route, or choose a date range.");
     return;
   }
 
@@ -832,97 +792,106 @@ async function searchCustomerSales(
   try {
     setSearchingCustomerSales(true);
 
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("sales")
-      .select(`
-        id,
-        sale_date,
-        customer_id,
-        payment_method,
-        total_amount,
-        round_off,
-        paid_amount,
-        balance_amount,
-        cash_amount,
-        upi_amount
-      `)
-      .eq(
-        "customer_id",
-        customerIdToSearch
-      )
-      .gte("sale_date", fromDate || "1900-01-01")
-      .lte("sale_date", toDate || "2999-12-31")
-      .order("sale_date", {
-        ascending: false,
-      });
+    const pageSize = 500;
+    let offset = 0;
+    const allRows: any[] = [];
 
-    if (error) {
-      throw error;
-    }
+    while (true) {
+      let request = supabase
+        .from("sales")
+        .select(`
+          id,
+          sale_date,
+          customer_id,
+          payment_method,
+          total_amount,
+          round_off,
+          paid_amount,
+          balance_amount,
+          cash_amount,
+          upi_amount
+        `)
+        .order("sale_date", { ascending: false })
+        .order("id", { ascending: false });
 
-    const customer = customers.find(
-      (item) =>
-        item.id === customerIdToSearch
-    );
+      if (fromDate) {
+        request = request.gte("sale_date", fromDate);
+      }
 
-    const rows: RecentSale[] =
-      (data || []).map(
-        (sale: any) => ({
-          id: sale.id,
-          sale_date: sale.sale_date,
-          customer_id:
-            sale.customer_id,
-          customer_name:
-            customer?.customer_name ||
-            "Unknown Customer",
-          payment_method:
-            sale.payment_method ||
-            "Cash",
-          total_amount:
-            Number(
-              sale.total_amount
-            ) || 0,
-          round_off:
-            Number(
-              sale.round_off
-            ) || 0,
-          paid_amount:
-            Number(
-              sale.paid_amount
-            ) || 0,
-          balance_amount:
-            Number(
-              sale.balance_amount
-            ) || 0,
-          cash_amount:
-            Number(
-              sale.cash_amount
-            ) || 0,
-          upi_amount:
-            Number(
-              sale.upi_amount
-            ) || 0,
-        })
+      if (toDate) {
+        request = request.lte("sale_date", toDate);
+      }
+
+      const { data, error } = await request.range(
+        offset,
+        offset + pageSize - 1
       );
 
-    setSearchedCustomerId(
-      customerIdToSearch
+      if (error) {
+        throw error;
+      }
+
+      const pageRows = data || [];
+      allRows.push(...pageRows);
+
+      if (pageRows.length < pageSize) {
+        break;
+      }
+
+      offset += pageSize;
+    }
+
+    const customerLookup = new Map(
+      customers.map((customer) => [customer.id, customer])
     );
 
-    setCustomerSales(rows);
+    const mappedRows: RecentSale[] = allRows.map((sale: any) => {
+      const customer = sale.customer_id
+        ? customerLookup.get(sale.customer_id)
+        : undefined;
+
+      return {
+        id: sale.id,
+        sale_date: sale.sale_date,
+        customer_id: sale.customer_id,
+        customer_name: customer?.customer_name || (sale.customer_id ? "Unknown Customer" : "Walk-in"),
+        payment_method: sale.payment_method || "Cash",
+        total_amount: Number(sale.total_amount) || 0,
+        round_off: Number(sale.round_off) || 0,
+        paid_amount: Number(sale.paid_amount) || 0,
+        balance_amount: Number(sale.balance_amount) || 0,
+        cash_amount: Number(sale.cash_amount) || 0,
+        upi_amount: Number(sale.upi_amount) || 0,
+      };
+    });
+
+    const filteredRows = normalizedSearch
+      ? mappedRows.filter((sale) => {
+          const customer = sale.customer_id
+            ? customerLookup.get(sale.customer_id)
+            : undefined;
+
+          const searchableValues = [
+            sale.customer_name,
+            customer?.mobile || "",
+            customer?.route || "",
+            sale.id,
+            sale.payment_method,
+          ];
+
+          return searchableValues.some((value) =>
+            String(value || "").toLowerCase().includes(normalizedSearch)
+          );
+        })
+      : mappedRows;
+
+    setAllSalesResults(filteredRows);
+    setAllSalesSearchActive(true);
   } catch (error: any) {
-    console.error(
-      "Customer sales search error:",
-      error
-    );
-
+    console.error("All-customer sales search error:", error);
     alert(
-      "Unable to load customer sales:\n" +
-      (error?.message ||
-        "Unknown error")
+      "Unable to search sales:\n" +
+        (error?.message || "Unknown error")
     );
   } finally {
     setSearchingCustomerSales(false);
@@ -933,15 +902,13 @@ function clearCustomerSaleSearch() {
   setCustomerSaleSearch("");
   setCustomerSaleFromDate("");
   setCustomerSaleToDate("");
-  setSearchedCustomerId(null);
-  setCustomerSales([]);
+  setAllSalesResults([]);
+  setAllSalesSearchActive(false);
 }
 
 async function refreshCustomerSalesIfNeeded() {
-  if (searchedCustomerId) {
-    await searchCustomerSales(
-      searchedCustomerId
-    );
+  if (allSalesSearchActive) {
+    await searchAllSales();
   }
 }
 
@@ -975,6 +942,39 @@ customer.id === customerId
 customers,
 customerId,
 ]);
+
+const routeOptions = useMemo(() => {
+  const routeMap = new Map<string, string>();
+
+  customers.forEach((customer) => {
+    const key = getCustomerRouteKey(customer.route);
+    routeMap.set(key, getCustomerRouteLabel(customer.route));
+  });
+
+  return Array.from(routeMap.entries()).sort((a, b) =>
+    a[1].localeCompare(b[1], undefined, { numeric: true, sensitivity: "base" })
+  );
+}, [customers]);
+
+const filteredCustomerOptions = useMemo(() => {
+  if (!selectedRoute) return [];
+
+  return [...customers]
+    .filter((customer) => getCustomerRouteKey(customer.route) === selectedRoute)
+    .sort((a, b) =>
+      a.customer_name.localeCompare(b.customer_name, undefined, {
+        sensitivity: "base",
+      })
+    );
+}, [customers, selectedRoute]);
+
+// When an existing sale is opened for editing, automatically select
+// the route assigned to that sale's customer.
+useEffect(() => {
+  if (selectedCustomer) {
+    setSelectedRoute(getCustomerRouteKey(selectedCustomer.route));
+  }
+}, [selectedCustomer]);
 
 useEffect(() => {
   let cancelled = false;
@@ -2043,7 +2043,6 @@ setEditingSaleId(
 
 const today = getLocalDateString();
 setSaleDate(today);
-setSaleDateDisplay(formatDateInput(today));
 
 }
 
@@ -3042,7 +3041,6 @@ setLoading(true);
 
   const editDate = normalizeSaleDate(sale.sale_date);
   setSaleDate(editDate);
-  setSaleDateDisplay(formatDateInput(editDate));
 
   setCustomerId(
     sale.customer_id ||
@@ -3411,7 +3409,21 @@ async function shareSavedBillPdf(saleId: string) {
 /* =========================================================
 PRINT SAVED BILL
 ========================================================= */
-async function printSavedBill(saleId: string) {
+async function viewSavedBill(saleId: string) {
+  // Open the preview immediately from the click event so the browser
+  // does not block the new tab while the bill is being loaded.
+  const billWindow = window.open("", "_blank");
+  if (!billWindow) {
+    alert("Please allow pop-ups for MANVI ERP to view the bill.");
+    return;
+  }
+
+  billWindow.document.open();
+  billWindow.document.write(
+    "<!doctype html><html><body style='font-family:Arial;padding:24px'>Loading bill...</body></html>"
+  );
+  billWindow.document.close();
+
   try {
     setLoading(true);
 
@@ -3450,41 +3462,58 @@ async function printSavedBill(saleId: string) {
           <td>${index + 1}</td>
           <td>${safe(product?.product_name || "Product")}</td>
           <td>${Number(item.quantity || 0)}</td>
+          <td>₹ ${Number(item.rate || 0).toFixed(2)}</td>
           <td>₹ ${Number(item.amount || 0).toFixed(2)}</td>
         </tr>`;
       })
       .join("");
 
     const method = String(sale.payment_method || "Cash");
-    const splitHtml = method === "Split"
+    const splitHtml = method.trim().toLowerCase() === "split"
       ? `<div>Cash: ₹ ${Number(sale.cash_amount || 0).toFixed(2)} &nbsp; | &nbsp; UPI: ₹ ${Number(sale.upi_amount || 0).toFixed(2)}</div>`
       : "";
 
-    const printBalance = Number(sale.balance_amount || 0);
-    const printUpiUrl = buildUpiPaymentUrl(businessUpiId, printBalance);
-    const printQrDataUrl = printUpiUrl
-      ? await createUpiQrDataUrl(printUpiUrl, 180)
+    const balance = Number(sale.balance_amount || 0);
+    const upiUrl = buildUpiPaymentUrl(businessUpiId, balance);
+    const qrDataUrl = upiUrl
+      ? await createUpiQrDataUrl(upiUrl, 180)
       : null;
 
-    const html = `<!doctype html><html><head><title>MANVI BILL</title>
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>MANVI BILL</title>
       <style>
-        body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{text-align:center;margin:0 0 4px}h2{text-align:center;margin:0 0 18px;font-size:16px}.meta{margin-bottom:16px;line-height:1.7}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px;text-align:left}th{background:#f1f5f9}td:nth-child(1),td:nth-child(3){text-align:center}td:nth-child(4){text-align:right}.totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}.grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}.upi{text-align:center;margin-top:22px;border-top:1px solid #ccc;padding-top:16px}.upi img{width:150px;height:150px;display:block;margin:10px auto}.footer{text-align:center;margin-top:28px;font-size:13px;color:#555}@media print{body{padding:8px}}
+        body{font-family:Arial,sans-serif;padding:24px;color:#111;max-width:900px;margin:0 auto}
+        .toolbar{display:flex;justify-content:center;gap:10px;margin:0 0 22px}
+        .toolbar button{border:0;border-radius:8px;padding:10px 18px;background:#174b91;color:#fff;font-weight:bold;cursor:pointer}
+        .toolbar button.secondary{background:#64748b}
+        h1{text-align:center;margin:0 0 4px}h2{text-align:center;margin:0 0 18px;font-size:16px}
+        .meta{margin-bottom:16px;line-height:1.7}
+        table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:8px;text-align:left}
+        th{background:#f1f5f9}td:nth-child(1),td:nth-child(3){text-align:center}td:nth-child(4),td:nth-child(5){text-align:right}
+        .totals{margin-top:18px;margin-left:auto;width:300px;line-height:1.8}.grand{font-size:18px;font-weight:bold;border-top:2px solid #111;padding-top:6px}
+        .upi{text-align:center;margin-top:22px;border-top:1px solid #ccc;padding-top:16px}.upi img{width:150px;height:150px;display:block;margin:10px auto}
+        .footer{text-align:center;margin-top:28px;font-size:13px;color:#555}
+        @media print{body{padding:8px}.toolbar{display:none}}
       </style></head><body>
+      <div class="toolbar"><button onclick="window.print()">Print Bill</button><button class="secondary" onclick="window.close()">Close</button></div>
       <h1>MANVI MILK AGENCIES</h1><h2>BILL</h2>
       <div class="meta"><strong>Customer:</strong> ${safe(customerName)}<br><strong>Date:</strong> ${safe(formatDisplayDate(sale.sale_date))}<br><strong>Payment:</strong> ${safe(method)} ${splitHtml}</div>
-      <table><thead><tr><th>#</th><th>Product</th><th>Qty</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>#</th><th>Product</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No sale items found.</td></tr>'}</tbody></table>
       <div class="totals"><div>Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div><div>Paid: ₹ ${Number(sale.paid_amount || 0).toFixed(2)}</div><div>Balance: ₹ ${Number(sale.balance_amount || 0).toFixed(2)}</div><div class="grand">Net Total: ₹ ${Number(sale.total_amount || 0).toFixed(2)}</div></div>
-      ${printQrDataUrl ? `<div class="upi"><div><strong>SCAN &amp; PAY VIA UPI</strong></div><img src="${printQrDataUrl}" alt="UPI QR"/><div>UPI ID: ${safe(businessUpiId)}</div></div>` : ""}
+      ${qrDataUrl ? `<div class="upi"><div><strong>SCAN &amp; PAY VIA UPI</strong></div><img src="${qrDataUrl}" alt="UPI QR"/><div>UPI ID: ${safe(businessUpiId)}</div></div>` : ""}
       <div class="footer">Thank you for your business.</div>
-      <script>window.onload=function(){window.print();}</script></body></html>`;
+      </body></html>`;
 
-    const printWindow = window.open("", "_blank", "noopener,noreferrer");
-    if (!printWindow) throw new Error("Popup blocked. Please allow popups for MANVI ERP.");
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
+    billWindow.document.open();
+    billWindow.document.write(html);
+    billWindow.document.close();
+    billWindow.focus();
   } catch (error: any) {
-    console.error("Print bill error:", error);
+    console.error("View bill error:", error);
+    billWindow.document.open();
+    billWindow.document.write(
+      `<!doctype html><html><body style="font-family:Arial;padding:24px"><h2>Unable to load bill</h2><p>${String(error?.message || "Unknown error")}</p></body></html>`
+    );
+    billWindow.document.close();
     alert("Unable to open bill:\n" + (error?.message || "Unknown error"));
   } finally {
     setLoading(false);
@@ -3688,6 +3717,214 @@ try {
 }
 
 /* =========================================================
+ROUTE-WISE BULK SALE
+Each customer is saved as a separate credit sale. Existing
+single-customer sale/payment flow remains unchanged.
+========================================================= */
+async function loadBulkRoutePrices() {
+  if (!selectedRoute) {
+    alert("Select a route first.");
+    return;
+  }
+  try {
+    setBulkPricesLoading(true);
+    const routeCustomerIds = filteredCustomerOptions.map((c) => c.id);
+    if (!routeCustomerIds.length) {
+      setBulkCustomerPrices({});
+      return;
+    }
+    const { data, error } = await supabase
+      .from("customer_prices")
+      .select("id, customer_id, product_id, selling_rate")
+      .in("customer_id", routeCustomerIds);
+    if (error) throw error;
+    const grouped: Record<string, CustomerPriceRow[]> = {};
+    (data || []).forEach((row: any) => {
+      if (!grouped[row.customer_id]) grouped[row.customer_id] = [];
+      grouped[row.customer_id].push({
+        id: String(row.id),
+        customer_id: String(row.customer_id),
+        product_id: String(row.product_id),
+        selling_rate: Number(row.selling_rate) || 0,
+      });
+    });
+    setBulkCustomerPrices(grouped);
+    setBulkQuantities({});
+  } catch (error: any) {
+    console.error("Bulk route prices error:", error);
+    alert("Unable to load route customer products:\n" + (error?.message || "Unknown error"));
+  } finally {
+    setBulkPricesLoading(false);
+  }
+}
+
+function getBulkKey(customerIdValue: string, productIdValue: string) {
+  return `${customerIdValue}::${productIdValue}`;
+}
+
+async function saveRouteBulkSale() {
+  if (bulkSaving || saveInProgressRef.current) return;
+  if (!selectedRoute || filteredCustomerOptions.length === 0) {
+    alert("Select a route with customers first.");
+    return;
+  }
+
+  const prepared = filteredCustomerOptions.map((customer) => {
+    const lines = (bulkCustomerPrices[customer.id] || [])
+      .map((price) => {
+        const product = products.find((p) => p.id === price.product_id);
+        const qty = Number(bulkQuantities[getBulkKey(customer.id, price.product_id)] || 0);
+        if (!product || qty <= 0) return null;
+        const rate = Number(price.selling_rate) || 0;
+        return {
+          product_id: product.id,
+          quantity: qty,
+          rate,
+          amount: qty * rate,
+          cost_rate: Number(product.purchase_rate || 0),
+          product_name: product.product_name,
+        };
+      })
+      .filter((line): line is NonNullable<typeof line> => line !== null);
+    return { customer, lines, total: lines.reduce((sum, line) => sum + line.amount, 0) };
+  }).filter((row) => row.lines.length > 0);
+
+  if (!prepared.length) {
+    alert("Enter quantity for at least one customer product.");
+    return;
+  }
+
+  const totalQtyByProduct = new Map<string, number>();
+  prepared.forEach((row) => row.lines.forEach((line) => {
+    totalQtyByProduct.set(line.product_id, (totalQtyByProduct.get(line.product_id) || 0) + line.quantity);
+  }));
+  for (const [productIdValue, requiredQty] of totalQtyByProduct) {
+    const product = products.find((p) => p.id === productIdValue);
+    const available = Number(product?.stock_qty || 0);
+    if (!product || requiredQty > available) {
+      alert(`Insufficient stock for ${product?.product_name || "a product"}.\nAvailable: ${available}\nRequired for this route: ${requiredQty}`);
+      return;
+    }
+  }
+
+  const confirmText = prepared.map((row) => `${row.customer.customer_name}: ₹${row.total.toFixed(2)}`).join("\n");
+  if (!window.confirm(`Save ${prepared.length} customer sale(s) for ${getCustomerRouteLabel(filteredCustomerOptions[0]?.route)} on ${formatDisplayDate(saleDate)}?\n\n${confirmText}\n\nBulk sales will be saved as CREDIT (₹0 paid). Continue?`)) return;
+
+  const createdSaleIds: string[] = [];
+  const appliedStockProductIds: string[] = [];
+  try {
+    setBulkSaving(true);
+    saveInProgressRef.current = true;
+
+    // Stop duplicate same-customer, same-date route entries before any write.
+    const customerIds = prepared.map((row) => row.customer.id);
+    const { data: existingSales, error: duplicateError } = await supabase
+      .from("sales")
+      .select("id, customer_id")
+      .eq("sale_date", saleDate)
+      .in("customer_id", customerIds);
+    if (duplicateError) throw duplicateError;
+    if ((existingSales || []).length) {
+      const duplicateIds = new Set((existingSales || []).map((sale: any) => String(sale.customer_id)));
+      const duplicateNames = prepared.filter((row) => duplicateIds.has(row.customer.id)).map((row) => row.customer.customer_name);
+      throw new Error(`Sales already exist for this date. No bulk sales were saved.\n\n${duplicateNames.join(", ")}\n\nUse Search All Sales to edit an existing sale instead of creating a duplicate.`);
+    }
+
+    const savedCustomerIds: string[] = [];
+    const stockDeductions = new Map<string, number>();
+    for (const row of prepared) {
+      const { data: sale, error: saleError } = await supabase
+        .from("sales")
+        .insert({
+          sale_date: saleDate,
+          customer_id: row.customer.id,
+          payment_method: "Credit",
+          total_amount: row.total,
+          round_off: 0,
+          paid_amount: 0,
+          balance_amount: row.total,
+          cash_amount: 0,
+          upi_amount: 0,
+        })
+        .select("id")
+        .single();
+      if (saleError) throw saleError;
+      if (!sale?.id) throw new Error(`Sale header was not created for ${row.customer.customer_name}.`);
+      createdSaleIds.push(String(sale.id));
+
+      const itemsToInsert = row.lines.map((line) => ({
+        sale_id: sale.id,
+        product_id: line.product_id,
+        quantity: line.quantity,
+        rate: line.rate,
+        amount: line.amount,
+        cost_rate: line.cost_rate,
+      }));
+      const { error: itemsError } = await supabase.from("sale_items").insert(itemsToInsert);
+      if (itemsError) {
+        await supabase.from("sale_items").delete().eq("sale_id", sale.id);
+        await supabase.from("sales").delete().eq("id", sale.id);
+        throw itemsError;
+      }
+      const { data: verifyItems, error: verifyError } = await supabase
+        .from("sale_items")
+        .select("id, product_id, quantity, amount")
+        .eq("sale_id", sale.id);
+      if (verifyError) throw verifyError;
+      const verifiedAmount = (verifyItems || []).reduce((sum: number, item: any) => sum + Number(item.amount || 0), 0);
+      if ((verifyItems || []).length !== row.lines.length || Math.abs(verifiedAmount - row.total) >= 0.01) {
+        await supabase.from("sale_items").delete().eq("sale_id", sale.id);
+        await supabase.from("sales").delete().eq("id", sale.id);
+        throw new Error(`Verification failed for ${row.customer.customer_name}. That sale was cancelled.`);
+      }
+      savedCustomerIds.push(row.customer.id);
+      row.lines.forEach((line) => stockDeductions.set(line.product_id, (stockDeductions.get(line.product_id) || 0) + line.quantity));
+    }
+
+    // Deduct stock once per product, using the validated route total.
+    for (const [productIdValue, deduction] of stockDeductions) {
+      const product = products.find((p) => p.id === productIdValue);
+      if (!product) throw new Error("A product disappeared while updating stock.");
+      const { error: stockError } = await supabase
+        .from("products")
+        .update({ stock_qty: Number(product.stock_qty || 0) - deduction })
+        .eq("id", productIdValue);
+      if (stockError) throw stockError;
+      appliedStockProductIds.push(productIdValue);
+    }
+
+    for (const customerKey of savedCustomerIds) {
+      await rebuildCustomerPaymentState(customerKey);
+    }
+
+    alert(`Route bulk sale saved successfully.\nCustomers: ${prepared.length}\nTotal: ₹${prepared.reduce((sum, row) => sum + row.total, 0).toFixed(2)}\nPayment status: Credit / unpaid.`);
+    setBulkQuantities({});
+    await loadData();
+    await loadRecentSales();
+  } catch (error: any) {
+    console.error("Route bulk sale error:", error);
+    // Roll back any route sales and stock changes made by this batch.
+    for (const productIdValue of appliedStockProductIds) {
+      const product = products.find((p) => p.id === productIdValue);
+      if (product) {
+        await supabase.from("products").update({ stock_qty: Number(product.stock_qty || 0) }).eq("id", productIdValue);
+      }
+    }
+    for (const saleIdValue of createdSaleIds) {
+      await supabase.from("sale_items").delete().eq("sale_id", saleIdValue);
+      await supabase.from("sales").delete().eq("id", saleIdValue);
+    }
+    for (const row of prepared) {
+      try { await rebuildCustomerPaymentState(row.customer.id); } catch (rebuildError) { console.error("Bulk rollback payment rebuild error:", rebuildError); }
+    }
+    alert("Bulk Sale Error:\n" + (error?.message || "Unable to save route bulk sale."));
+  } finally {
+    saveInProgressRef.current = false;
+    setBulkSaving(false);
+  }
+}
+
+/* =========================================================
 LOADING SCREEN
 ========================================================= */
 
@@ -3710,10 +3947,9 @@ Sales
 SALES TABLE DATA
 ========================================================= */
 
-const salesTableRows =
-  searchedCustomerId
-    ? customerSales
-    : recentSales;
+const salesTableRows = allSalesSearchActive
+  ? allSalesResults
+  : recentSales;
 
 /* =========================================================
 RENDER
@@ -3728,7 +3964,7 @@ return (
 
   <div>
     <h1 className="text-3xl font-bold text-blue-700">
-      Sales Entry — Fast Customer Products TEST
+      Sales Entry
     </h1>
 
     <p className="text-gray-600 mt-1">
@@ -3738,11 +3974,74 @@ return (
     </p>
   </div>
 
+  <div className="flex flex-wrap gap-3 rounded-2xl bg-slate-100 p-2">
+    <button type="button" onClick={() => setSalesEntryMode("single")} className={`rounded-xl px-5 py-3 font-bold ${salesEntryMode === "single" ? "bg-blue-600 text-white shadow" : "bg-white text-slate-700"}`}>
+      Single Customer Sale
+    </button>
+    <button type="button" onClick={() => { setSalesEntryMode("bulk"); if (selectedRoute) void loadBulkRoutePrices(); }} className={`rounded-xl px-5 py-3 font-bold ${salesEntryMode === "bulk" ? "bg-blue-600 text-white shadow" : "bg-white text-slate-700"}`}>
+      Route-wise Bulk Sale
+    </button>
+  </div>
+
+  {salesEntryMode === "bulk" && (
+    <div className="rounded-2xl border border-blue-200 bg-white p-5 shadow space-y-4">
+      <div>
+        <h2 className="text-2xl font-bold text-blue-700">Route-wise Bulk Sale</h2>
+        <p className="mt-1 text-sm text-slate-600">Select a route and enter quantities for each customer's assigned products. Each customer gets a separate credit sale.</p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+        <div>
+          <label className="mb-2 block font-semibold">Route</label>
+          <select value={selectedRoute} onChange={(e) => { setSelectedRoute(e.target.value); setBulkCustomerPrices({}); setBulkQuantities({}); }} className="w-full rounded-xl border px-4 py-3">
+            <option value="">Choose Route</option>
+            {routeOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </div>
+        <button type="button" disabled={!selectedRoute || bulkPricesLoading || bulkSaving} onClick={() => void loadBulkRoutePrices()} className="rounded-xl bg-blue-600 px-5 py-3 font-bold text-white disabled:bg-slate-400">
+          {bulkPricesLoading ? "Loading..." : "Load Route Products"}
+        </button>
+      </div>
+      {selectedRoute && <div className="rounded-xl bg-blue-50 p-3 text-sm font-semibold text-blue-800">{filteredCustomerOptions.length} customers on {getCustomerRouteLabel(filteredCustomerOptions[0]?.route)} · Sale date: {formatDisplayDate(saleDate)}</div>}
+      {bulkPricesLoading ? <p className="p-4 text-slate-500">Loading customer-specific product rates...</p> : Object.keys(bulkCustomerPrices).length === 0 ? <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">Select a route and tap Load Route Products.</p> : (
+        <div className="space-y-4">
+          {filteredCustomerOptions.map((customer) => {
+            const rows = (bulkCustomerPrices[customer.id] || []).filter((price) => products.some((product) => product.id === price.product_id));
+            const customerTotal = rows.reduce((sum, price) => {
+              const qty = Number(bulkQuantities[getBulkKey(customer.id, price.product_id)] || 0);
+              return sum + qty * Number(price.selling_rate || 0);
+            }, 0);
+            return <div key={customer.id} className="overflow-hidden rounded-xl border">
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 px-4 py-3">
+                <div><div className="font-bold text-slate-800">{customer.customer_name}</div><div className="text-xs text-slate-500">{customer.mobile || "No mobile"} · {rows.length} assigned products</div></div>
+                <div className="text-lg font-bold text-blue-700">₹{customerTotal.toFixed(2)}</div>
+              </div>
+              {rows.length === 0 ? <p className="p-4 text-sm text-amber-700">No customer-specific products/rates assigned.</p> : <div className="divide-y">
+                {rows.map((price) => {
+                  const product = products.find((p) => p.id === price.product_id)!;
+                  const qty = Number(bulkQuantities[getBulkKey(customer.id, price.product_id)] || 0);
+                  return <div key={price.product_id} className="grid grid-cols-[minmax(0,1fr)_76px_90px] items-center gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_100px_110px]">
+                    <div className="min-w-0"><div className="truncate font-semibold">{product.product_name}</div><div className="text-xs text-slate-500">{getPackDisplay(product.pack_size)} · Rate ₹{Number(price.selling_rate || 0).toFixed(2)} · Stock {Number(product.stock_qty || 0)}</div></div>
+                    <input aria-label={`${customer.customer_name} ${product.product_name} quantity`} type="number" min="0" step="0.01" value={qty || ""} placeholder="Qty" onChange={(e) => setBulkQuantities((old) => ({ ...old, [getBulkKey(customer.id, product.id)]: Math.max(0, Number(e.target.value) || 0) }))} className="w-full rounded-lg border px-2 py-2 text-center font-bold" />
+                    <div className="text-right font-semibold">₹{(qty * Number(price.selling_rate || 0)).toFixed(2)}</div>
+                  </div>;
+                })}
+              </div>}
+            </div>;
+          })}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-green-50 p-4">
+            <div><div className="text-sm text-green-800">Route total</div><div className="text-2xl font-bold text-green-700">₹{filteredCustomerOptions.reduce((sum, customer) => sum + (bulkCustomerPrices[customer.id] || []).reduce((sub, price) => sub + Number(bulkQuantities[getBulkKey(customer.id, price.product_id)] || 0) * Number(price.selling_rate || 0), 0), 0).toFixed(2)}</div><div className="text-xs text-green-700">Only customers with entered quantities will be saved. All bulk bills are marked Credit.</div></div>
+            <button type="button" disabled={bulkSaving || loading || bulkPricesLoading} onClick={() => void saveRouteBulkSale()} className="rounded-xl bg-green-600 px-7 py-3 font-bold text-white disabled:bg-slate-400">{bulkSaving ? "Saving Route Sales..." : "Save All Route Sales"}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )}
+
   {/* =====================================================
       SALE FORM
   ===================================================== */}
 
-  <div className="bg-white rounded-2xl shadow p-6">
+  {salesEntryMode === "single" && <div className="bg-white rounded-2xl shadow p-6">
 
     {/* ===================================================
         SALE HEADER
@@ -3758,52 +4057,110 @@ return (
         </label>
 
         <input
-          type="text"
-          inputMode="numeric"
-          value={saleDateDisplay}
-          onChange={(e) => {
-            const formatted = formatTypingDate(e.target.value);
-            setSaleDateDisplay(formatted);
-
-            const parsed = parseDateInput(formatted);
-            if (parsed) {
-              setSaleDate(parsed);
+          type="date"
+          value={saleDate}
+          onChange={(event) => {
+            const selectedDate = event.target.value;
+            if (selectedDate) {
+              setSaleDate(selectedDate);
             }
           }}
-          onBlur={() => {
-            const parsed = parseDateInput(saleDateDisplay);
-
-            if (parsed) {
-              setSaleDate(parsed);
-              setSaleDateDisplay(formatDateInput(parsed));
-            } else {
-              setSaleDateDisplay(formatDateInput(saleDate));
-            }
-          }}
-          placeholder="DD/MM/YYYY"
-          maxLength={10}
+          aria-label="Select sales date"
           className="w-full border rounded-xl px-4 py-3"
         />
 
         <p className="text-sm text-gray-500 mt-1">
-          Enter date as DD/MM/YYYY
+          Select the sales date from the calendar.
         </p>
       </div>
 
-      {/* CUSTOMER + ROUTE SEARCH */}
+      {/* ROUTE FIRST, THEN CUSTOMER */}
 
-      <CustomerRouteSearch
-        customers={customers}
-        value={customerId}
-        onChange={(value) => {
-          setCustomerId(value);
-          setEditingSaleId(null);
-          setEditingItemIndex(null);
-          setSaleItems([]);
-        }}
-        disabled={loading || loadingData}
-        label="Customer / Route"
-      />
+      <div className="grid grid-cols-1 gap-3 md:col-span-3 sm:grid-cols-2">
+        <div>
+          <label className="mb-2 block font-semibold text-slate-700">
+            1. Select Route
+          </label>
+          <select
+            value={selectedRoute}
+            onChange={(event) => {
+              const nextRoute = event.target.value;
+              setSelectedRoute(nextRoute);
+
+              const currentCustomer = customers.find(
+                (customer) => customer.id === customerId
+              );
+              if (
+                currentCustomer &&
+                getCustomerRouteKey(currentCustomer.route) !== nextRoute
+              ) {
+                setCustomerId("");
+                setSaleItems([]);
+                setEditingSaleId(null);
+                setEditingItemIndex(null);
+              }
+            }}
+            disabled={loading || loadingData || routeOptions.length === 0}
+            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-4 text-base outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+          >
+            <option value="">Choose Route First</option>
+            {routeOptions.map(([routeKey, routeLabel]) => (
+              <option key={routeKey} value={routeKey}>
+                {routeLabel}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-500">
+            Select the delivery route to display its customers.
+          </p>
+        </div>
+
+        <div>
+          <label className="mb-2 block font-semibold text-slate-700">
+            2. Select Customer
+          </label>
+          <select
+            value={customerId}
+            onChange={(event) => {
+              setCustomerId(event.target.value);
+              setEditingSaleId(null);
+              setEditingItemIndex(null);
+              setSaleItems([]);
+            }}
+            disabled={loading || loadingData || !selectedRoute || filteredCustomerOptions.length === 0}
+            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-4 text-base outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+          >
+            <option value="">
+              {!selectedRoute
+                ? "Select a route first"
+                : filteredCustomerOptions.length > 0
+                  ? "Choose Customer"
+                  : "No customers on this route"}
+            </option>
+            {filteredCustomerOptions.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.customer_name}
+                {customer.mobile ? ` — ${customer.mobile}` : ""}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-500">
+            {selectedRoute
+              ? `${filteredCustomerOptions.length} customer${filteredCustomerOptions.length === 1 ? "" : "s"} on this route.`
+              : `${customers.length} customers available across all routes.`}
+          </p>
+        </div>
+
+        {selectedCustomer && (
+          <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-900 sm:col-span-2">
+            <span className="font-semibold">Selected:</span>{" "}
+            {selectedCustomer.customer_name}
+            <span className="ml-2 text-blue-700">
+              Route: {getCustomerRouteLabel(selectedCustomer.route)}
+            </span>
+          </div>
+        )}
+      </div>
 
       {customerId && (
         <div className="md:col-span-4">
@@ -4569,88 +4926,42 @@ return (
 
     </div>
 
-  </div>
+  </div>}
 
   {/* =====================================================
-      CUSTOMER SALE SEARCH
+      SEARCH ALL SALES ACROSS ALL CUSTOMERS
   ===================================================== */}
 
   <div className="bg-white rounded-2xl shadow p-6">
     <div className="mb-4">
       <h2 className="text-2xl font-bold text-blue-700">
-        Search Customer Sales
+        Search All Sales
       </h2>
-
       <p className="text-gray-500 mt-1">
-        Search a customer and optionally select a date or date range to see saved sales. Edit or Delete any sale.
+        Search sales for every customer by name, mobile number, route or sale ID. You do not need to select a route or customer.
       </p>
     </div>
 
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-      <div className="relative">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+      <div className="lg:col-span-2">
+        <label className="block text-sm font-semibold text-gray-700 mb-1">
+          Customer / Sale Search
+        </label>
         <input
-          type="text"
+          type="search"
           value={customerSaleSearch}
-          onChange={(e) => {
-            setCustomerSaleSearch(
-              e.target.value
-            );
-            setSearchedCustomerId(null);
+          onChange={(e) => setCustomerSaleSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void searchAllSales();
+            }
           }}
-          placeholder="Search customer name..."
+          placeholder="Customer name, mobile, route or sale ID..."
           className="w-full border rounded-xl px-4 py-3"
-          disabled={
-            searchingCustomerSales ||
-            loading
-          }
+          autoComplete="off"
+          disabled={searchingCustomerSales || loading}
         />
-
-        {customerSaleSearch.trim() && !searchedCustomerId && (
-          <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-xl shadow-lg max-h-60 overflow-y-auto">
-            {customers
-              .filter((customer) =>
-                customer.customer_name
-                  .toLowerCase()
-                  .includes(
-                    customerSaleSearch
-                      .trim()
-                      .toLowerCase()
-                  )
-              )
-              .slice(0, 10)
-              .map((customer) => (
-                <button
-                  key={customer.id}
-                  type="button"
-                  onClick={() => {
-                    setCustomerSaleSearch(
-                      customer.customer_name
-                    );
-                    setSearchedCustomerId(
-                      customer.id
-                    );
-                  }}
-                  className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b last:border-b-0"
-                >
-                  {customer.customer_name}
-                </button>
-              ))}
-
-            {customers.filter((customer) =>
-              customer.customer_name
-                .toLowerCase()
-                .includes(
-                  customerSaleSearch
-                    .trim()
-                    .toLowerCase()
-                )
-            ).length === 0 && (
-              <div className="px-4 py-3 text-gray-500">
-                No customer found.
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       <div>
@@ -4679,61 +4990,37 @@ return (
         />
       </div>
 
-      <button
-        type="button"
-        disabled={
-          loading ||
-          loadingData ||
-          searchingCustomerSales ||
-          !searchedCustomerId
-        }
-        onClick={() => {
-          if (searchedCustomerId) {
-            void searchCustomerSales(
-              searchedCustomerId
-            );
-          }
-        }}
-        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold disabled:bg-gray-400"
-      >
-        {searchingCustomerSales
-          ? "Searching..."
-          : "Search Sales"}
-      </button>
-
-      <button
-        type="button"
-        disabled={
-          loading ||
-          searchingCustomerSales
-        }
-        onClick={clearCustomerSaleSearch}
-        className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-xl font-bold disabled:bg-gray-400"
-      >
-        Clear
-      </button>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={loading || loadingData || searchingCustomerSales}
+          onClick={() => void searchAllSales()}
+          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-xl font-bold disabled:bg-gray-400"
+        >
+          {searchingCustomerSales ? "Searching..." : "Search"}
+        </button>
+        <button
+          type="button"
+          disabled={searchingCustomerSales || loading}
+          onClick={clearCustomerSaleSearch}
+          className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-xl font-bold disabled:bg-gray-400"
+        >
+          Clear
+        </button>
+      </div>
     </div>
 
-    {searchedCustomerId && (
-      <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3">
+    {allSalesSearchActive && (
+      <div className="mt-4 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-900">
         <span className="font-semibold">
-          Showing all sales for:{" "}
+          {allSalesResults.length} matching sale{allSalesResults.length === 1 ? "" : "s"}
         </span>
-        {customers.find(
-          (customer) =>
-            customer.id ===
-            searchedCustomerId
-        )?.customer_name || "Customer"}
-        <span className="ml-2 text-sm text-gray-600">
-          ({customerSales.length} sale
-          {customerSales.length === 1
-            ? ""
-            : "s"})
-        </span>
+        <span> found across all customers.</span>
+        {customerSaleSearch.trim() && (
+          <span> Search: “{customerSaleSearch.trim()}”.</span>
+        )}
         {(customerSaleFromDate || customerSaleToDate) && (
-          <span className="block mt-1 text-sm text-gray-600">
-            Date: {customerSaleFromDate || "All"} to {customerSaleToDate || "All"}
-          </span>
+          <span> Date: {customerSaleFromDate || "All dates"} to {customerSaleToDate || "All dates"}.</span>
         )}
       </div>
     )}
@@ -4749,25 +5036,23 @@ return (
 
       <div>
         <h2 className="text-2xl font-bold text-blue-700">
-          {searchedCustomerId
-            ? "Customer Sales"
+          {allSalesSearchActive
+            ? "Sales Search Results"
             : "Recent Sales"}
         </h2>
 
         <p className="text-gray-500">
-          {searchedCustomerId
-            ? "All saved sales for the selected customer. Edit or Delete any sale."
-            : "Verify and correct previous sales."}
+          {allSalesSearchActive
+            ? "Matching saved sales across all customers. View, edit or delete any sale."
+            : "Latest 20 sales across all customers. Use Search All Sales above to find older sales."}
         </p>
       </div>
 
       <button
         type="button"
         onClick={() => {
-          if (searchedCustomerId) {
-            void searchCustomerSales(
-              searchedCustomerId
-            );
+          if (allSalesSearchActive) {
+            void searchAllSales();
           } else {
             void loadRecentSales();
           }
@@ -4828,8 +5113,8 @@ return (
                 colSpan={7}
                 className="p-8 text-center text-gray-500"
               >
-                {searchedCustomerId
-                  ? "No sales found for this customer."
+                {allSalesSearchActive
+                  ? "No sales match this search across all customers."
                   : "No recent sales found."}
               </td>
             </tr>
@@ -4892,7 +5177,16 @@ return (
 
                   <td className="p-3">
 
-                    <div className="flex justify-center gap-2">
+                    <div className="flex justify-center gap-2 flex-wrap">
+
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void viewSavedBill(sale.id)}
+                        className="bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      >
+                        👁 View Bill
+                      </button>
 
                       <button
                         type="button"

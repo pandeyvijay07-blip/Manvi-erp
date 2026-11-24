@@ -1,0 +1,159 @@
+/*
+ * MANVI ERP V30 — SALES PAGE
+ * Presentation-only styling. Existing Sales.tsx calculations,
+ * Supabase queries, save/edit/delete and WhatsApp flows are preserved.
+ */
+
+main.manvi-content {
+  min-width: 0;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) {
+  max-width: 1560px;
+  margin-inline: auto;
+  color: #172033;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) h1 {
+  color: #102a56;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) h2 {
+  color: #17345f;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) .bg-white {
+  border-color: #e1e8f2;
+  border-radius: 18px;
+  box-shadow: 0 7px 24px rgba(20, 45, 85, 0.055);
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) label {
+  display: inline-block;
+  margin-bottom: 5px;
+  color: #40516b;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) input,
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) select,
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) textarea {
+  min-height: 44px;
+  border: 1px solid #d5deeb;
+  border-radius: 10px;
+  background-color: #fff;
+  color: #172033;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) input:focus,
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) select:focus,
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) textarea:focus {
+  border-color: #2870d8;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(40, 112, 216, .13);
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) button {
+  border-radius: 10px;
+  font-weight: 650;
+  transition: box-shadow .15s ease, filter .15s ease, transform .15s ease;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) button:not(:disabled):hover {
+  filter: brightness(.97);
+  box-shadow: 0 4px 12px rgba(20, 45, 85, .12);
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) button:focus-visible {
+  outline: 3px solid rgba(40, 112, 216, .25);
+  outline-offset: 2px;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #174b91;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) tbody tr:nth-child(even) {
+  background: #f8fafd;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) tbody tr:hover {
+  background: #eef5ff;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) td {
+  border-bottom: 1px solid #e9eef5;
+  vertical-align: middle;
+}
+
+main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) .overflow-x-auto {
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 900px) {
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) {
+    padding-bottom: 24px;
+  }
+
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) .bg-white {
+    border-radius: 15px;
+  }
+}
+
+@media (max-width: 640px) {
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) {
+    width: 100%;
+    padding-inline: 0;
+  }
+
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) .bg-white {
+    padding: 13px !important;
+    border-radius: 14px;
+  }
+
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) h1 {
+    font-size: 1.35rem;
+  }
+
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) input,
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) select,
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) textarea {
+    min-height: 46px;
+    font-size: 16px;
+  }
+
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) button {
+    min-height: 42px;
+  }
+
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) table {
+    min-width: 760px;
+    font-size: 13px;
+  }
+
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) th,
+  main.manvi-content > div:has(input[placeholder="DD/MM/YYYY"]) td {
+    padding: 10px 9px;
+  }
+}

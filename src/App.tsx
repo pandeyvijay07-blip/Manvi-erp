@@ -32,7 +32,6 @@ import WalkInSales from "./pages/WalkInSales";
 import Collections from "./pages/Collections";
 import Expenses from "./pages/Expenses";
 import PersonalExpenses from "./pages/PersonalExpenses";
-import CashBook from "./pages/CashBook";
 
 import Reports from "./pages/Reports";
 import CustomerLedger from "./pages/CustomerLedger";
@@ -65,11 +64,9 @@ type CurrentUser = {
 // =====================================================
 
 function ProtectedApp() {
-  const [loading, setLoading] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
 
-  const [loggedIn, setLoggedIn] =
-    useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
 
   const [currentUser, setCurrentUser] =
     useState<CurrentUser | null>(null);
@@ -82,15 +79,10 @@ function ProtectedApp() {
     try {
       setLoading(true);
 
-      // -----------------------------------------------
-      // AUTH SESSION
-      // -----------------------------------------------
-
       const {
         data: sessionData,
         error: sessionError,
-      } =
-        await supabase.auth.getSession();
+      } = await supabase.auth.getSession();
 
       if (sessionError) {
         console.error(
@@ -104,8 +96,7 @@ function ProtectedApp() {
         return;
       }
 
-      const authUser =
-        sessionData.session?.user;
+      const authUser = sessionData.session?.user;
 
       if (!authUser) {
         setLoggedIn(false);
@@ -116,40 +107,28 @@ function ProtectedApp() {
 
       setLoggedIn(true);
 
-      // -----------------------------------------------
       // LOAD USER PROFILE
-      // -----------------------------------------------
 
       const {
         data: profile,
         error: profileError,
-      } =
-        await supabase
-          .from("users")
-          .select(
-            `
-              id,
-              name,
-              email,
-              role,
-              active
-            `
-          )
-          .eq(
-            "id",
-            authUser.id
-          )
-          .maybeSingle();
+      } = await supabase
+        .from("users")
+        .select(`
+          id,
+          name,
+          email,
+          role,
+          active
+        `)
+        .eq("id", authUser.id)
+        .maybeSingle();
 
       if (profileError) {
         console.error(
           "MANVI USER PROFILE ERROR:",
           profileError
         );
-
-        // ---------------------------------------------
-        // METADATA FALLBACK
-        // ---------------------------------------------
 
         const fallbackUser: CurrentUser = {
           id: authUser.id,
@@ -159,8 +138,7 @@ function ProtectedApp() {
             authUser.email?.split("@")[0] ||
             "User",
 
-          email:
-            authUser.email || "",
+          email: authUser.email || "",
 
           role:
             authUser.user_metadata?.role ||
@@ -169,22 +147,14 @@ function ProtectedApp() {
           active: true,
         };
 
-        setCurrentUser(
-          fallbackUser
-        );
+        setCurrentUser(fallbackUser);
 
         return;
       }
 
       if (profile) {
-        setCurrentUser(
-          profile as CurrentUser
-        );
+        setCurrentUser(profile as CurrentUser);
       } else {
-        // ---------------------------------------------
-        // NO PROFILE
-        // ---------------------------------------------
-
         setCurrentUser({
           id: authUser.id,
 
@@ -193,8 +163,7 @@ function ProtectedApp() {
             authUser.email?.split("@")[0] ||
             "User",
 
-          email:
-            authUser.email || "",
+          email: authUser.email || "",
 
           role:
             authUser.user_metadata?.role ||
@@ -205,7 +174,6 @@ function ProtectedApp() {
       }
 
     } catch (error) {
-
       console.error(
         "MANVI LOAD USER ERROR:",
         error
@@ -215,9 +183,7 @@ function ProtectedApp() {
       setCurrentUser(null);
 
     } finally {
-
       setLoading(false);
-
     }
   }
 
@@ -226,40 +192,29 @@ function ProtectedApp() {
   // ===================================================
 
   useEffect(() => {
-
     loadUser();
 
     const {
       data: listener,
-    } =
-      supabase.auth.onAuthStateChange(
-        (_event, session) => {
+    } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (!session?.user) {
+          setLoggedIn(false);
+          setCurrentUser(null);
+        } else {
+          setLoggedIn(true);
 
-          if (!session?.user) {
-
-            setLoggedIn(false);
-            setCurrentUser(null);
-
-          } else {
-
-            setLoggedIn(true);
-
-            // Delay avoids Supabase auth lock issues
-            setTimeout(() => {
-              loadUser();
-            }, 0);
-
-          }
-
+          // Delay avoids Supabase auth lock issues
+          setTimeout(() => {
+            loadUser();
+          }, 0);
         }
-      );
+      }
+    );
 
     return () => {
-
       listener.subscription.unsubscribe();
-
     };
-
   }, []);
 
   // ===================================================
@@ -267,7 +222,6 @@ function ProtectedApp() {
   // ===================================================
 
   if (loading) {
-
     return (
       <div
         className="
@@ -278,9 +232,7 @@ function ProtectedApp() {
           bg-slate-100
         "
       >
-
         <div className="text-center">
-
           <div
             className="
               w-14
@@ -295,17 +247,10 @@ function ProtectedApp() {
             "
           />
 
-          <p
-            className="
-              text-blue-700
-              font-semibold
-            "
-          >
+          <p className="text-blue-700 font-semibold">
             Loading MANVI ERP...
           </p>
-
         </div>
-
       </div>
     );
   }
@@ -315,14 +260,12 @@ function ProtectedApp() {
   // ===================================================
 
   if (!loggedIn) {
-
     return (
       <Navigate
         to="/login"
         replace
       />
     );
-
   }
 
   // ===================================================
@@ -333,7 +276,6 @@ function ProtectedApp() {
     currentUser &&
     currentUser.active === false
   ) {
-
     return (
       <div
         className="
@@ -345,7 +287,6 @@ function ProtectedApp() {
           p-6
         "
       >
-
         <div
           className="
             w-full
@@ -357,7 +298,6 @@ function ProtectedApp() {
             shadow-xl
           "
         >
-
           <div
             className="
               mx-auto
@@ -375,22 +315,11 @@ function ProtectedApp() {
             !
           </div>
 
-          <h1
-            className="
-              text-2xl
-              font-bold
-              text-slate-800
-            "
-          >
+          <h1 className="text-2xl font-bold text-slate-800">
             Account Inactive
           </h1>
 
-          <p
-            className="
-              mt-3
-              text-slate-500
-            "
-          >
+          <p className="mt-3 text-slate-500">
             Your MANVI ERP account has been
             deactivated.
           </p>
@@ -414,12 +343,9 @@ function ProtectedApp() {
           >
             Logout
           </button>
-
         </div>
-
       </div>
     );
-
   }
 
   // ===================================================
@@ -441,23 +367,17 @@ function ProtectedApp() {
   // ===================================================
 
   return (
-
     <Layout>
-
       <Routes>
 
-        {/* ============================================
-            DASHBOARD
-        ============================================ */}
+        {/* DASHBOARD */}
 
         <Route
           path="/"
           element={<Dashboard employeeOnly={!isOwner} />}
         />
 
-        {/* ============================================
-            MASTER
-        ============================================ */}
+        {/* MASTER */}
 
         <Route
           path="/customers"
@@ -479,9 +399,7 @@ function ProtectedApp() {
           element={<CustomerPrices />}
         />
 
-        {/* ============================================
-            TRANSACTIONS
-        ============================================ */}
+        {/* TRANSACTIONS */}
 
         <Route
           path="/purchases"
@@ -518,15 +436,7 @@ function ProtectedApp() {
           element={<PersonalExpenses />}
         />
 
-        {/* CASH BOOK */}
-        <Route
-          path="/cash-book"
-          element={<CashBook />}
-        />
-
-        {/* ============================================
-            REPORTS
-        ============================================ */}
+        {/* REPORTS */}
 
         <Route
           path="/reports"
@@ -543,18 +453,14 @@ function ProtectedApp() {
           element={<DailyClosing />}
         />
 
-        {/* ============================================
-            INVOICE
-        ============================================ */}
+        {/* INVOICE */}
 
         <Route
           path="/invoice/:id"
           element={<Invoice />}
         />
 
-        {/* ============================================
-            PROFILE
-        ============================================ */}
+        {/* PROFILE */}
 
         <Route
           path="/profile"
@@ -571,10 +477,7 @@ function ProtectedApp() {
           element={<ChangePassword />}
         />
 
-        {/* ============================================
-            USER MANAGEMENT
-            OWNER ONLY
-        ============================================ */}
+        {/* USER MANAGEMENT - OWNER ONLY */}
 
         <Route
           path="/user-management"
@@ -590,9 +493,7 @@ function ProtectedApp() {
           }
         />
 
-        {/* ============================================
-            UNKNOWN ROUTE
-        ============================================ */}
+        {/* UNKNOWN ROUTE */}
 
         <Route
           path="*"
@@ -605,7 +506,6 @@ function ProtectedApp() {
         />
 
       </Routes>
-
     </Layout>
   );
 }
@@ -615,25 +515,18 @@ function ProtectedApp() {
 // =====================================================
 
 export default function App() {
-
   return (
-
     <BrowserRouter>
-
       <Routes>
 
-        {/* ============================================
-            LOGIN
-        ============================================ */}
+        {/* LOGIN */}
 
         <Route
           path="/login"
           element={<Login />}
         />
 
-        {/* ============================================
-            PROTECTED ERP
-        ============================================ */}
+        {/* PROTECTED ERP */}
 
         <Route
           path="/*"
@@ -641,7 +534,6 @@ export default function App() {
         />
 
       </Routes>
-
     </BrowserRouter>
   );
 }

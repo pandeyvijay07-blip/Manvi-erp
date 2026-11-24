@@ -1,0 +1,76 @@
+
+/* MANVI ERP V30 — responsive visual system.
+   Presentation-only overrides. Existing page logic and Supabase calls are untouched. */
+:root {
+  --manvi-blue: #1769d2;
+  --manvi-blue-dark: #104b9a;
+  --manvi-blue-light: #eaf3ff;
+  --manvi-bg: #f3f6fb;
+  --manvi-text: #17243a;
+  --manvi-muted: #66758b;
+  --manvi-border: #e3eaf3;
+  --manvi-sidebar: #102f5b;
+  --manvi-shadow: 0 8px 24px rgba(16, 47, 91, .07);
+  --manvi-radius: 16px;
+}
+body { background: var(--manvi-bg); color: var(--manvi-text); }
+.manvi-app { background: var(--manvi-bg); }
+.manvi-sidebar {
+  background: linear-gradient(180deg, #123967 0%, #0d294d 100%);
+  border-right: 0;
+  box-shadow: 5px 0 24px rgba(9, 31, 59, .10);
+}
+.manvi-logo-area { border-bottom-color: rgba(255,255,255,.13); }
+.manvi-logo-title { color: #fff; }
+.manvi-logo-subtitle { color: #b9cbe2; }
+.manvi-user-box { background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.12); }
+.manvi-user-info strong { color: #fff; }
+.manvi-user-info span { color: #b9cbe2; }
+.manvi-nav-label { color: #91add0; }
+.manvi-nav-item { color: #d5e2f2; border-radius: 11px; }
+.manvi-nav-item:hover { background: rgba(255,255,255,.10); color: #fff; transform: none; }
+.manvi-nav-item.active { background: #fff; color: #124f9e; font-weight: 800; }
+.manvi-sidebar-footer { border-top-color: rgba(255,255,255,.13); color: #d5e2f2; }
+.manvi-sidebar-footer span { color: #91add0; }
+.manvi-header {
+  height: 72px; padding: 0 28px; background: rgba(255,255,255,.97);
+  border-bottom-color: #e5ebf3; box-shadow: 0 2px 12px rgba(15,35,65,.035);
+}
+.manvi-desktop-page-title { letter-spacing: -.025em; }
+.manvi-content { max-width: 1600px; margin: 0 auto; padding: 26px 28px 36px; }
+.manvi-content > * { min-width: 0; }
+.manvi-content h1 { letter-spacing: -.035em; }
+.manvi-content button, .manvi-content a, .manvi-mobile-top-nav button { transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease; }
+.manvi-content input, .manvi-content select, .manvi-content textarea {
+  min-height: 40px; border-radius: 9px; border-color: #d7e0ec;
+}
+.manvi-content input:focus, .manvi-content select:focus, .manvi-content textarea:focus {
+  outline: 3px solid rgba(23,105,210,.13); border-color: #1769d2;
+}
+.manvi-content table {
+  border: 1px solid #e2e9f2; border-radius: 13px; box-shadow: 0 2px 10px rgba(20,45,80,.025);
+}
+.manvi-content th { background: #f2f6fb; color: #52647c; letter-spacing: .025em; }
+.manvi-content td { border-bottom-color: #edf1f6; }
+.manvi-content tbody tr:hover { background: #f8fbff; }
+.manvi-mobile-drawer { background: #fff; }
+.manvi-mobile-drawer-header { background: #f8fbff; }
+.manvi-mobile-top-nav {
+  box-shadow: 0 8px 30px rgba(15, 35, 65, .16);
+  border-color: #dfe7f1;
+}
+@media (max-width: 900px) {
+  .manvi-content { padding: 16px 14px 96px; }
+  .manvi-header { height: 64px; padding: 0 14px; }
+  .manvi-content table {
+    display: block; width: 100%; max-width: 100%; overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .manvi-content th, .manvi-content td { white-space: nowrap; }
+  .manvi-content button, .manvi-content input, .manvi-content select { min-height: 42px; }
+}
+@media (max-width: 480px) {
+  .manvi-content { padding: 13px 10px 94px; }
+  .manvi-header { padding: 0 10px; }
+  .manvi-mobile-top-nav { left: 8px; right: 8px; bottom: 8px; }
+}

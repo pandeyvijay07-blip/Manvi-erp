@@ -1,0 +1,60 @@
+
+/* MANVI ERP — Dashboard KPI redesign only */
+
+main.manvi-content > div:has(h1) .grid > div {
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+
+main.manvi-content > div:has(h1) .grid > div:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .10) !important;
+}
+
+/* Primary KPI cards */
+main.manvi-content > div:has(h1) .grid > div.rounded-2xl.bg-white {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #dbe5f0 !important;
+  background: #fff !important;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, .06) !important;
+}
+
+main.manvi-content > div:has(h1) .grid > div.rounded-2xl.bg-white::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  background: linear-gradient(180deg, #2563eb, #38bdf8);
+}
+
+/* KPI title */
+main.manvi-content > div:has(h1) .grid > div.rounded-2xl.bg-white p:first-child {
+  color: #64748b !important;
+  font-weight: 700 !important;
+}
+
+/* KPI amount */
+main.manvi-content > div:has(h1) .grid > div.rounded-2xl.bg-white p:nth-child(2) {
+  color: #0f2747 !important;
+  font-weight: 800 !important;
+}
+
+/* Secondary blue cards */
+main.manvi-content > div:has(h1) .grid > div.rounded-2xl.bg-blue-50 {
+  border: 1px solid #bfdbfe !important;
+  background: linear-gradient(145deg, #eff6ff, #dbeafe) !important;
+  box-shadow: 0 5px 16px rgba(37, 99, 235, .07) !important;
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  main.manvi-content > div:has(h1) .grid > div {
+    border-radius: 14px !important;
+  }
+
+  main.manvi-content > div:has(h1) .grid > div.rounded-2xl.bg-white::before {
+    width: 4px;
+  }
+}

@@ -1,0 +1,342 @@
+
+/* =========================================================
+   MANVI ERP V29 — REMAINING MODULE UI POLISH
+   UI ONLY — no React logic, Supabase queries, calculations,
+   routes, save/delete functions, or database schema changes.
+   Covers: Purchases, Suppliers, Products, Customers,
+   Customer Prices, Walk-in Sales, Collections, Expenses,
+   Cash Book, Reports, Customer Ledger, Daily Closing,
+   User Management and Settings.
+   ========================================================= */
+
+/* ---------- Shared page canvas ---------- */
+main.manvi-content > div:not(:has(h1:first-child + p)):not(:has(input[placeholder="DD/MM/YYYY"])) {
+  min-width: 0;
+}
+
+main.manvi-content > div.mx-auto {
+  max-width: 1280px;
+}
+
+/* ---------- Shared page headings ---------- */
+main.manvi-content h1.text-3xl {
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+main.manvi-content h1.text-3xl + p,
+main.manvi-content h1.text-3xl ~ p {
+  color: #64748b;
+}
+
+/* ---------- Shared white panels ---------- */
+main.manvi-content .bg-white.rounded-xl,
+main.manvi-content .bg-white.rounded-2xl,
+main.manvi-content .bg-white.shadow-lg,
+main.manvi-content .bg-white.shadow {
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 7px 24px rgba(15,23,42,.055);
+}
+
+/* ---------- Forms ---------- */
+main.manvi-content input,
+main.manvi-content select,
+main.manvi-content textarea {
+  border-color: #cbd5e1;
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+
+main.manvi-content input:focus,
+main.manvi-content select:focus,
+main.manvi-content textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.11);
+}
+
+main.manvi-content input::placeholder,
+main.manvi-content textarea::placeholder {
+  color: #94a3b8;
+}
+
+/* Keep comfortable touch targets */
+main.manvi-content input,
+main.manvi-content select {
+  min-height: 44px;
+}
+
+/* ---------- Labels ---------- */
+main.manvi-content label {
+  color: #334155;
+}
+
+/* ---------- Tables ---------- */
+main.manvi-content .overflow-x-auto {
+  border-radius: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+main.manvi-content table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+}
+
+main.manvi-content thead th {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+main.manvi-content tbody tr {
+  transition: background-color .12s ease;
+}
+
+main.manvi-content tbody tr:hover {
+  background: #f8fafc;
+}
+
+main.manvi-content td,
+main.manvi-content th {
+  vertical-align: middle;
+}
+
+/* ---------- Buttons ---------- */
+main.manvi-content button {
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+
+main.manvi-content button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+main.manvi-content button:not(:disabled):active {
+  transform: translateY(0);
+}
+
+/* =========================================================
+   PURCHASES
+   ========================================================= */
+main.manvi-content > div:has(select option:first-child[value=""]) {
+  --manvi-control-radius: 10px;
+}
+
+main.manvi-content .purchase-table,
+main.manvi-content [class*="purchase"] table {
+  min-width: 720px;
+}
+
+/* Make purchase line-item areas easy to scan */
+main.manvi-content [class*="purchase"] .bg-slate-50,
+main.manvi-content [class*="purchase"] .bg-gray-50 {
+  border-radius: 12px;
+}
+
+/* =========================================================
+   SUPPLIERS
+   ========================================================= */
+main.manvi-content > div:has(input[placeholder="Supplier name"]) .rounded-2xl {
+  overflow: hidden;
+}
+
+main.manvi-content > div:has(input[placeholder="Supplier name"]) input,
+main.manvi-content > div:has(input[placeholder="Supplier name"]) select {
+  min-height: 46px;
+}
+
+main.manvi-content > div:has(input[placeholder="Supplier name"]) table {
+  min-width: 760px;
+}
+
+/* =========================================================
+   PRODUCTS
+   ========================================================= */
+main.manvi-content > div:has(input[placeholder="Example: Cow Milk"]) {
+  max-width: 1280px;
+}
+
+main.manvi-content > div:has(input[placeholder="Example: Cow Milk"]) .bg-white {
+  overflow: hidden;
+}
+
+main.manvi-content > div:has(input[placeholder="Example: Cow Milk"]) table {
+  min-width: 820px;
+}
+
+main.manvi-content > div:has(input[placeholder="Example: Cow Milk"]) tbody td {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+/* =========================================================
+   CUSTOMERS
+   ========================================================= */
+main.manvi-content > div:has(input[placeholder*="Customer name" i]),
+main.manvi-content > div:has(input[placeholder*="customer name" i]) {
+  min-width: 0;
+}
+
+main.manvi-content > div:has(input[placeholder*="Customer name" i]) table {
+  min-width: 820px;
+}
+
+/* =========================================================
+   CUSTOMER PRICES
+   ========================================================= */
+main.manvi-content > div:has(select option[value=""][disabled]) table {
+  min-width: 720px;
+}
+
+/* =========================================================
+   WALK-IN SALES
+   ========================================================= */
+main.manvi-content > div:has(input[placeholder*="Walk-in" i]) {
+  min-width: 0;
+}
+
+main.manvi-content > div:has(input[placeholder*="Walk-in" i]) .bg-white {
+  border-radius: 16px;
+}
+
+/* =========================================================
+   COLLECTIONS
+   ========================================================= */
+main.manvi-content > div.space-y-6:has(h1.text-3xl) .bg-white.rounded-2xl {
+  overflow: hidden;
+}
+
+main.manvi-content > div.space-y-6:has(h1.text-3xl) table {
+  min-width: 760px;
+}
+
+/* Outstanding balance visual */
+main.manvi-content .bg-yellow-50 {
+  border-color: #fde68a;
+}
+
+/* =========================================================
+   EXPENSES / CASH BOOK
+   ========================================================= */
+main.manvi-content > div:has(input[type="number"]) .bg-white {
+  overflow: hidden;
+}
+
+main.manvi-content > div table {
+  min-width: 650px;
+}
+
+/* =========================================================
+   REPORTS
+   ========================================================= */
+main.manvi-content > div:has(button) .overflow-x-auto table {
+  min-width: 760px;
+}
+
+main.manvi-content .bg-blue-50,
+main.manvi-content .bg-indigo-50,
+main.manvi-content .bg-green-50,
+main.manvi-content .bg-red-50,
+main.manvi-content .bg-purple-50,
+main.manvi-content .bg-orange-50 {
+  border-radius: 14px;
+}
+
+/* =========================================================
+   CUSTOMER LEDGER
+   ========================================================= */
+main.manvi-content > div:has(h1) table {
+  font-variant-numeric: tabular-nums;
+}
+
+main.manvi-content > div:has(h1) td:last-child,
+main.manvi-content > div:has(h1) th:last-child {
+  white-space: nowrap;
+}
+
+/* =========================================================
+   DAILY CLOSING
+   ========================================================= */
+main.manvi-content > div:has(input[type="date"]) .bg-white {
+  overflow: hidden;
+}
+
+main.manvi-content > div:has(input[type="date"]) .text-2xl,
+main.manvi-content > div:has(input[type="date"]) .text-3xl {
+  font-variant-numeric: tabular-nums;
+}
+
+/* =========================================================
+   USER MANAGEMENT / SETTINGS
+   ========================================================= */
+main.manvi-content > div:has(input[type="email"]) .bg-white,
+main.manvi-content > div:has(textarea) .bg-white {
+  overflow: hidden;
+}
+
+/* =========================================================
+   MOBILE — all remaining modules
+   ========================================================= */
+@media (max-width: 768px) {
+  main.manvi-content h1.text-3xl {
+    font-size: 1.55rem;
+  }
+
+  main.manvi-content .p-6 {
+    padding: 16px;
+  }
+
+  main.manvi-content .px-6 {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  main.manvi-content .py-6 {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+
+  main.manvi-content table {
+    font-size: 13px;
+  }
+
+  main.manvi-content thead th {
+    font-size: 10px;
+    padding: 10px 9px;
+  }
+
+  main.manvi-content tbody td {
+    padding: 10px 9px;
+  }
+
+  main.manvi-content input,
+  main.manvi-content select,
+  main.manvi-content textarea {
+    font-size: 16px;
+  }
+
+  main.manvi-content button {
+    min-height: 42px;
+  }
+
+  main.manvi-content .grid {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  main.manvi-content {
+    overflow-x: hidden;
+  }
+
+  main.manvi-content .rounded-2xl {
+    border-radius: 14px;
+  }
+
+  main.manvi-content table {
+    min-width: 620px;
+  }
+}

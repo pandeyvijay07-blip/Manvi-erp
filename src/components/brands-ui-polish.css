@@ -1,0 +1,108 @@
+
+/* =========================================================
+   MANVI ERP — BRANDS UI POLISH
+   UI ONLY. No React/Supabase/business logic changes.
+   ========================================================= */
+
+/* Scoped to the Brands screen by its brand-name form field.
+   Does not change product/sales calculations or database logic. */
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-bottom: 32px;
+}
+
+/* Page header */
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) h1 {
+  letter-spacing: -0.03em;
+}
+
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) > div:first-child {
+  margin-bottom: 20px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #eff6ff, #ffffff);
+  border: 1px solid #dbeafe;
+}
+
+/* White panels */
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) .bg-white {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  box-shadow: 0 7px 24px rgba(15,23,42,.055);
+}
+
+/* Inputs */
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) input,
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) select {
+  min-height: 45px;
+  border-color: #cbd5e1;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) input:focus,
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+/* Tables */
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) th {
+  font-size: 12px;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) td {
+  vertical-align: middle;
+}
+
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) tbody tr {
+  transition: background-color .12s ease;
+}
+
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) tbody tr:hover {
+  background: #f8fafc;
+}
+
+/* Buttons */
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) button {
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+
+main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 12px rgba(15,23,42,.10);
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) {
+    padding-bottom: 24px;
+  }
+
+  main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) > div:first-child {
+    padding: 14px 15px;
+    border-radius: 14px;
+  }
+
+  main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) button {
+    min-height: 44px;
+  }
+
+  main.manvi-content > div:has(input[placeholder*="Brand" i]):not(:has(input[placeholder*="Product" i])) .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}

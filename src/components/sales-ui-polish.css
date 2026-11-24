@@ -1,0 +1,178 @@
+
+/* =========================================================
+   MANVI ERP — SALES UI POLISH
+   UI ONLY. No React/Supabase/business logic changes.
+   Scope: Sales page only.
+   ========================================================= */
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 4px 2px 32px;
+}
+
+/* Page heading */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > div:first-child {
+  padding: 4px 4px 14px;
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > div:first-child h1 {
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > div:first-child p {
+  color: #64748b;
+}
+
+/* Main white panels */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > .bg-white {
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.055);
+}
+
+/* Form fields */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) input,
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) select {
+  min-height: 46px;
+  border-color: #cbd5e1;
+  background: #fff;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) input:focus,
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .12);
+}
+
+/* Labels */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) label {
+  color: #334155;
+}
+
+/* Customer Products section */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) h2 {
+  letter-spacing: -0.02em;
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) table {
+  min-width: 760px;
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) th {
+  font-size: 12px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) td {
+  vertical-align: middle;
+}
+
+/* Tables become easier to scan */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) tbody tr {
+  transition: background-color .12s ease;
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) tbody tr:hover {
+  background: #f8fafc;
+}
+
+/* Totals cards */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) .text-3xl {
+  letter-spacing: -0.035em;
+}
+
+/* Action buttons */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) button {
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 12px rgba(15, 23, 42, .10);
+}
+
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) button:active {
+  transform: translateY(0);
+}
+
+/* UPI / WhatsApp panels */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) .rounded-2xl {
+  overflow: hidden;
+}
+
+/* Customer sale search + recent sales */
+main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > .bg-white:last-child {
+  margin-bottom: 8px;
+}
+
+/* Horizontal table scrolling on smaller screens */
+@media (max-width: 900px) {
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) {
+    padding: 2px 0 28px;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > .bg-white {
+    padding: 16px !important;
+    border-radius: 16px;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > div:first-child {
+    padding-left: 2px;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > div:first-child h1 {
+    font-size: 1.5rem;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) table {
+    font-size: 13px;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) th,
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) td {
+    padding: 10px 9px;
+  }
+}
+
+/* Phone layout */
+@media (max-width: 640px) {
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) {
+    padding: 0 0 24px;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > .bg-white {
+    padding: 13px !important;
+    border-radius: 14px;
+    box-shadow: 0 5px 18px rgba(15, 23, 42, .05);
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) > div:first-child h1 {
+    font-size: 1.3rem;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) input,
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) button {
+    min-height: 44px;
+  }
+
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) .text-3xl {
+    font-size: 1.65rem;
+  }
+
+  /* Keep dense tables usable; scroll horizontally instead of squeezing columns. */
+  main.manvi-content > div.space-y-6:has(input[placeholder="DD/MM/YYYY"]) .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+}
