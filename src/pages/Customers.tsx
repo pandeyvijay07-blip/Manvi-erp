@@ -9,6 +9,7 @@ type Customer = {
   area: string;
   route: string;
   opening_balance: number;
+  sales_outstanding: number;
   outstanding: number;
   whatsapp_opt_in: boolean;
   whatsapp_opt_in_at: string | null;
@@ -19,12 +20,20 @@ type SaleBalance = {
   balance_amount: number | string | null;
 };
 
+type BalanceFilter = "all" | "due" | "clear";
+
+const money = (value: number | string | null | undefined) =>
+  `₹${Number(value || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
 export default function Customers() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
-
   const [search, setSearch] = useState("");
   const [routeSearch, setRouteSearch] = useState("");
+  const [balanceFilter, setBalanceFilter] = useState<BalanceFilter>("all");
 
   const [customerName, setCustomerName] = useState("");
   const [mobile, setMobile] = useState("");
@@ -33,152 +42,67 @@ export default function Customers() {
   const [route, setRoute] = useState("");
   const [openingBalance, setOpeningBalance] = useState("0");
   const [whatsappOptIn, setWhatsappOptIn] = useState(false);
-
   const [editingId, setEditingId] = useState<string | null>(null);
 
   useEffect(() => {
     void loadCustomers();
   }, []);
 
-  // =========================================================
-  // LOAD CUSTOMERS
-  // =========================================================
-
+  // Outstanding calculation deliberately matches the existing V29 rule:
+  // customer opening balance + balances on unpaid sales.
   async function loadCustomers() {
     setLoading(true);
-
     try {
-      const {
-        data: customerData,
-        error: customerError,
-      } = await supabase
+      const { data: customerData, error: customerError } = await supabase
         .from("customers")
         .select(
-          `
-            id,
-            customer_name,
-            mobile,
-            address,
-            area,
-            route,
-            opening_balance,
-            whatsapp_opt_in,
-            whatsapp_opt_in_at
-          `,
+          "id, customer_name, mobile, address, area, route, opening_balance, whatsapp_opt_in, whatsapp_opt_in_at",
         )
-        .order("customer_name", {
-          ascending: true,
-        });
+        .order("customer_name", { ascending: true });
 
-      if (customerError) {
-        throw customerError;
-      }
+      if (customerError) throw customerError;
 
-      // -------------------------------------------------------
-      // LOAD UNPAID SALES
-      // -------------------------------------------------------
-
-      const {
-        data: salesData,
-        error: salesError,
-      } = await supabase
+      const { data: salesData, error: salesError } = await supabase
         .from("sales")
-        .select(
-          `
-            customer_id,
-            balance_amount
-          `,
-        )
+        .select("customer_id, balance_amount")
         .gt("balance_amount", 0);
 
-      if (salesError) {
-        throw salesError;
-      }
-
-      // -------------------------------------------------------
-      // CALCULATE OUTSTANDING
-      // -------------------------------------------------------
+      if (salesError) throw salesError;
 
       const outstandingMap: Record<string, number> = {};
+      (salesData || []).forEach((sale: SaleBalance) => {
+        if (!sale.customer_id) return;
+        outstandingMap[sale.customer_id] =
+          (outstandingMap[sale.customer_id] || 0) +
+          Number(sale.balance_amount || 0);
+      });
 
-      (salesData || []).forEach(
-        (sale: SaleBalance) => {
-          if (!sale.customer_id) {
-            return;
-          }
-
-          outstandingMap[sale.customer_id] =
-            (outstandingMap[sale.customer_id] || 0) +
-            Number(sale.balance_amount || 0);
-        },
-      );
-
-      // -------------------------------------------------------
-      // FINAL CUSTOMER LIST
-      // -------------------------------------------------------
-
-      const finalCustomers: Customer[] = (
-        customerData || []
-      ).map((customer) => {
-        const opening =
-          Number(customer.opening_balance || 0);
-
-        const salesOutstanding =
-          outstandingMap[customer.id] || 0;
-
+      const finalCustomers: Customer[] = (customerData || []).map((customer) => {
+        const opening = Number(customer.opening_balance || 0);
+        const salesOutstanding = outstandingMap[customer.id] || 0;
         return {
-          id: customer.id,
-
-          customer_name:
-            customer.customer_name || "",
-
-          mobile:
-            customer.mobile || "",
-
-          address:
-            customer.address || "",
-
-          area:
-            customer.area || "",
-
-          route:
-            customer.route || "",
-
-          opening_balance:
-            opening,
-
-          outstanding:
-            opening + salesOutstanding,
-
-          whatsapp_opt_in:
-            Boolean(customer.whatsapp_opt_in),
-
-          whatsapp_opt_in_at:
-            customer.whatsapp_opt_in_at || null,
+          id: String(customer.id),
+          customer_name: customer.customer_name || "",
+          mobile: customer.mobile || "",
+          address: customer.address || "",
+          area: customer.area || "",
+          route: customer.route || "",
+          opening_balance: opening,
+          sales_outstanding: salesOutstanding,
+          outstanding: opening + salesOutstanding,
+          whatsapp_opt_in: Boolean(customer.whatsapp_opt_in),
+          whatsapp_opt_in_at: customer.whatsapp_opt_in_at || null,
         };
       });
 
       setCustomers(finalCustomers);
     } catch (error) {
-      console.error(
-        "CUSTOMER LOADING ERROR:",
-        error,
-      );
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to load customers.";
-
-      alert(message);
+      console.error("CUSTOMER LOADING ERROR:", error);
+      alert(error instanceof Error ? error.message : "Unable to load customers.");
     } finally {
       setLoading(false);
     }
   }
-
-  // =========================================================
-  // SAVE CUSTOMER
-  // =========================================================
 
   async function saveCustomer() {
     if (!customerName.trim()) {
@@ -187,248 +111,86 @@ export default function Customers() {
     }
 
     const opening = Number(openingBalance);
-
-    if (
-      Number.isNaN(opening) ||
-      opening < 0
-    ) {
-      alert(
-        "Opening balance must be a valid amount.",
-      );
+    if (!Number.isFinite(opening) || opening < 0) {
+      alert("Opening balance must be a valid amount.");
       return;
     }
 
-    if (
-      whatsappOptIn &&
-      !mobile.trim()
-    ) {
-      alert(
-        "Enter customer mobile number before enabling WhatsApp messages.",
-      );
+    if (whatsappOptIn && !mobile.trim()) {
+      alert("Enter customer mobile number before enabling WhatsApp messages.");
       return;
     }
 
     setLoading(true);
-
     try {
       const cleanRoute = route.trim();
-
-      const whatsappOptInAt =
-        whatsappOptIn
-          ? new Date().toISOString()
-          : null;
-
-      // -------------------------------------------------------
-      // UPDATE EXISTING CUSTOMER
-      // -------------------------------------------------------
+      const whatsappOptInAt = whatsappOptIn ? new Date().toISOString() : null;
+      const customerPayload = {
+        customer_name: customerName.trim(),
+        mobile: mobile.trim(),
+        address: address.trim(),
+        area: area.trim(),
+        route: cleanRoute || null,
+        opening_balance: opening,
+        whatsapp_opt_in: whatsappOptIn,
+        whatsapp_opt_in_at: whatsappOptInAt,
+      };
 
       if (editingId) {
-        const {
-          error,
-        } = await supabase
+        const { error } = await supabase
           .from("customers")
-          .update({
-            customer_name:
-              customerName.trim(),
-
-            mobile:
-              mobile.trim(),
-
-            address:
-              address.trim(),
-
-            area:
-              area.trim(),
-
-            route:
-              cleanRoute || null,
-
-            opening_balance:
-              opening,
-
-            whatsapp_opt_in:
-              whatsappOptIn,
-
-            whatsapp_opt_in_at:
-              whatsappOptInAt,
-          })
+          .update(customerPayload)
           .eq("id", editingId);
-
-        if (error) {
-          throw error;
-        }
-
-        alert(
-          "Customer updated successfully.",
-        );
+        if (error) throw error;
+        alert("Customer updated successfully.");
       } else {
-        // -----------------------------------------------------
-        // ADD NEW CUSTOMER
-        // -----------------------------------------------------
-
-        const {
-          error,
-        } = await supabase
+        const { error } = await supabase
           .from("customers")
-          .insert({
-            customer_name:
-              customerName.trim(),
-
-            mobile:
-              mobile.trim(),
-
-            address:
-              address.trim(),
-
-            area:
-              area.trim(),
-
-            route:
-              cleanRoute || null,
-
-            opening_balance:
-              opening,
-
-            whatsapp_opt_in:
-              whatsappOptIn,
-
-            whatsapp_opt_in_at:
-              whatsappOptInAt,
-          });
-
-        if (error) {
-          throw error;
-        }
-
-        alert(
-          "Customer added successfully.",
-        );
+          .insert(customerPayload);
+        if (error) throw error;
+        alert("Customer added successfully.");
       }
 
       clearForm();
-
       await loadCustomers();
     } catch (error) {
-      console.error(
-        "SAVE CUSTOMER ERROR:",
-        error,
-      );
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to save customer.";
-
-      alert(message);
+      console.error("SAVE CUSTOMER ERROR:", error);
+      alert(error instanceof Error ? error.message : "Unable to save customer.");
     } finally {
       setLoading(false);
     }
   }
 
-  // =========================================================
-  // EDIT CUSTOMER
-  // =========================================================
-
-  function editCustomer(
-    customer: Customer,
-  ) {
+  function editCustomer(customer: Customer) {
     setEditingId(customer.id);
-
-    setCustomerName(
-      customer.customer_name || "",
-    );
-
-    setMobile(
-      customer.mobile || "",
-    );
-
-    setAddress(
-      customer.address || "",
-    );
-
-    setArea(
-      customer.area || "",
-    );
-
-    setRoute(
-      customer.route || "",
-    );
-
-    setOpeningBalance(
-      String(
-        customer.opening_balance || 0,
-      ),
-    );
-
-    setWhatsappOptIn(
-      Boolean(customer.whatsapp_opt_in),
-    );
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
+    setCustomerName(customer.customer_name);
+    setMobile(customer.mobile);
+    setAddress(customer.address);
+    setArea(customer.area);
+    setRoute(customer.route);
+    setOpeningBalance(String(customer.opening_balance || 0));
+    setWhatsappOptIn(customer.whatsapp_opt_in);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  // =========================================================
-  // DELETE CUSTOMER
-  // =========================================================
-
-  async function deleteCustomer(
-    id: string,
-  ) {
-    const confirmed =
-      window.confirm(
-        "Are you sure you want to delete this customer?",
-      );
-
-    if (!confirmed) {
-      return;
-    }
-
+  async function deleteCustomer(id: string) {
+    if (!window.confirm("Are you sure you want to delete this customer?")) return;
     setLoading(true);
-
     try {
-      const {
-        error,
-      } = await supabase
-        .from("customers")
-        .delete()
-        .eq("id", id);
-
-      if (error) {
-        throw error;
-      }
-
-      alert(
-        "Customer deleted successfully.",
-      );
-
+      const { error } = await supabase.from("customers").delete().eq("id", id);
+      if (error) throw error;
+      alert("Customer deleted successfully.");
       await loadCustomers();
     } catch (error) {
-      console.error(
-        "DELETE CUSTOMER ERROR:",
-        error,
-      );
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unable to delete customer.";
-
-      alert(message);
+      console.error("DELETE CUSTOMER ERROR:", error);
+      alert(error instanceof Error ? error.message : "Unable to delete customer.");
     } finally {
       setLoading(false);
     }
   }
-
-  // =========================================================
-  // CLEAR FORM
-  // =========================================================
 
   function clearForm() {
     setEditingId(null);
-
     setCustomerName("");
     setMobile("");
     setAddress("");
@@ -438,705 +200,399 @@ export default function Customers() {
     setWhatsappOptIn(false);
   }
 
-  // =========================================================
-  // ROUTES
-  // =========================================================
+  const availableRoutes = useMemo(
+    () =>
+      Array.from(
+        new Set(customers.map((customer) => customer.route.trim()).filter(Boolean)),
+      ).sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+      ),
+    [customers],
+  );
 
-  const availableRoutes = useMemo(() => {
-    return Array.from(
-      new Set(
-        customers
-          .map((customer) =>
-            (customer.route || "").trim(),
-          )
-          .filter(Boolean),
-      ),
-    ).sort((a, b) =>
-      a.localeCompare(
-        b,
-        undefined,
-        {
-          numeric: true,
-          sensitivity: "base",
-        },
-      ),
-    );
+  const totalOutstanding = customers.reduce((sum, customer) => sum + customer.outstanding, 0);
+  const totalOpeningBalance = customers.reduce(
+    (sum, customer) => sum + customer.opening_balance,
+    0,
+  );
+  const totalSalesOutstanding = customers.reduce(
+    (sum, customer) => sum + customer.sales_outstanding,
+    0,
+  );
+  const dueCustomers = customers.filter((customer) => customer.outstanding > 0).length;
+  const whatsappCustomers = customers.filter((customer) => customer.whatsapp_opt_in).length;
+
+  const routeSummaries = useMemo(() => {
+    const grouped = new Map<string, { count: number; due: number }>();
+    customers.forEach((customer) => {
+      const key = customer.route.trim() || "No Route";
+      const current = grouped.get(key) || { count: 0, due: 0 };
+      current.count += 1;
+      current.due += customer.outstanding;
+      grouped.set(key, current);
+    });
+    return Array.from(grouped.entries())
+      .filter(([routeName]) => routeName !== "No Route")
+      .sort(([a], [b]) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+      );
   }, [customers]);
 
-  // =========================================================
-  // SEARCH
-  // =========================================================
+  const filteredCustomers = useMemo(() => {
+    const searchText = search.toLowerCase().trim();
+    const routeText = routeSearch.toLowerCase().trim();
+    return customers
+      .filter((customer) => {
+        const matchesRoute =
+          !routeText || customer.route.toLowerCase().includes(routeText);
+        const matchesSearch =
+          !searchText ||
+          customer.customer_name.toLowerCase().includes(searchText) ||
+          customer.mobile.toLowerCase().includes(searchText) ||
+          customer.area.toLowerCase().includes(searchText) ||
+          customer.route.toLowerCase().includes(searchText);
+        const matchesBalance =
+          balanceFilter === "all" ||
+          (balanceFilter === "due" && customer.outstanding > 0) ||
+          (balanceFilter === "clear" && customer.outstanding <= 0);
+        return matchesRoute && matchesSearch && matchesBalance;
+      })
+      .sort((a, b) => b.outstanding - a.outstanding);
+  }, [customers, search, routeSearch, balanceFilter]);
 
-  const filteredCustomers =
-    customers.filter((customer) => {
-      const searchText =
-        search.toLowerCase().trim();
+  const filteredOutstanding = filteredCustomers.reduce(
+    (sum, customer) => sum + customer.outstanding,
+    0,
+  );
 
-      const routeText =
-        routeSearch.toLowerCase().trim();
-
-      const matchesRoute =
-        !routeText ||
-        customer.route
-          .toLowerCase()
-          .includes(routeText);
-
-      const matchesSearch =
-        !searchText ||
-        customer.customer_name
-          .toLowerCase()
-          .includes(searchText) ||
-        customer.mobile
-          .toLowerCase()
-          .includes(searchText) ||
-        customer.area
-          .toLowerCase()
-          .includes(searchText) ||
-        customer.route
-          .toLowerCase()
-          .includes(searchText);
-
-      return (
-        matchesRoute &&
-        matchesSearch
-      );
-    });
-
-  // =========================================================
-  // TOTALS
-  // =========================================================
-
-  const totalCustomers =
-    customers.length;
-
-  const totalOutstanding =
-    customers.reduce(
-      (sum, customer) =>
-        sum +
-        Number(
-          customer.outstanding || 0,
-        ),
-      0,
-    );
-
-  const totalOpeningBalance =
-    customers.reduce(
-      (sum, customer) =>
-        sum +
-        Number(
-          customer.opening_balance || 0,
-        ),
-      0,
-    );
-
-  const whatsappCustomers =
-    customers.filter(
-      (customer) =>
-        customer.whatsapp_opt_in,
-    ).length;
-
-  // =========================================================
-  // UI
-  // =========================================================
+  const inputClass =
+    "w-full min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+  const labelClass = "mb-1.5 block text-sm font-semibold text-slate-700";
+  const cardClass = "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5";
 
   return (
-    <div className="max-w-7xl mx-auto">
-
-      {/* PAGE TITLE */}
-
-      <div className="mb-6">
-
-        <h1 className="text-3xl font-bold text-blue-700">
-          Customers
-        </h1>
-
-        <p className="text-gray-600 mt-1">
-          Manage customers, routes,
-          balances and WhatsApp
-          notifications.
-        </p>
-
+    <div className="mx-auto max-w-[1500px] space-y-5 pb-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-600">
+            MANVI MILK AGENCIES
+          </p>
+          <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">
+            Customer Management
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Customer directory, route allocation and outstanding balances.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void loadCustomers()}
+          disabled={loading}
+          className="min-h-[42px] rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+        >
+          {loading ? "Refreshing..." : "↻ Refresh Data"}
+        </button>
       </div>
 
-      {/* SUMMARY CARDS */}
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-
-        <div className="bg-white rounded-xl shadow p-5 border">
-
-          <p className="text-gray-500">
-            Total Customers
-          </p>
-
-          <p className="text-3xl font-bold text-blue-700 mt-2">
-            {totalCustomers}
-          </p>
-
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+        <div className={cardClass}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Customers</p>
+          <p className="mt-2 text-2xl font-extrabold text-slate-900 sm:text-3xl">{customers.length}</p>
+          <p className="mt-1 text-xs text-slate-500">{availableRoutes.length} routes</p>
         </div>
-
-        <div className="bg-white rounded-xl shadow p-5 border">
-
-          <p className="text-gray-500">
-            Opening Balance
-          </p>
-
-          <p className="text-3xl font-bold text-orange-600 mt-2">
-            ₹{" "}
-            {totalOpeningBalance.toFixed(2)}
-          </p>
-
+        <div className={cardClass}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Customers With Due</p>
+          <p className="mt-2 text-2xl font-extrabold text-rose-600 sm:text-3xl">{dueCustomers}</p>
+          <p className="mt-1 text-xs text-slate-500">Accounts with balance above zero</p>
         </div>
-
-        <div className="bg-white rounded-xl shadow p-5 border">
-
-          <p className="text-gray-500">
-            Total Outstanding
-          </p>
-
-          <p className="text-3xl font-bold text-red-600 mt-2">
-            ₹{" "}
-            {totalOutstanding.toFixed(2)}
-          </p>
-
+        <div className={cardClass}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total Outstanding</p>
+          <p className="mt-2 text-xl font-extrabold text-rose-600 sm:text-2xl">{money(totalOutstanding)}</p>
+          <p className="mt-1 text-xs text-slate-500">Opening + unpaid sales balance</p>
         </div>
-
-        <div className="bg-white rounded-xl shadow p-5 border">
-
-          <p className="text-gray-500">
-            WhatsApp Enabled
-          </p>
-
-          <p className="text-3xl font-bold text-green-600 mt-2">
-            {whatsappCustomers}
-          </p>
-
+        <div className={cardClass}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Opening Balance</p>
+          <p className="mt-2 text-xl font-extrabold text-amber-600 sm:text-2xl">{money(totalOpeningBalance)}</p>
+          <p className="mt-1 text-xs text-slate-500">Opening amount entered</p>
         </div>
-
+        <div className={`${cardClass} col-span-2 xl:col-span-1`}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Unpaid Sales</p>
+          <p className="mt-2 text-xl font-extrabold text-blue-700 sm:text-2xl">{money(totalSalesOutstanding)}</p>
+          <p className="mt-1 text-xs text-slate-500">Sum of unpaid sale balances</p>
+        </div>
       </div>
 
-      {/* ADD / EDIT CUSTOMER */}
-
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-
-        <h2 className="text-xl font-semibold mb-5">
-
-          {editingId
-            ? "Edit Customer"
-            : "Add Customer"}
-
-        </h2>
-
-        <div className="grid md:grid-cols-2 gap-4">
-
-          {/* CUSTOMER NAME */}
-
+      {/* Route-wise overview */}
+      <section className={cardClass}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
-
-            <label className="block mb-2 font-medium">
-              Customer Name
-            </label>
-
-            <input
-              className="w-full border rounded-lg p-3"
-              placeholder="Customer Name"
-              value={customerName}
-              onChange={(e) =>
-                setCustomerName(
-                  e.target.value,
-                )
-              }
-            />
-
+            <h2 className="text-base font-extrabold text-slate-900">Route-wise Customer Summary</h2>
+            <p className="text-xs text-slate-500">Select a route to filter the customer list.</p>
           </div>
-
-          {/* MOBILE */}
-
-          <div>
-
-            <label className="block mb-2 font-medium">
-              Mobile
-            </label>
-
-            <input
-              type="tel"
-              className="w-full border rounded-lg p-3"
-              placeholder="10 digit mobile number"
-              value={mobile}
-              onChange={(e) =>
-                setMobile(
-                  e.target.value,
-                )
-              }
-            />
-
-          </div>
-
-          {/* WHATSAPP OPT-IN */}
-
-          <div className="md:col-span-2">
-
-            <div className="border rounded-xl p-4 bg-green-50">
-
-              <div className="flex items-start gap-3">
-
-                <input
-                  id="customer-whatsapp-opt-in"
-                  type="checkbox"
-                  checked={whatsappOptIn}
-                  onChange={(e) =>
-                    setWhatsappOptIn(
-                      e.target.checked,
-                    )
-                  }
-                  className="mt-1 h-5 w-5"
-                />
-
-                <div>
-
-                  <label
-                    htmlFor="customer-whatsapp-opt-in"
-                    className="font-semibold text-green-800 cursor-pointer"
-                  >
-                    Customer has opted in
-                    to receive WhatsApp
-                    messages
-                  </label>
-
-                  <p className="text-sm text-green-700 mt-1">
-                    When enabled, MANVI ERP
-                    can automatically send
-                    eligible sale and
-                    collection messages
-                    to this customer's
-                    WhatsApp number.
-                  </p>
-
-                  {!mobile.trim() && (
-                    <p className="text-sm text-red-600 mt-2 font-medium">
-                      Enter the customer's
-                      mobile number before
-                      enabling WhatsApp.
-                    </p>
-                  )}
-
-                </div>
-
-              </div>
-
-            </div>
-
-          </div>
-
-          {/* AREA */}
-
-          <div>
-
-            <label className="block mb-2 font-medium">
-              Area
-            </label>
-
-            <input
-              className="w-full border rounded-lg p-3"
-              placeholder="Area"
-              value={area}
-              onChange={(e) =>
-                setArea(
-                  e.target.value,
-                )
-              }
-            />
-
-          </div>
-
-          {/* ROUTE */}
-
-          <div>
-
-            <label className="block mb-2 font-medium">
-              Route
-            </label>
-
-            <input
-              type="text"
-              list="customer-routes"
-              className="w-full border rounded-lg p-3"
-              placeholder="Enter or select route"
-              value={route}
-              onChange={(e) =>
-                setRoute(
-                  e.target.value,
-                )
-              }
-            />
-
-            <datalist id="customer-routes">
-
-              {availableRoutes.map(
-                (routeName) => (
-                  <option
-                    key={routeName}
-                    value={routeName}
-                  />
-                ),
-              )}
-
-            </datalist>
-
-            <p className="text-sm text-gray-500 mt-1">
-              Example: Route 1,
-              Route 2, North, South
-            </p>
-
-          </div>
-
-          {/* OPENING BALANCE */}
-
-          <div>
-
-            <label className="block mb-2 font-medium">
-              Opening Balance
-            </label>
-
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              className="w-full border rounded-lg p-3"
-              placeholder="Opening Balance"
-              value={openingBalance}
-              onChange={(e) =>
-                setOpeningBalance(
-                  e.target.value,
-                )
-              }
-            />
-
-            <p className="text-sm text-gray-500 mt-1">
-              Existing amount payable
-              by the customer.
-            </p>
-
-          </div>
-
-          {/* ADDRESS */}
-
-          <div className="md:col-span-2">
-
-            <label className="block mb-2 font-medium">
-              Address
-            </label>
-
-            <textarea
-              className="w-full border rounded-lg p-3"
-              placeholder="Address"
-              rows={3}
-              value={address}
-              onChange={(e) =>
-                setAddress(
-                  e.target.value,
-                )
-              }
-            />
-
-          </div>
-
-        </div>
-
-        {/* BUTTONS */}
-
-        <div className="flex gap-3 mt-5">
-
-          <button
-            onClick={() => {
-              void saveCustomer();
-            }}
-            disabled={loading}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-semibold"
-          >
-            {loading
-              ? "Saving..."
-              : editingId
-              ? "Update Customer"
-              : "Save Customer"}
-          </button>
-
-          {editingId && (
+          {routeSearch && (
             <button
-              onClick={clearForm}
-              disabled={loading}
-              className="bg-gray-500 hover:bg-gray-600 disabled:opacity-50 text-white px-6 py-3 rounded-lg"
+              type="button"
+              onClick={() => setRouteSearch("")}
+              className="text-sm font-bold text-blue-700 hover:underline"
             >
-              Cancel
+              Clear route filter
             </button>
           )}
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {routeSummaries.map(([routeName, summary]) => {
+            const selected = routeSearch.toLowerCase() === routeName.toLowerCase();
+            return (
+              <button
+                type="button"
+                key={routeName}
+                onClick={() => setRouteSearch(routeName === "No Route" ? "" : selected ? "" : routeName)}
+                className={`min-w-[150px] rounded-xl border px-3 py-2 text-left transition ${
+                  selected
+                    ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100"
+                    : "border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50"
+                }`}
+              >
+                <span className="block truncate text-sm font-bold text-slate-800">{routeName}</span>
+                <span className="mt-1 block text-xs text-slate-500">{summary.count} customers</span>
+                <span className="mt-1 block text-sm font-extrabold text-rose-600">{money(summary.due)}</span>
+              </button>
+            );
+          })}
+          {routeSummaries.length === 0 && (
+            <p className="py-2 text-sm text-slate-500">No routes added yet.</p>
+          )}
+        </div>
+      </section>
 
+      {/* Add / edit form */}
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-4 py-4 sm:px-5">
+          <div>
+            <h2 className="text-lg font-extrabold text-slate-900">
+              {editingId ? "Edit Customer" : "Add New Customer"}
+            </h2>
+            <p className="text-xs text-slate-500">Maintain customer contact and route details.</p>
+          </div>
+          {editingId && (
+            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
+              Editing customer
+            </span>
+          )}
         </div>
 
-      </div>
-
-      {/* SEARCH */}
-
-      <div className="bg-white rounded-xl shadow-lg p-5 mb-4">
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
+        <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 sm:p-5">
           <div>
-
-            <label className="block mb-2 font-medium">
-              Search Customer
-            </label>
-
-            <input
-              type="text"
-              placeholder="Search by name, mobile, area or route..."
-              value={search}
-              onChange={(e) =>
-                setSearch(
-                  e.target.value,
-                )
-              }
-              className="w-full border rounded-lg p-3"
-            />
-
+            <label className={labelClass}>Customer Name *</label>
+            <input className={inputClass} placeholder="Customer name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
           </div>
-
           <div>
-
-            <label className="block mb-2 font-medium">
-              Search Route
-            </label>
-
-            <input
-              type="text"
-              list="search-routes"
-              placeholder="Type Route 1, Route 2..."
-              value={routeSearch}
-              onChange={(e) =>
-                setRouteSearch(
-                  e.target.value,
-                )
-              }
-              className="w-full border rounded-lg p-3"
-            />
-
-            <datalist id="search-routes">
-
-              {availableRoutes.map(
-                (routeName) => (
-                  <option
-                    key={routeName}
-                    value={routeName}
-                  />
-                ),
-              )}
-
+            <label className={labelClass}>Mobile Number</label>
+            <input type="tel" className={inputClass} placeholder="10 digit mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelClass}>Area</label>
+            <input className={inputClass} placeholder="Area / locality" value={area} onChange={(e) => setArea(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelClass}>Route</label>
+            <input type="text" list="customer-routes-v30" className={inputClass} placeholder="Enter or select route" value={route} onChange={(e) => setRoute(e.target.value)} />
+            <datalist id="customer-routes-v30">
+              {availableRoutes.map((routeName) => <option key={routeName} value={routeName} />)}
             </datalist>
-
           </div>
-
+          <div>
+            <label className={labelClass}>Opening Balance (₹)</label>
+            <input type="number" min="0" step="0.01" className={inputClass} placeholder="0.00" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} />
+            <p className="mt-1 text-xs text-slate-500">Existing payable amount before recorded sales.</p>
+          </div>
+          <div className="sm:col-span-2">
+            <label className={labelClass}>Address</label>
+            <textarea className={`${inputClass} min-h-[80px]`} rows={2} placeholder="Customer address" value={address} onChange={(e) => setAddress(e.target.value)} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+              <input
+                type="checkbox"
+                checked={whatsappOptIn}
+                onChange={(e) => setWhatsappOptIn(e.target.checked)}
+                className="mt-1 h-5 w-5 accent-emerald-600"
+              />
+              <span>
+                <span className="block text-sm font-bold text-emerald-900">Customer has opted in to WhatsApp messages</span>
+                <span className="mt-1 block text-xs text-emerald-800">Enable only when the customer has agreed to receive eligible sale and collection messages.</span>
+                {whatsappOptIn && !mobile.trim() && (
+                  <span className="mt-1 block text-xs font-bold text-rose-600">Enter a mobile number before saving WhatsApp opt-in.</span>
+                )}
+              </span>
+            </label>
+          </div>
         </div>
 
-        {(search.trim() ||
-          routeSearch.trim()) && (
-          <div className="mt-3 text-sm text-gray-600">
+        <div className="flex flex-wrap gap-2 border-t border-slate-100 bg-slate-50 px-4 py-4 sm:px-5">
+          <button
+            type="button"
+            onClick={() => void saveCustomer()}
+            disabled={loading}
+            className="min-h-[44px] rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-extrabold text-white shadow-sm hover:bg-blue-800 disabled:opacity-50"
+          >
+            {loading ? "Saving..." : editingId ? "Update Customer" : "+ Save Customer"}
+          </button>
+          {editingId && (
+            <button type="button" onClick={clearForm} disabled={loading} className="min-h-[44px] rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50">
+              Cancel Edit
+            </button>
+          )}
+        </div>
+      </section>
 
-            Showing{" "}
-
-            <span className="font-semibold">
-              {filteredCustomers.length}
-            </span>{" "}
-
-            matching customer
-            {filteredCustomers.length ===
-            1
-              ? ""
-              : "s"}
-
+      {/* Search and balance filters */}
+      <section className={cardClass}>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <label className={labelClass}>Search Customer</label>
+            <input type="search" className={inputClass} placeholder="Name, mobile, area or route..." value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-        )}
+          <div>
+            <label className={labelClass}>Filter Route</label>
+            <input type="text" list="customer-route-search-v30" className={inputClass} placeholder="All routes" value={routeSearch} onChange={(e) => setRouteSearch(e.target.value)} />
+            <datalist id="customer-route-search-v30">
+              {availableRoutes.map((routeName) => <option key={routeName} value={routeName} />)}
+            </datalist>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {([
+            ["all", "All Customers"],
+            ["due", "Customers With Due"],
+            ["clear", "No Outstanding"],
+          ] as [BalanceFilter, string][]).map(([value, label]) => (
+            <button
+              type="button"
+              key={value}
+              onClick={() => setBalanceFilter(value)}
+              className={`min-h-[38px] rounded-full border px-4 py-2 text-xs font-extrabold transition ${
+                balanceFilter === value
+                  ? "border-blue-700 bg-blue-700 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="ml-auto text-xs font-semibold text-slate-500">
+            {filteredCustomers.length} shown · {money(filteredOutstanding)} outstanding
+          </span>
+        </div>
+      </section>
 
-      </div>
+      {/* Customer list */}
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-4 sm:px-5">
+          <div>
+            <h2 className="text-lg font-extrabold text-slate-900">Customer Outstanding Register</h2>
+            <p className="text-xs text-slate-500">Highest outstanding customers are shown first.</p>
+          </div>
+          <span className="rounded-full bg-rose-50 px-3 py-1 text-sm font-extrabold text-rose-700">
+            Total {money(totalOutstanding)}
+          </span>
+        </div>
 
-      {/* CUSTOMER TABLE */}
-
-      <div className="bg-white rounded-xl shadow-lg overflow-x-auto">
-
-        <table className="w-full">
-
-          <thead className="bg-blue-600 text-white">
-
-            <tr>
-
-              <th className="p-3 text-left">
-                Customer
-              </th>
-
-              <th className="p-3 text-left">
-                Route
-              </th>
-
-              <th className="p-3 text-left">
-                Mobile
-              </th>
-
-              <th className="p-3 text-left">
-                Area
-              </th>
-
-              <th className="p-3 text-center">
-                WhatsApp
-              </th>
-
-              <th className="p-3 text-right">
-                Opening Balance
-              </th>
-
-              <th className="p-3 text-right">
-                Outstanding
-              </th>
-
-              <th className="p-3 text-center">
-                Actions
-              </th>
-
-            </tr>
-
-          </thead>
-
-          <tbody>
-
-            {loading && (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[920px] border-collapse text-sm">
+            <thead className="bg-slate-900 text-white">
               <tr>
-
-                <td
-                  colSpan={8}
-                  className="p-6 text-center"
-                >
-                  Loading customers...
-                </td>
-
+                <th className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wide">Customer</th>
+                <th className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wide">Route / Area</th>
+                <th className="px-3 py-3 text-left text-xs font-bold uppercase tracking-wide">Mobile</th>
+                <th className="px-3 py-3 text-center text-xs font-bold uppercase tracking-wide">WhatsApp</th>
+                <th className="px-3 py-3 text-right text-xs font-bold uppercase tracking-wide">Opening</th>
+                <th className="px-3 py-3 text-right text-xs font-bold uppercase tracking-wide">Unpaid Sales</th>
+                <th className="px-3 py-3 text-right text-xs font-bold uppercase tracking-wide">Total Outstanding</th>
+                <th className="px-3 py-3 text-center text-xs font-bold uppercase tracking-wide">Actions</th>
               </tr>
-            )}
-
-            {!loading &&
-              filteredCustomers.map(
-                (customer) => (
-
-                  <tr
-                    key={customer.id}
-                    className="border-b hover:bg-gray-50"
-                  >
-
-                    <td className="p-3 font-medium">
-                      {customer.customer_name}
-                    </td>
-
-                    <td className="p-3 font-medium text-blue-700">
-                      {customer.route || "-"}
-                    </td>
-
-                    <td className="p-3">
-                      {customer.mobile || "-"}
-                    </td>
-
-                    <td className="p-3">
-                      {customer.area || "-"}
-                    </td>
-
-                    <td className="p-3 text-center">
-
-                      {customer.whatsapp_opt_in ? (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
-                          Enabled
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
-                          Off
-                        </span>
-                      )}
-
-                    </td>
-
-                    <td className="p-3 text-right">
-                      ₹{" "}
-                      {Number(
-                        customer.opening_balance ||
-                          0,
-                      ).toFixed(2)}
-                    </td>
-
-                    <td
-                      className={`p-3 text-right font-bold ${
-                        customer.outstanding >
-                        0
-                          ? "text-red-600"
-                          : "text-green-600"
-                      }`}
-                    >
-                      ₹{" "}
-                      {Number(
-                        customer.outstanding ||
-                          0,
-                      ).toFixed(2)}
-                    </td>
-
-                    <td className="p-3">
-
-                      <div className="flex justify-center gap-2">
-
-                        <button
-                          onClick={() =>
-                            editCustomer(
-                              customer,
-                            )
-                          }
-                          className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-1 rounded"
-                        >
-                          Edit
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            void deleteCustomer(
-                              customer.id,
-                            );
-                          }}
-                          className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded"
-                        >
-                          Delete
-                        </button>
-
-                      </div>
-
-                    </td>
-
-                  </tr>
-                ),
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-500">Loading customer data...</td></tr>
               )}
-
-            {!loading &&
-              filteredCustomers.length ===
-                0 && (
-
-                <tr>
-
-                  <td
-                    colSpan={8}
-                    className="p-6 text-center text-gray-500"
-                  >
-                    No customers found.
+              {!loading && filteredCustomers.map((customer) => (
+                <tr key={customer.id} className="border-b border-slate-100 odd:bg-white even:bg-slate-50/70 hover:bg-blue-50/70">
+                  <td className="px-3 py-3">
+                    <span className="block font-bold text-slate-900">{customer.customer_name}</span>
+                    {customer.address && <span className="mt-0.5 block max-w-[220px] truncate text-xs text-slate-500">{customer.address}</span>}
                   </td>
-
+                  <td className="px-3 py-3">
+                    <span className="block font-semibold text-blue-800">{customer.route || "No Route"}</span>
+                    <span className="text-xs text-slate-500">{customer.area || "-"}</span>
+                  </td>
+                  <td className="px-3 py-3 text-slate-700">{customer.mobile || "-"}</td>
+                  <td className="px-3 py-3 text-center">
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${customer.whatsapp_opt_in ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500"}`}>
+                      {customer.whatsapp_opt_in ? "Enabled" : "Off"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-right tabular-nums text-slate-700">{money(customer.opening_balance)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums text-blue-700">{money(customer.sales_outstanding)}</td>
+                  <td className="px-3 py-3 text-right">
+                    <span className={`rounded-lg px-2.5 py-1.5 font-extrabold tabular-nums ${customer.outstanding > 0 ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"}`}>
+                      {money(customer.outstanding)}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex justify-center gap-2">
+                      <button type="button" onClick={() => editCustomer(customer)} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600">Edit</button>
+                      <button type="button" onClick={() => void deleteCustomer(customer.id)} disabled={loading} className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">Delete</button>
+                    </div>
+                  </td>
                 </tr>
-
+              ))}
+              {!loading && filteredCustomers.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center">
+                    <p className="font-bold text-slate-700">No customers found</p>
+                    <p className="mt-1 text-sm text-slate-500">Change the search or balance filter and try again.</p>
+                  </td>
+                </tr>
               )}
+            </tbody>
+            {!loading && filteredCustomers.length > 0 && (
+              <tfoot className="border-t-2 border-slate-200 bg-slate-100 font-extrabold text-slate-800">
+                <tr>
+                  <td colSpan={4} className="px-3 py-3">Filtered Total ({filteredCustomers.length} customers)</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{money(filteredCustomers.reduce((sum, customer) => sum + customer.opening_balance, 0))}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{money(filteredCustomers.reduce((sum, customer) => sum + customer.sales_outstanding, 0))}</td>
+                  <td className="px-3 py-3 text-right tabular-nums text-rose-700">{money(filteredOutstanding)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+        <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+          Outstanding calculation: opening balance plus unpaid sales balance, using the existing V29 calculation. This page does not create collection or sale entries.
+        </div>
+      </section>
 
-          </tbody>
-
-        </table>
-
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <p className="text-xs text-slate-500">WhatsApp Opt-in</p>
+          <p className="mt-1 text-lg font-extrabold text-emerald-700">{whatsappCustomers}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <p className="text-xs text-slate-500">No Outstanding</p>
+          <p className="mt-1 text-lg font-extrabold text-slate-800">{customers.length - dueCustomers}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <p className="text-xs text-slate-500">Customers With Due</p>
+          <p className="mt-1 text-lg font-extrabold text-rose-700">{dueCustomers}</p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-3">
+          <p className="text-xs text-slate-500">Routes</p>
+          <p className="mt-1 text-lg font-extrabold text-blue-700">{availableRoutes.length}</p>
+        </div>
       </div>
-
     </div>
   );
 }

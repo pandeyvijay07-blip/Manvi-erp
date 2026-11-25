@@ -685,13 +685,13 @@ export default function Products() {
       // =================================================
 
       const {
+        data: customerPriceRows,
         count: customerPriceCount,
         error: customerPriceError,
       } = await supabase
         .from("customer_prices")
-        .select("product_id", {
+        .select("customer_id, selling_rate", {
           count: "exact",
-          head: true,
         })
         .eq("product_id", product.id);
 
@@ -700,8 +700,66 @@ export default function Products() {
       }
 
       if ((customerPriceCount || 0) > 0) {
+        const customerIds = Array.from(
+          new Set(
+            (customerPriceRows || [])
+              .map((row: any) => row.customer_id)
+              .filter(Boolean)
+              .map((id: string) => String(id))
+          )
+        );
+
+        let customerNames: string[] = [];
+
+        if (customerIds.length > 0) {
+          const { data: linkedCustomers, error: customerLookupError } =
+            await supabase
+              .from("customers")
+              .select("id, customer_name")
+              .in("id", customerIds);
+
+          if (customerLookupError) {
+            throw customerLookupError;
+          }
+
+          const nameById = new Map(
+            (linkedCustomers || []).map((customer: any) => [
+              String(customer.id),
+              String(customer.customer_name || "Unnamed customer"),
+            ])
+          );
+
+          customerNames = customerIds.map((id) => {
+            const row = (customerPriceRows || []).find(
+              (item: any) => String(item.customer_id) === id
+            );
+            const name = nameById.get(id) || `Unknown customer (ID: ${id})`;
+            const rate =
+              row?.selling_rate !== null && row?.selling_rate !== undefined
+                ? ` — ₹${Number(row.selling_rate).toFixed(2)}`
+                : "";
+            return `${name}${rate}`;
+          });
+        }
+
+        const orphanCount = Math.max(
+          0,
+          (customerPriceCount || 0) - customerIds.length
+        );
+
+        const details = [
+          ...customerNames,
+          ...(orphanCount > 0
+            ? [`${orphanCount} customer-price record(s) have no customer ID`]
+            : []),
+        ];
+
         alert(
-          "This product has customer prices and cannot be deleted."
+          `Deletion blocked: ${customerPriceCount} customer-price record(s) are linked to "${product.product_name}".\n\n` +
+            (details.length > 0
+              ? details.join("\n")
+              : "The records exist, but their customer details could not be identified.") +
+            "\n\nNote: Sales entry can automatically save a customer's product price. These records may have been created when sales were saved."
         );
         return;
       }
@@ -1554,9 +1612,31 @@ export default function Products() {
                     {/* PRODUCT */}
 
                     <td className="p-3 font-medium">
-                      {
-                        product.product_name
-                      }
+                      <div className="min-w-[150px]">
+                        <div>{product.product_name}</div>
+
+                        {/* MOBILE ACTIONS: keep Edit/Delete visible without
+                            scrolling the wide product table to the far right. */}
+                        <div className="mt-2 flex gap-2 sm:hidden">
+                          <button
+                            type="button"
+                            onClick={() => editProduct(product)}
+                            disabled={saving || deletingId !== null}
+                            className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void deleteProduct(product)}
+                            disabled={saving || deletingId !== null}
+                            className="rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                          >
+                            {deletingId === product.id ? "Checking..." : "Delete"}
+                          </button>
+                        </div>
+                      </div>
                     </td>
 
                     {/* SIZE */}

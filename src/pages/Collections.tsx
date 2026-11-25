@@ -26,6 +26,7 @@ type RecentCollection = {
   upi_amount: number;
   remarks: string;
   source: "Collection" | "Sale";
+  sale_id?: string | null;
 };
 
 type Allocation = {
@@ -40,6 +41,23 @@ type RouteCollectionRow = {
   outstanding: number;
   cash: string;
   upi: string;
+};
+
+type RouteDailyStatus = "Paid" | "Partial" | "Not collected" | "No entry";
+
+type RouteDailyStatusRow = {
+  id: string;
+  customer_name: string;
+  route: string;
+  saleEntered: boolean;
+  saleTotal: number;
+  salePaid: number;
+  previousOutstanding: number;
+  todayOutstanding: number;
+  collectionToday: number;
+  cashToday: number;
+  upiToday: number;
+  status: RouteDailyStatus;
 };
 
 
@@ -221,6 +239,21 @@ export default function Collections() {
   const [routeCollectionSaving, setRouteCollectionSaving] =
     useState(false);
 
+
+  /* =====================================================
+     DAILY ROUTE ENTRY STATUS
+     ===================================================== */
+
+  const [dailyStatusRoute, setDailyStatusRoute] = useState("");
+  const [dailyStatusDate, setDailyStatusDate] =
+    useState(getTodayLocalDate());
+  const [dailyStatusRows, setDailyStatusRows] =
+    useState<RouteDailyStatusRow[]>([]);
+  const [dailyStatusLoading, setDailyStatusLoading] =
+    useState(false);
+  const [dailyStatusFilter, setDailyStatusFilter] =
+    useState("All");
+
   /* =====================================================
      LOAD CUSTOMERS
   ===================================================== */
@@ -386,6 +419,7 @@ export default function Collections() {
             upi_amount: upi,
             remarks: "Sale Payment",
             source: "Sale",
+            sale_id: row.id,
           };
         });
 
@@ -417,6 +451,211 @@ export default function Collections() {
         "Recent collection error:",
         error
       );
+    }
+  }
+
+
+  /* =====================================================
+     VIEW BILL / COLLECTION RECEIPT FROM RECENT COLLECTIONS
+     - Sale-payment rows open the original sale bill.
+     - Manual collection rows show the receipt and every
+       sale bill allocated to that collection.
+     - This is read-only and does not modify ledger values.
+  ===================================================== */
+  async function viewRecentCollectionBilling(
+    collection: RecentCollection
+  ) {
+    const billWindow = window.open("", "_blank");
+    if (!billWindow) {
+      alert("Please allow pop-ups for MANVI ERP to view the bill.");
+      return;
+    }
+
+    billWindow.document.open();
+    billWindow.document.write(
+      "<!doctype html><html><body style='font-family:Arial;padding:24px'>Loading bill details...</body></html>"
+    );
+    billWindow.document.close();
+
+    const safe = (value: unknown) =>
+      String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
+    const money = (value: unknown) =>
+      `₹ ${Number(value || 0).toFixed(2)}`;
+
+    try {
+      setLoading(true);
+
+      let saleIds: string[] = [];
+      let allocations: { sale_id: string; amount: number }[] = [];
+
+      if (collection.source === "Sale") {
+        const linkedSaleId =
+          collection.sale_id || collection.id.replace(/^sale-/, "");
+        if (linkedSaleId) saleIds = [linkedSaleId];
+      } else {
+        const { data: allocationRows, error: allocationError } = await supabase
+          .from("collection_allocations")
+          .select("sale_id, amount")
+          .eq("collection_id", collection.id);
+
+        if (allocationError) throw allocationError;
+
+        allocations = (allocationRows || [])
+          .filter((row: any) => row.sale_id)
+          .map((row: any) => ({
+            sale_id: String(row.sale_id),
+            amount: Number(row.amount) || 0,
+          }));
+
+        saleIds = Array.from(new Set(allocations.map((row) => row.sale_id)));
+      }
+
+      let linkedSales: any[] = [];
+      let saleItems: any[] = [];
+      let productNames = new Map<string, string>();
+
+      if (saleIds.length > 0) {
+        const [salesResponse, itemsResponse] = await Promise.all([
+          supabase
+            .from("sales")
+            .select("id, sale_date, customer_id, payment_method, total_amount, round_off, paid_amount, balance_amount, cash_amount, upi_amount")
+            .in("id", saleIds),
+          supabase
+            .from("sale_items")
+            .select("sale_id, product_id, quantity, rate, amount")
+            .in("sale_id", saleIds)
+            .order("id", { ascending: true }),
+        ]);
+
+        if (salesResponse.error) throw salesResponse.error;
+        if (itemsResponse.error) throw itemsResponse.error;
+
+        linkedSales = salesResponse.data || [];
+        saleItems = itemsResponse.data || [];
+
+        const productIds = Array.from(
+          new Set(saleItems.map((item: any) => String(item.product_id)).filter(Boolean))
+        );
+
+        if (productIds.length > 0) {
+          const { data: productRows, error: productError } = await supabase
+            .from("products")
+            .select("id, product_name")
+            .in("id", productIds);
+
+          if (productError) throw productError;
+
+          productNames = new Map(
+            (productRows || []).map((product: any) => [
+              String(product.id),
+              String(product.product_name || "Product"),
+            ])
+          );
+        }
+      }
+
+      const billSections = linkedSales
+        .sort((a, b) => String(a.sale_date).localeCompare(String(b.sale_date)))
+        .map((sale: any, index: number) => {
+          const saleRows = saleItems
+            .filter((item: any) => String(item.sale_id) === String(sale.id))
+            .map((item: any, itemIndex: number) => `
+              <tr>
+                <td>${itemIndex + 1}</td>
+                <td>${safe(productNames.get(String(item.product_id)) || "Product")}</td>
+                <td>${Number(item.quantity || 0)}</td>
+                <td>${money(item.rate)}</td>
+                <td>${money(item.amount)}</td>
+              </tr>`)
+            .join("");
+
+          const allocated = collection.source === "Sale"
+            ? Number(sale.paid_amount || 0)
+            : allocations
+                .filter((item) => item.sale_id === String(sale.id))
+                .reduce((sum, item) => sum + item.amount, 0);
+
+          const method = String(sale.payment_method || "Cash");
+          const split = method.trim().toLowerCase() === "split"
+            ? `<div>Cash: ${money(sale.cash_amount)} &nbsp; | &nbsp; UPI: ${money(sale.upi_amount)}</div>`
+            : "";
+
+          return `
+            <section class="bill-section">
+              <h2>${collection.source === "Sale" ? "SALE BILL" : `BILL ${index + 1}`}</h2>
+              <div class="meta"><strong>Bill Date:</strong> ${safe(formatDateDDMMYYYY(sale.sale_date))}<br>
+                <strong>Payment Method:</strong> ${safe(method)} ${split}</div>
+              <table><thead><tr><th>#</th><th>Product</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
+                <tbody>${saleRows || '<tr><td colspan="5">No item details available.</td></tr>'}</tbody></table>
+              <div class="totals">
+                <div>Bill Total: ${money(sale.total_amount)}</div>
+                <div>Paid on Bill: ${money(sale.paid_amount)}</div>
+                <div>Balance Now: ${money(sale.balance_amount)}</div>
+                ${collection.source === "Collection" ? `<div class="allocated">Applied from this collection: ${money(allocated)}</div>` : ""}
+              </div>
+            </section>`;
+        })
+        .join("");
+
+      const isSalePayment = collection.source === "Sale";
+      const noBillsMessage = !isSalePayment && linkedSales.length === 0
+        ? `<div class="notice">No specific sale bill was allocated to this collection. This payment may have adjusted an opening balance or remained as customer advance.</div>`
+        : "";
+
+      const heading = isSalePayment ? "MANVI MILK AGENCIES — BILL" : "MANVI MILK AGENCIES — COLLECTION RECEIPT";
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>${safe(heading)}</title>
+        <style>
+          body{font-family:Arial,sans-serif;color:#111;margin:0 auto;padding:22px;max-width:920px}
+          .toolbar{display:flex;justify-content:center;gap:10px;margin:0 0 22px}
+          .toolbar button{border:0;border-radius:8px;padding:10px 18px;background:#174b91;color:white;font-weight:bold;cursor:pointer}
+          .toolbar button.secondary{background:#64748b}
+          h1{text-align:center;font-size:22px;margin:0 0 5px}h2{text-align:center;font-size:16px;margin:10px 0 14px}
+          .meta{line-height:1.7;margin:12px 0 16px}.receipt{border:1px solid #cbd5e1;border-radius:10px;padding:14px;margin:18px 0}
+          .receipt-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.receipt strong{color:#334155}
+          table{border-collapse:collapse;width:100%;margin-top:10px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}
+          th{background:#eff4fb}td:nth-child(1),td:nth-child(3){text-align:center}td:nth-child(4),td:nth-child(5){text-align:right}
+          .bill-section{border-top:2px solid #334155;margin-top:24px;padding-top:12px;page-break-inside:avoid}
+          .totals{width:300px;margin:12px 0 0 auto;line-height:1.8;text-align:right}.allocated{font-weight:bold;color:#075985;border-top:1px solid #cbd5e1;padding-top:5px}
+          .notice{border:1px solid #f59e0b;background:#fffbeb;padding:14px;border-radius:8px;margin-top:18px;color:#92400e}
+          .footer{text-align:center;color:#64748b;margin-top:26px;font-size:12px}
+          @media print{body{padding:6px}.toolbar{display:none}.bill-section{break-inside:avoid}}
+          @media(max-width:600px){body{padding:12px}.receipt-grid{grid-template-columns:1fr}.totals{width:100%}}
+        </style></head><body>
+        <div class="toolbar"><button onclick="window.print()">Print</button><button class="secondary" onclick="window.close()">Close</button></div>
+        <h1>MANVI MILK AGENCIES</h1><h2>${isSalePayment ? "SALE BILL" : "COLLECTION RECEIPT"}</h2>
+        <div class="receipt"><div class="receipt-grid">
+          <div><strong>Customer:</strong> ${safe(collection.customer_name)}</div>
+          <div><strong>Date:</strong> ${safe(formatDateDDMMYYYY(collection.collection_date))}</div>
+          <div><strong>Amount Received:</strong> ${money(collection.amount)}</div>
+          <div><strong>Payment:</strong> ${safe(collection.payment_method)}</div>
+          <div><strong>Cash:</strong> ${money(collection.cash_amount)}</div>
+          <div><strong>UPI:</strong> ${money(collection.upi_amount)}</div>
+          <div><strong>Remarks:</strong> ${safe(collection.remarks || "-")}</div>
+        </div></div>
+        ${billSections || noBillsMessage}
+        <div class="footer">MANVI MILK AGENCIES · Thank you.</div>
+        </body></html>`;
+
+      billWindow.document.open();
+      billWindow.document.write(html);
+      billWindow.document.close();
+      billWindow.focus();
+    } catch (error: any) {
+      console.error("View recent collection bill error:", error);
+      billWindow.document.open();
+      billWindow.document.write(
+        `<!doctype html><html><body style="font-family:Arial;padding:24px"><h2>Unable to load billing details</h2><p>${safe(error?.message || "Unknown error")}</p></body></html>`
+      );
+      billWindow.document.close();
+      alert("Unable to open billing details:\n" + (error?.message || "Unknown error"));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1258,6 +1497,20 @@ export default function Collections() {
   }, [routeOptions, routeCollectionRoute]);
 
   useEffect(() => {
+    if (!dailyStatusRoute && routeOptions.length > 0) {
+      setDailyStatusRoute(routeOptions[0]);
+    }
+  }, [routeOptions, dailyStatusRoute]);
+
+  useEffect(() => {
+    if (dailyStatusRoute && customers.length > 0) {
+      void loadDailyRouteStatus(dailyStatusRoute, dailyStatusDate);
+    } else {
+      setDailyStatusRows([]);
+    }
+  }, [dailyStatusRoute, dailyStatusDate, customers]);
+
+  useEffect(() => {
     if (routeCollectionRoute && customers.length > 0) {
       void loadRouteCollectionRows(routeCollectionRoute);
     }
@@ -1280,6 +1533,178 @@ export default function Collections() {
     });
 
   }, [customers, routeFilter, customerSearch]);
+
+  /* =====================================================
+     DAILY ROUTE ENTRY STATUS
+     ===================================================== */
+
+  async function loadDailyRouteStatus(
+    selectedRoute: string = dailyStatusRoute,
+    selectedDate: string = dailyStatusDate
+  ) {
+    const normalizedRoute = String(selectedRoute || "").trim();
+
+    if (!normalizedRoute || !selectedDate) {
+      setDailyStatusRows([]);
+      return;
+    }
+
+    const routeCustomers = customers.filter(
+      (customer) =>
+        String(customer.route || "").trim().toLowerCase() ===
+        normalizedRoute.toLowerCase()
+    );
+
+    if (routeCustomers.length === 0) {
+      setDailyStatusRows([]);
+      return;
+    }
+
+    try {
+      setDailyStatusLoading(true);
+
+      const customerIds = routeCustomers.map((customer) => customer.id);
+
+      // Read all sales for this route so old outstanding and the selected
+      // day's outstanding can be displayed separately without changing data.
+      const [salesResult, collectionsResult] = await Promise.all([
+        supabase
+          .from("sales")
+          .select(
+            "customer_id, sale_date, total_amount, paid_amount, balance_amount, cash_amount, upi_amount, payment_method"
+          )
+          .in("customer_id", customerIds),
+        supabase
+          .from("collections")
+          .select("customer_id, amount, cash_amount, upi_amount, payment_method")
+          .in("customer_id", customerIds)
+          .eq("collection_date", selectedDate),
+      ]);
+
+      if (salesResult.error) throw salesResult.error;
+      if (collectionsResult.error) throw collectionsResult.error;
+
+      const salesByCustomer = new Map<string, any[]>();
+      (salesResult.data || []).forEach((sale: any) => {
+        const id = String(sale.customer_id || "");
+        if (!id) return;
+        const rows = salesByCustomer.get(id) || [];
+        rows.push(sale);
+        salesByCustomer.set(id, rows);
+      });
+
+      const collectionsByCustomer = new Map<string, { amount: number; cash: number; upi: number }>();
+      (collectionsResult.data || []).forEach((collection: any) => {
+        const id = String(collection.customer_id || "");
+        if (!id) return;
+
+        const amountValue = Number(collection.amount) || 0;
+        const method = String(collection.payment_method || "Cash").toLowerCase();
+        const cashValue = collection.cash_amount !== null && collection.cash_amount !== undefined
+          ? Number(collection.cash_amount) || 0
+          : method === "cash" ? amountValue : 0;
+        const upiValue = collection.upi_amount !== null && collection.upi_amount !== undefined
+          ? Number(collection.upi_amount) || 0
+          : method === "upi" ? amountValue : 0;
+
+        const current = collectionsByCustomer.get(id) || { amount: 0, cash: 0, upi: 0 };
+        current.amount += amountValue;
+        current.cash += cashValue;
+        current.upi += upiValue;
+        collectionsByCustomer.set(id, current);
+      });
+
+      const rows: RouteDailyStatusRow[] = routeCustomers.map((customer) => {
+        const customerSales = salesByCustomer.get(customer.id) || [];
+        const selectedDaySales = customerSales.filter(
+          (sale) => String(sale.sale_date || "").slice(0, 10) === selectedDate
+        );
+        const previousSalesOutstanding = customerSales.reduce((total, sale) => {
+          const saleDate = String(sale.sale_date || "").slice(0, 10);
+          return saleDate !== selectedDate
+            ? total + Math.max(0, Number(sale.balance_amount) || 0)
+            : total;
+        }, 0);
+        const todayOutstanding = selectedDaySales.reduce(
+          (total, sale) => total + Math.max(0, Number(sale.balance_amount) || 0),
+          0
+        );
+        const saleTotal = selectedDaySales.reduce(
+          (total, sale) => total + (Number(sale.total_amount) || 0),
+          0
+        );
+        const salePaid = selectedDaySales.reduce(
+          (total, sale) => total + (Number(sale.paid_amount) || 0),
+          0
+        );
+        const todayCollections = collectionsByCustomer.get(customer.id) || {
+          amount: 0,
+          cash: 0,
+          upi: 0,
+        };
+        const paymentReceivedToday = salePaid + todayCollections.amount;
+        const saleEntered = selectedDaySales.length > 0;
+        const previousOutstanding =
+          (Number(customer.opening_balance) || 0) + previousSalesOutstanding;
+
+        let status: RouteDailyStatus;
+        if (!saleEntered && paymentReceivedToday <= 0) {
+          status = "No entry";
+        } else if (todayOutstanding > 0 && paymentReceivedToday <= 0) {
+          status = "Not collected";
+        } else if (todayOutstanding > 0 && paymentReceivedToday > 0) {
+          status = "Partial";
+        } else {
+          status = "Paid";
+        }
+
+        return {
+          id: customer.id,
+          customer_name: customer.customer_name,
+          route: customer.route || "",
+          saleEntered,
+          saleTotal,
+          salePaid,
+          previousOutstanding,
+          todayOutstanding,
+          collectionToday: todayCollections.amount,
+          cashToday: todayCollections.cash,
+          upiToday: todayCollections.upi,
+          status,
+        };
+      });
+
+      setDailyStatusRows(rows);
+    } catch (error: any) {
+      console.error("Daily route status load error:", error);
+      setDailyStatusRows([]);
+      alert(
+        "Unable to load daily route status:\n" +
+          (error?.message || "Unknown error")
+      );
+    } finally {
+      setDailyStatusLoading(false);
+    }
+  }
+
+  const filteredDailyStatusRows = useMemo(() => {
+    if (dailyStatusFilter === "All") return dailyStatusRows;
+    return dailyStatusRows.filter((row) => row.status === dailyStatusFilter);
+  }, [dailyStatusRows, dailyStatusFilter]);
+
+  const dailyStatusTotals = useMemo(() => ({
+    customers: dailyStatusRows.length,
+    saleEntered: dailyStatusRows.filter((row) => row.saleEntered).length,
+    missingSales: dailyStatusRows.filter((row) => !row.saleEntered).length,
+    paid: dailyStatusRows.filter((row) => row.status === "Paid").length,
+    partial: dailyStatusRows.filter((row) => row.status === "Partial").length,
+    notCollected: dailyStatusRows.filter((row) => row.status === "Not collected").length,
+    noEntry: dailyStatusRows.filter((row) => row.status === "No entry").length,
+    saleTotal: dailyStatusRows.reduce((sum, row) => sum + row.saleTotal, 0),
+    collectionTotal: dailyStatusRows.reduce((sum, row) => sum + row.collectionToday, 0),
+    previousOutstanding: dailyStatusRows.reduce((sum, row) => sum + row.previousOutstanding, 0),
+    todayOutstanding: dailyStatusRows.reduce((sum, row) => sum + row.todayOutstanding, 0),
+  }), [dailyStatusRows]);
 
   /* =====================================================
      ROUTE-WISE COLLECTION
@@ -1543,6 +1968,182 @@ export default function Collections() {
       </div>
 
       {/* =================================================
+          DAILY ROUTE STATUS / MISSING ENTRIES
+      ================================================= */}
+
+      <div className="bg-white rounded-2xl shadow p-5 md:p-6 border border-blue-100">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-5">
+          <div>
+            <h2 className="text-2xl font-bold text-blue-800">
+              Daily Route Status
+            </h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Track missing sales entries, payments received and outstanding balances for every customer on the route.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-sm font-semibold mb-1">Route</label>
+              <select
+                value={dailyStatusRoute}
+                onChange={(event) => setDailyStatusRoute(event.target.value)}
+                className="border rounded-xl px-3 py-3 min-w-[180px] bg-white"
+              >
+                <option value="">Select Route</option>
+                {routeOptions.map((route) => (
+                  <option key={route} value={route}>{route}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold mb-1">Date</label>
+              <input
+                type="date"
+                value={dailyStatusDate}
+                onChange={(event) => setDailyStatusDate(event.target.value)}
+                className="border rounded-xl px-3 py-3 bg-white"
+              />
+            </div>
+            <button
+              type="button"
+              disabled={!dailyStatusRoute || dailyStatusLoading}
+              onClick={() => void loadDailyRouteStatus(dailyStatusRoute, dailyStatusDate)}
+              className="bg-blue-700 hover:bg-blue-800 disabled:bg-gray-400 text-white px-5 py-3 rounded-xl font-bold"
+            >
+              {dailyStatusLoading ? "Refreshing..." : "Refresh Status"}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
+          <div className="rounded-xl bg-slate-50 border p-3">
+            <div className="text-xs text-gray-500">Route Customers</div>
+            <div className="text-2xl font-bold text-slate-800">{dailyStatusTotals.customers}</div>
+          </div>
+          <div className="rounded-xl bg-green-50 border border-green-100 p-3">
+            <div className="text-xs text-green-700">Sales Entered</div>
+            <div className="text-2xl font-bold text-green-800">{dailyStatusTotals.saleEntered}</div>
+          </div>
+          <div className="rounded-xl bg-red-50 border border-red-100 p-3">
+            <div className="text-xs text-red-700">Sales Missing</div>
+            <div className="text-2xl font-bold text-red-800">{dailyStatusTotals.missingSales}</div>
+          </div>
+          <div className="rounded-xl bg-amber-50 border border-amber-100 p-3">
+            <div className="text-xs text-amber-700">Not Collected</div>
+            <div className="text-2xl font-bold text-amber-800">{dailyStatusTotals.notCollected}</div>
+          </div>
+          <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3">
+            <div className="text-xs text-indigo-700">Partial</div>
+            <div className="text-2xl font-bold text-indigo-800">{dailyStatusTotals.partial}</div>
+          </div>
+          <div className="rounded-xl bg-rose-50 border border-rose-100 p-3">
+            <div className="text-xs text-rose-700">No Entry</div>
+            <div className="text-2xl font-bold text-rose-800">{dailyStatusTotals.noEntry}</div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex flex-wrap gap-2 text-sm">
+            <span className="rounded-full bg-blue-50 text-blue-800 px-3 py-1.5 font-semibold">
+              Sales: ₹{dailyStatusTotals.saleTotal.toFixed(2)}
+            </span>
+            <span className="rounded-full bg-green-50 text-green-800 px-3 py-1.5 font-semibold">
+              Collections: ₹{dailyStatusTotals.collectionTotal.toFixed(2)}
+            </span>
+            <span className="rounded-full bg-slate-100 text-slate-700 px-3 py-1.5 font-semibold">
+              Previous due: ₹{dailyStatusTotals.previousOutstanding.toFixed(2)}
+            </span>
+            <span className="rounded-full bg-orange-50 text-orange-800 px-3 py-1.5 font-semibold">
+              Today's due: ₹{dailyStatusTotals.todayOutstanding.toFixed(2)}
+            </span>
+          </div>
+          <select
+            value={dailyStatusFilter}
+            onChange={(event) => setDailyStatusFilter(event.target.value)}
+            className="border rounded-lg px-3 py-2 bg-white text-sm"
+            aria-label="Filter daily route status"
+          >
+            <option value="All">All Customers</option>
+            <option value="Paid">Paid</option>
+            <option value="Partial">Partial Payment</option>
+            <option value="Not collected">Not Collected</option>
+            <option value="No entry">No Entry</option>
+          </select>
+        </div>
+
+        {!dailyStatusRoute ? (
+          <div className="rounded-xl border border-dashed p-6 text-center text-gray-500">
+            Select a route to view its daily status.
+          </div>
+        ) : dailyStatusLoading ? (
+          <div className="rounded-xl border p-6 text-center text-gray-500">
+            Loading daily route entries...
+          </div>
+        ) : dailyStatusRows.length === 0 ? (
+          <div className="rounded-xl border border-dashed p-6 text-center text-gray-500">
+            No customers found for this route.
+          </div>
+        ) : filteredDailyStatusRows.length === 0 ? (
+          <div className="rounded-xl border border-dashed p-6 text-center text-gray-500">
+            No customers match this status filter.
+          </div>
+        ) : (
+          <div className="overflow-x-auto border rounded-xl">
+            <table className="w-full min-w-[1050px] text-sm border-collapse">
+              <thead>
+                <tr className="bg-slate-800 text-white">
+                  <th className="p-3 text-left">#</th>
+                  <th className="p-3 text-left">Customer</th>
+                  <th className="p-3 text-center">Sales Entry</th>
+                  <th className="p-3 text-right">Today's Sale</th>
+                  <th className="p-3 text-right">Previous Outstanding</th>
+                  <th className="p-3 text-right">Today's Outstanding</th>
+                  <th className="p-3 text-right">Collection Today</th>
+                  <th className="p-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredDailyStatusRows.map((row, index) => {
+                  const badgeClass = row.status === "Paid"
+                    ? "bg-green-100 text-green-800"
+                    : row.status === "Partial"
+                    ? "bg-indigo-100 text-indigo-800"
+                    : row.status === "Not collected"
+                    ? "bg-amber-100 text-amber-800"
+                    : "bg-rose-100 text-rose-800";
+
+                  return (
+                    <tr key={row.id} className="border-b odd:bg-white even:bg-slate-50 hover:bg-blue-50">
+                      <td className="p-3">{index + 1}</td>
+                      <td className="p-3 font-semibold text-slate-800">{row.customer_name}</td>
+                      <td className="p-3 text-center">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${row.saleEntered ? "bg-green-100 text-green-800" : "bg-rose-100 text-rose-800"}`}>
+                          {row.saleEntered ? "Entered" : "Missing"}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">₹{row.saleTotal.toFixed(2)}</td>
+                      <td className="p-3 text-right text-slate-600">₹{row.previousOutstanding.toFixed(2)}</td>
+                      <td className="p-3 text-right font-semibold text-orange-700">₹{row.todayOutstanding.toFixed(2)}</td>
+                      <td className="p-3 text-right font-semibold text-green-700">₹{(row.salePaid + row.collectionToday).toFixed(2)}</td>
+                      <td className="p-3 text-center">
+                        <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold whitespace-nowrap ${badgeClass}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="text-xs text-gray-500 mt-3">
+          “No Entry” means no sale and no payment record exists for the selected date. Previous outstanding is shown separately from the selected date's outstanding. This report is read-only and does not create or change transactions.
+        </p>
+      </div>
+
+      {/* =================================================
           ROUTE-WISE COLLECTION
       ================================================= */}
 
@@ -1609,7 +2210,70 @@ export default function Collections() {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto border rounded-xl">
+            {/* MOBILE: customer-first cards keep names visible without horizontal scrolling */}
+            <div className="md:hidden space-y-3">
+              {routeCollectionRows.map((row, index) => {
+                const cash = Number(row.cash) || 0;
+                const upi = Number(row.upi) || 0;
+                const total = cash + upi;
+
+                return (
+                  <div key={row.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-slate-500">CUSTOMER {index + 1}</p>
+                        <p className="mt-1 break-words text-base font-bold text-slate-900">
+                          {row.customer_name || "Unnamed customer"}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-xs text-slate-500">Outstanding</p>
+                        <p className="font-bold text-red-600">₹{row.outstanding.toFixed(2)}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 pt-3">
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold text-green-700">Cash (₹)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={row.cash}
+                          onChange={(e) => updateRouteCollectionAmount(row.id, "cash", e.target.value)}
+                          className="w-full min-w-0 rounded-lg border-2 border-green-200 bg-white px-3 py-3 text-base text-right"
+                          placeholder="0"
+                          aria-label={`Cash received from ${row.customer_name}`}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold text-blue-700">UPI (₹)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={row.upi}
+                          onChange={(e) => updateRouteCollectionAmount(row.id, "upi", e.target.value)}
+                          className="w-full min-w-0 rounded-lg border-2 border-blue-200 bg-white px-3 py-3 text-base text-right"
+                          placeholder="0"
+                          aria-label={`UPI received from ${row.customer_name}`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+                      <span className="text-sm font-semibold text-slate-600">Customer Total</span>
+                      <span className="text-base font-bold text-green-700">₹{total.toFixed(2)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* DESKTOP: full-width table */}
+            <div className="hidden md:block overflow-x-auto border rounded-xl">
               <table className="w-full min-w-[760px] border-collapse">
                 <thead>
                   <tr className="bg-blue-600 text-white">
@@ -1621,7 +2285,6 @@ export default function Collections() {
                     <th className="p-3 text-right">Total</th>
                   </tr>
                 </thead>
-
                 <tbody>
                   {routeCollectionRows.map((row, index) => {
                     const cash = Number(row.cash) || 0;
@@ -1629,86 +2292,64 @@ export default function Collections() {
                     const total = cash + upi;
 
                     return (
-                      <tr
-                        key={row.id}
-                        className="border-b hover:bg-blue-50"
-                      >
-                        <td className="p-3">
-                          {index + 1}
-                        </td>
-
-                        <td className="p-3 font-semibold">
-                          {row.customer_name}
-                        </td>
-
-                        <td className="p-3 text-right font-bold text-red-600">
-                          ₹{row.outstanding.toFixed(2)}
-                        </td>
-
+                      <tr key={row.id} className="border-b hover:bg-blue-50">
+                        <td className="p-3">{index + 1}</td>
+                        <td className="p-3 font-semibold">{row.customer_name}</td>
+                        <td className="p-3 text-right font-bold text-red-600">₹{row.outstanding.toFixed(2)}</td>
                         <td className="p-3">
                           <input
                             type="number"
                             min="0"
                             step="0.01"
                             value={row.cash}
-                            onChange={(e) =>
-                              updateRouteCollectionAmount(
-                                row.id,
-                                "cash",
-                                e.target.value
-                              )
-                            }
+                            onChange={(e) => updateRouteCollectionAmount(row.id, "cash", e.target.value)}
                             className="w-full min-w-[130px] border-2 border-green-200 rounded-lg px-3 py-2 text-right"
                             placeholder="0"
+                            aria-label={`Cash received from ${row.customer_name}`}
                           />
                         </td>
-
                         <td className="p-3">
                           <input
                             type="number"
                             min="0"
                             step="0.01"
                             value={row.upi}
-                            onChange={(e) =>
-                              updateRouteCollectionAmount(
-                                row.id,
-                                "upi",
-                                e.target.value
-                              )
-                            }
+                            onChange={(e) => updateRouteCollectionAmount(row.id, "upi", e.target.value)}
                             className="w-full min-w-[130px] border-2 border-blue-200 rounded-lg px-3 py-2 text-right"
                             placeholder="0"
+                            aria-label={`UPI received from ${row.customer_name}`}
                           />
                         </td>
-
-                        <td className="p-3 text-right font-bold text-green-700">
-                          ₹{total.toFixed(2)}
-                        </td>
+                        <td className="p-3 text-right font-bold text-green-700">₹{total.toFixed(2)}</td>
                       </tr>
                     );
                   })}
                 </tbody>
-
                 <tfoot>
                   <tr className="bg-gray-100 font-bold">
-                    <td
-                      colSpan={3}
-                      className="p-3 text-right"
-                    >
-                      Route Total
-                    </td>
-                    <td className="p-3 text-right text-green-700">
-                      ₹{routeCollectionTotals.cash.toFixed(2)}
-                    </td>
-                    <td className="p-3 text-right text-blue-700">
-                      ₹{routeCollectionTotals.upi.toFixed(2)}
-                    </td>
-                    <td className="p-3 text-right text-indigo-700">
-                      ₹{routeCollectionTotals.total.toFixed(2)}
-                    </td>
+                    <td colSpan={3} className="p-3 text-right">Route Total</td>
+                    <td className="p-3 text-right text-green-700">₹{routeCollectionTotals.cash.toFixed(2)}</td>
+                    <td className="p-3 text-right text-blue-700">₹{routeCollectionTotals.upi.toFixed(2)}</td>
+                    <td className="p-3 text-right text-indigo-700">₹{routeCollectionTotals.total.toFixed(2)}</td>
                   </tr>
                 </tfoot>
               </table>
+            </div>
+
+            {/* Mobile route totals */}
+            <div className="md:hidden mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-3 text-center">
+              <div>
+                <p className="text-xs text-slate-500">Cash Total</p>
+                <p className="font-bold text-green-700">₹{routeCollectionTotals.cash.toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">UPI Total</p>
+                <p className="font-bold text-blue-700">₹{routeCollectionTotals.upi.toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Route Total</p>
+                <p className="font-bold text-indigo-700">₹{routeCollectionTotals.total.toFixed(2)}</p>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-4 mt-5">
@@ -2341,41 +2982,42 @@ export default function Collections() {
                       </td>
 
                       <td className="p-3">
-                        {collection.source === "Sale" ? (
-                          <span className="inline-block bg-blue-100 text-blue-700 px-3 py-2 rounded-lg font-semibold">
-                            Sale Payment
-                          </span>
-                        ) : (
-                          <div className="flex justify-center gap-2">
+                        <div className="flex justify-center items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => void viewRecentCollectionBilling(collection)}
+                            className="bg-blue-700 hover:bg-blue-800 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                          >
+                            👁 View Bill
+                          </button>
 
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() =>
-                                editCollection(
-                                  collection.id
-                                )
-                              }
-                              className="bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
-                            >
-                              Edit
-                            </button>
+                          {collection.source === "Sale" ? (
+                            <span className="inline-block bg-blue-100 text-blue-700 px-3 py-2 rounded-lg font-semibold">
+                              Sale Payment
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                disabled={loading}
+                                onClick={() => editCollection(collection.id)}
+                                className="bg-yellow-500 hover:bg-yellow-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                              >
+                                Edit
+                              </button>
 
-                            <button
-                              type="button"
-                              disabled={loading}
-                              onClick={() =>
-                                deleteCollection(
-                                  collection.id
-                                )
-                              }
-                              className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
-                            >
-                              Delete
-                            </button>
-
-                          </div>
-                        )}
+                              <button
+                                type="button"
+                                disabled={loading}
+                                onClick={() => deleteCollection(collection.id)}
+                                className="bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg font-semibold"
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
 
                     </tr>

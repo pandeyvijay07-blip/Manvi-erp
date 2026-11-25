@@ -59,6 +59,7 @@ type Product = {
 type Customer = {
   id: string;
   customer_name: string;
+  route: string | null;
   opening_balance: number | string | null;
 };
 
@@ -140,6 +141,7 @@ export default function Dashboard({ employeeOnly = false }: DashboardProps) {
 
   const today = getLocalDateISO();
   const [selectedDate, setSelectedDate] = useState(today);
+  const [routeFilter, setRouteFilter] = useState("ALL");
 
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState("");
@@ -203,7 +205,7 @@ export default function Dashboard({ employeeOnly = false }: DashboardProps) {
         supabase
           .from("customers")
           .select(
-            "id, customer_name, opening_balance"
+            "id, customer_name, route, opening_balance"
           )
           .order("customer_name"),
 
@@ -737,6 +739,127 @@ export default function Dashboard({ employeeOnly = false }: DashboardProps) {
     todayPurchases.slice(0, 6);
 
   /*
+   * DAILY ROUTE COMPLETION
+   * A route customer is counted as entered when at least one sale
+   * exists for that customer on the selected dashboard date.
+   * Collections are counted from the collections table only; sale
+   * payments remain part of the sale entry and are not duplicated.
+   * Current outstanding follows the same opening + unpaid-sales
+   * calculation used elsewhere in this dashboard.
+   */
+  const routeOptions = useMemo(() => {
+    const routes = new Set<string>();
+
+    customers.forEach((customer) => {
+      const route = String(customer.route || "").trim();
+      if (route) routes.add(route);
+    });
+
+    return Array.from(routes).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+    );
+  }, [customers]);
+
+  const routeOverviewRows = useMemo(() => {
+    const dailySalesByCustomer = new Map<
+      string,
+      { count: number; amount: number }
+    >();
+
+    todaySales.forEach((sale) => {
+      if (!sale.customer_id) return;
+      const customerId = String(sale.customer_id);
+      const current = dailySalesByCustomer.get(customerId) || {
+        count: 0,
+        amount: 0,
+      };
+      current.count += 1;
+      current.amount += numberValue(sale.total_amount);
+      dailySalesByCustomer.set(customerId, current);
+    });
+
+    const dailyCollectionsByCustomer = new Map<
+      string,
+      { count: number; amount: number }
+    >();
+
+    todayCollections.forEach((collection) => {
+      if (!collection.customer_id) return;
+      const customerId = String(collection.customer_id);
+      const current = dailyCollectionsByCustomer.get(customerId) || {
+        count: 0,
+        amount: 0,
+      };
+      current.count += 1;
+      current.amount += numberValue(collection.amount);
+      dailyCollectionsByCustomer.set(customerId, current);
+    });
+
+    const allSalesBalanceByCustomer = new Map<string, number>();
+    sales.forEach((sale) => {
+      if (!sale.customer_id) return;
+      const customerId = String(sale.customer_id);
+      allSalesBalanceByCustomer.set(
+        customerId,
+        (allSalesBalanceByCustomer.get(customerId) || 0) +
+          Math.max(numberValue(sale.balance_amount), 0)
+      );
+    });
+
+    return customers
+      .filter((customer) => String(customer.route || "").trim())
+      .filter((customer) =>
+        routeFilter === "ALL"
+          ? true
+          : String(customer.route || "").trim().toLowerCase() ===
+            routeFilter.trim().toLowerCase()
+      )
+      .map((customer) => {
+        const customerId = String(customer.id);
+        const dailySale = dailySalesByCustomer.get(customerId);
+        const dailyCollection = dailyCollectionsByCustomer.get(customerId);
+        const outstanding =
+          numberValue(customer.opening_balance) +
+          (allSalesBalanceByCustomer.get(customerId) || 0);
+
+        return {
+          id: customer.id,
+          customer_name: customer.customer_name,
+          route: String(customer.route || "").trim(),
+          saleCount: dailySale?.count || 0,
+          saleAmount: dailySale?.amount || 0,
+          collectionCount: dailyCollection?.count || 0,
+          collectionAmount: dailyCollection?.amount || 0,
+          outstanding,
+        };
+      })
+      .sort((a, b) =>
+        a.route.localeCompare(b.route, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }) || a.customer_name.localeCompare(b.customer_name)
+      );
+  }, [customers, todaySales, todayCollections, sales, routeFilter]);
+
+  const routeSaleEnteredCount = routeOverviewRows.filter(
+    (row) => row.saleCount > 0
+  ).length;
+  const routeSaleMissingCount = Math.max(
+    routeOverviewRows.length - routeSaleEnteredCount,
+    0
+  );
+  const routeCollectionCustomerCount = routeOverviewRows.filter(
+    (row) => row.collectionAmount > 0
+  ).length;
+  const routePendingCustomerCount = routeOverviewRows.filter(
+    (row) => row.outstanding > 0.005
+  ).length;
+  const routePendingAmount = routeOverviewRows.reduce(
+    (sum, row) => sum + Math.max(row.outstanding, 0),
+    0
+  );
+
+  /*
    * Physical cash view for the current day.
    * Opening cash from previous saved closing is not loaded here,
    * so this card deliberately shows the movement components only.
@@ -748,7 +871,7 @@ export default function Dashboard({ employeeOnly = false }: DashboardProps) {
     totalExpenses;
 
   return (
-    <div className="min-h-full w-full min-w-0 max-w-full overflow-x-hidden bg-slate-50 p-3 sm:p-4 md:p-6">
+    <div className="min-h-full w-full min-w-0 max-w-full overflow-x-hidden bg-slate-50 px-3 pt-3 pb-28 sm:px-4 sm:pt-4 md:p-6 md:pb-6">
       {/* HEADER */}
       <div className="mb-4 w-full min-w-0 max-w-full overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-600 p-4 sm:p-5 md:mb-6 md:p-6 text-white shadow-lg">
         <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -937,6 +1060,177 @@ export default function Dashboard({ employeeOnly = false }: DashboardProps) {
           <MetricCard title="Customer Outstanding" value={money(outstandingBalance)} subtitle="Current pending customer balance" />
         </div>
       )}
+
+      {/* DAILY ROUTE COMPLETION & CUSTOMER FOLLOW-UP */}
+      <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 md:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">
+              Daily Route Completion
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Check which route customers have a sale entry, who is missing,
+              and which customers have a collection recorded for {formatDDMMYYYY(selectedDate)}.
+            </p>
+          </div>
+
+          <div className="w-full sm:w-56">
+            <label htmlFor="dashboard-route-filter" className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+              Filter Route
+            </label>
+            <select
+              id="dashboard-route-filter"
+              value={routeFilter}
+              onChange={(event) => setRouteFilter(event.target.value)}
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            >
+              <option value="ALL">All Routes</option>
+              {routeOptions.map((route) => (
+                <option key={route} value={route}>{route}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+          <SmallCard title="Route Customers" value={String(routeOverviewRows.length)} />
+          <SmallCard title="Sale Entered" value={String(routeSaleEnteredCount)} footer="At least one sale on selected date" />
+          <SmallCard title="Sale Missing" value={String(routeSaleMissingCount)} footer="No sale entry on selected date" />
+          <SmallCard title="Collection Recorded" value={String(routeCollectionCustomerCount)} footer="Customer has collection entry" />
+          <SmallCard title="Customers with Due" value={`${routePendingCustomerCount} • ${money(routePendingAmount)}`} footer="Current outstanding from customer ledger" />
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
+          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-emerald-700">Sale Entered</span>
+          <span className="rounded-full bg-rose-50 px-3 py-1.5 text-rose-700">Sale Missing</span>
+          <span className="rounded-full bg-blue-50 px-3 py-1.5 text-blue-700">Collection Recorded</span>
+          <span className="rounded-full bg-amber-50 px-3 py-1.5 text-amber-700">No Collection Entry</span>
+        </div>
+
+        {/* MOBILE ROUTE CARDS */}
+        <div className="mt-4 grid grid-cols-1 gap-3 md:hidden">
+          {routeOverviewRows.length === 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-center text-sm text-slate-500">
+              {routeOptions.length === 0
+                ? "No customer routes are configured yet. Add a route in Customers to see daily route completion."
+                : "No customers found for this route."}
+            </div>
+          ) : (
+            routeOverviewRows.map((row) => (
+              <article key={row.id} className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="break-words text-xs font-bold uppercase tracking-wide text-slate-500">{row.route}</p>
+                    <h3 className="mt-1 break-words text-base font-bold text-slate-800">{row.customer_name}</h3>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${
+                    row.saleCount > 0
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-rose-100 text-rose-700"
+                  }`}>
+                    {row.saleCount > 0 ? `Entered (${row.saleCount})` : "Missing"}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="min-w-0 rounded-lg bg-slate-50 p-2.5">
+                    <p className="text-xs font-semibold text-slate-500">Sale Amount</p>
+                    <p className="mt-1 break-words text-sm font-bold text-slate-800">{money(row.saleAmount)}</p>
+                  </div>
+                  <div className="min-w-0 rounded-lg bg-slate-50 p-2.5">
+                    <p className="text-xs font-semibold text-slate-500">Collected</p>
+                    <p className="mt-1 break-words text-sm font-bold text-blue-700">{money(row.collectionAmount)}</p>
+                  </div>
+                  <div className="min-w-0 rounded-lg bg-slate-50 p-2.5">
+                    <p className="text-xs font-semibold text-slate-500">Collection Status</p>
+                    <p className={`mt-1 break-words text-sm font-bold ${
+                      row.collectionCount > 0 ? "text-blue-700" : "text-amber-700"
+                    }`}>
+                      {row.collectionCount > 0 ? `Recorded (${row.collectionCount})` : "No entry"}
+                    </p>
+                  </div>
+                  <div className="min-w-0 rounded-lg bg-slate-50 p-2.5">
+                    <p className="text-xs font-semibold text-slate-500">Current Outstanding</p>
+                    <p className="mt-1 break-words text-sm font-bold text-slate-800">
+                      {row.outstanding < -0.005
+                        ? `Credit ${money(Math.abs(row.outstanding))}`
+                        : money(Math.max(row.outstanding, 0))}
+                    </p>
+                  </div>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+
+        {/* DESKTOP ROUTE TABLE */}
+        <div className="mt-4 hidden overflow-x-auto rounded-xl border border-slate-200 md:block">
+          <table className="w-full min-w-[820px] text-sm">
+            <thead>
+              <tr className="bg-slate-800 text-left text-white">
+                <th className="p-3">Route</th>
+                <th className="p-3">Customer</th>
+                <th className="p-3">Daily Sale</th>
+                <th className="p-3 text-right">Sale Amount</th>
+                <th className="p-3">Collection</th>
+                <th className="p-3 text-right">Collected</th>
+                <th className="p-3 text-right">Current Outstanding</th>
+              </tr>
+            </thead>
+            <tbody>
+              {routeOverviewRows.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-6 text-center text-slate-500">
+                    {routeOptions.length === 0
+                      ? "No customer routes are configured yet. Add a route in Customers to see daily route completion."
+                      : "No customers found for this route."}
+                  </td>
+                </tr>
+              ) : (
+                routeOverviewRows.map((row) => (
+                  <tr key={row.id} className="border-t border-slate-100 even:bg-slate-50">
+                    <td className="p-3 font-semibold text-slate-600">{row.route}</td>
+                    <td className="p-3 font-semibold text-slate-800">{row.customer_name}</td>
+                    <td className="p-3">
+                      {row.saleCount > 0 ? (
+                        <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">Entered ({row.saleCount})</span>
+                      ) : (
+                        <span className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-bold text-rose-700">Missing</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-right font-semibold text-slate-700">{money(row.saleAmount)}</td>
+                    <td className="p-3">
+                      {row.collectionCount > 0 ? (
+                        <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-700">Recorded ({row.collectionCount})</span>
+                      ) : (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">No entry</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-right font-semibold text-blue-700">{money(row.collectionAmount)}</td>
+                    <td className="p-3 text-right font-bold text-slate-800">
+                      {row.outstanding < -0.005
+                        ? `Credit ${money(Math.abs(row.outstanding))}`
+                        : money(Math.max(row.outstanding, 0))}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link to="/sales" className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700">
+            Open Sales
+          </Link>
+          <Link to="/collections" className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-bold text-blue-700 hover:bg-blue-100">
+            Open Collections
+          </Link>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Note: “Sale Missing” means no sales record exists for that customer on the selected date. “No entry” means no record exists in the Collections table for that date. Current outstanding is the customer ledger balance, not just the selected day’s sale.
+        </p>
+      </section>
 
       {!employeeOnly && (
         <>

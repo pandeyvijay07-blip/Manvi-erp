@@ -379,7 +379,7 @@ export default function Layout({ children }: Props) {
         <div className="manvi-sidebar-footer">
 
           <div>
-            MANVI ERP V29
+            MANVI ERP V30
           </div>
 
           <span>
@@ -524,7 +524,7 @@ export default function Layout({ children }: Props) {
               </strong>
 
               <span>
-                MANVI ERP V29
+                MANVI ERP V30
               </span>
 
             </div>
